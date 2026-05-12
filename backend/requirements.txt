@@ -1,0 +1,9 @@
+﻿fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+pyodbc
+opencv-python
+mediapipe
+numpy
+pillow
