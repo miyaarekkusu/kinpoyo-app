@@ -31,3 +31,6 @@ Thumbs.db
 *.pem
 *.key
 secrets.json
+
+# Claude Code local state
+.claude/

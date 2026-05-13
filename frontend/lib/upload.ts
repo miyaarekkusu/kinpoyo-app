@@ -55,9 +55,9 @@ export async function fetchPreview(s: LocalSession): Promise<PreviewResult> {
 }
 
 /**
- * Upload a saved local session to the FastAPI backend:
- *   1. POST /sessions/upload with the video + exercise name -> session_id + fps
- *   2. POST /sessions/{id}/save with start/end frame numbers
+ * Upload a saved local session to the FastAPI backend in a single request.
+ * The server processes the video, persists pose + sampled images to the DB,
+ * and discards the video file.
  */
 export async function uploadSession(s: LocalSession): Promise<UploadResult> {
   const form = new FormData();
@@ -67,42 +67,25 @@ export async function uploadSession(s: LocalSession): Promise<UploadResult> {
     name: `recording_${s.id}.mp4`,
     type: 'video/mp4',
   } as unknown as Blob);
+  form.append('start_time_sec', String(s.startTimeSec));
+  form.append('end_time_sec', String(s.endTimeSec));
 
-  const uploadRes = await fetch(`${API_URL}/sessions/upload`, {
+  const res = await fetch(`${API_URL}/sessions`, {
     method: 'POST',
     body: form,
   });
-  if (!uploadRes.ok) {
-    throw new Error(`upload failed: HTTP ${uploadRes.status}`);
+  if (!res.ok) {
+    throw new Error(`upload failed: HTTP ${res.status}`);
   }
-  const uploadJson = (await uploadRes.json()) as {
+  const json = (await res.json()) as {
     session_id: number;
-    fps: number;
-    total_frames: number;
-  };
-
-  const startFrame = Math.round(s.startTimeSec * uploadJson.fps);
-  const endFrame = Math.round(s.endTimeSec * uploadJson.fps);
-
-  const saveRes = await fetch(
-    `${API_URL}/sessions/${uploadJson.session_id}/save`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ start_frame: startFrame, end_frame: endFrame }),
-    },
-  );
-  if (!saveRes.ok) {
-    throw new Error(`save failed: HTTP ${saveRes.status}`);
-  }
-  const saveJson = (await saveRes.json()) as {
     pose_count: number;
     image_count: number;
   };
 
   return {
-    remoteSessionId: uploadJson.session_id,
-    poseCount: saveJson.pose_count,
-    imageCount: saveJson.image_count,
+    remoteSessionId: json.session_id,
+    poseCount: json.pose_count,
+    imageCount: json.image_count,
   };
 }
