@@ -55,6 +55,33 @@ def init_schema():
         CONSTRAINT FK_FrameSample_Session FOREIGN KEY (session_id)
             REFERENCES RecordingSession(id) ON DELETE CASCADE
     );
+
+    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Tag' AND xtype='U')
+    CREATE TABLE Tag (
+        id              INT IDENTITY(1,1) PRIMARY KEY,
+        name            NVARCHAR(100) NOT NULL UNIQUE,
+        description     NVARCHAR(500) NULL,
+        created_at      DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+
+    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='AnalysisResult' AND xtype='U')
+    CREATE TABLE AnalysisResult (
+        id              INT IDENTITY(1,1) PRIMARY KEY,
+        tag_id          INT           NOT NULL,
+        summary_json    NVARCHAR(MAX) NOT NULL,
+        created_at      DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT FK_AR_Tag FOREIGN KEY (tag_id)
+            REFERENCES Tag(id) ON DELETE CASCADE
+    );
+
+    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='AnalysisInputSession' AND xtype='U')
+    CREATE TABLE AnalysisInputSession (
+        analysis_id     INT NOT NULL,
+        session_id      INT NOT NULL,
+        PRIMARY KEY (analysis_id, session_id),
+        CONSTRAINT FK_AIS_Analysis FOREIGN KEY (analysis_id)
+            REFERENCES AnalysisResult(id) ON DELETE CASCADE
+    );
     """
     with get_connection() as conn:
         cursor = conn.cursor()

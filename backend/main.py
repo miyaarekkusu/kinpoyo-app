@@ -307,17 +307,54 @@ async def preview(
             pass
 
 
+_SORT_COLUMNS = {
+    "id": "id",
+    "exercise_name": "exercise_name",
+    "recorded_at": "recorded_at",
+    "total_frames": "total_frames",
+}
+
+
 @app.get("/sessions")
-def list_sessions():
+def list_sessions(
+    search: str | None = None,
+    used: str | None = None,  # "used" | "unused" | None
+    sort: str = "id",
+    order: str = "desc",
+):
+    """List sessions with optional filters used by the analyzer app."""
+    sort_col = _SORT_COLUMNS.get(sort, "id")
+    order_dir = "ASC" if order.lower() == "asc" else "DESC"
+
+    where_parts: list[str] = []
+    params: list = []
+    if search:
+        where_parts.append("LOWER(s.exercise_name) LIKE ?")
+        params.append(f"%{search.lower()}%")
+    if used == "used":
+        where_parts.append(
+            "EXISTS (SELECT 1 FROM AnalysisInputSession ais WHERE ais.session_id = s.id)"
+        )
+    elif used == "unused":
+        where_parts.append(
+            "NOT EXISTS (SELECT 1 FROM AnalysisInputSession ais WHERE ais.session_id = s.id)"
+        )
+    where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+    sql = f"""
+        SELECT s.id, s.exercise_name, s.recorded_at, s.fps, s.total_frames,
+               s.start_frame, s.end_frame,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM AnalysisInputSession ais WHERE ais.session_id = s.id
+               ) THEN 1 ELSE 0 END AS used
+        FROM RecordingSession s
+        {where_clause}
+        ORDER BY s.{sort_col} {order_dir}
+    """
+
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT id, exercise_name, recorded_at, fps, total_frames, start_frame, end_frame
-            FROM RecordingSession
-            ORDER BY id DESC
-            """
-        )
+        cursor.execute(sql, params)
         rows = cursor.fetchall()
         return [
             {
@@ -328,6 +365,260 @@ def list_sessions():
                 "total_frames": r[4],
                 "start_frame": r[5],
                 "end_frame": r[6],
+                "used": bool(r[7]),
             }
             for r in rows
         ]
+
+
+@app.delete("/sessions/{session_id}", status_code=204)
+def delete_session(session_id: int):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM RecordingSession WHERE id = ?", (session_id,))
+        conn.commit()
+    return None
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+@app.post("/sessions/bulk-delete")
+def bulk_delete_sessions(body: BulkDeleteRequest):
+    if not body.ids:
+        return {"deleted": 0}
+    placeholders = ",".join(["?"] * len(body.ids))
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"DELETE FROM RecordingSession WHERE id IN ({placeholders})",
+            tuple(body.ids),
+        )
+        deleted = cursor.rowcount
+        conn.commit()
+    return {"deleted": deleted}
+
+
+# --- Tags ---
+
+
+class TagCreateRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
+@app.get("/tags")
+def list_tags():
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT t.id, t.name, t.description, t.created_at,
+                   (SELECT COUNT(*) FROM AnalysisResult ar WHERE ar.tag_id = t.id) AS analysis_count,
+                   (SELECT COUNT(DISTINCT ais.session_id)
+                    FROM AnalysisResult ar
+                    JOIN AnalysisInputSession ais ON ais.analysis_id = ar.id
+                    WHERE ar.tag_id = t.id) AS session_count
+            FROM Tag t
+            ORDER BY t.name
+            """
+        )
+        return [
+            {
+                "id": r[0],
+                "name": r[1],
+                "description": r[2],
+                "created_at": r[3].isoformat() if r[3] else None,
+                "analysis_count": r[4],
+                "session_count": r[5],
+            }
+            for r in cursor.fetchall()
+        ]
+
+
+@app.post("/tags", status_code=201)
+def create_tag(body: TagCreateRequest):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO Tag (name, description) OUTPUT INSERTED.id VALUES (?, ?)",
+                (name, body.description),
+            )
+            tag_id = int(cursor.fetchone()[0])
+            conn.commit()
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=f"tag exists: {exc}")
+    return {"id": tag_id, "name": name, "description": body.description}
+
+
+@app.delete("/tags/{tag_id}", status_code=204)
+def delete_tag(tag_id: int):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM Tag WHERE id = ?", (tag_id,))
+        conn.commit()
+    return None
+
+
+# --- Analysis ---
+
+
+class AnalyzeRequest(BaseModel):
+    tag_id: int
+    session_ids: list[int]
+
+
+def _collect_session_ids_for_tag(cursor, tag_id: int) -> set[int]:
+    cursor.execute(
+        """
+        SELECT DISTINCT ais.session_id
+        FROM AnalysisResult ar
+        JOIN AnalysisInputSession ais ON ais.analysis_id = ar.id
+        WHERE ar.tag_id = ?
+        """,
+        (tag_id,),
+    )
+    return {int(r[0]) for r in cursor.fetchall()}
+
+
+def _fetch_frames(cursor, session_ids: list[int]):
+    if not session_ids:
+        return
+    placeholders = ",".join(["?"] * len(session_ids))
+    cursor.execute(
+        f"""
+        SELECT session_id, frame_number, pose_landmarks
+        FROM FrameSample
+        WHERE session_id IN ({placeholders})
+          AND pose_landmarks IS NOT NULL
+        ORDER BY session_id, frame_number
+        """,
+        tuple(session_ids),
+    )
+    while True:
+        row = cursor.fetchone()
+        if row is None:
+            break
+        yield int(row[0]), int(row[1]), row[2]
+
+
+@app.post("/analyses/preview")
+def analyze_preview(body: AnalyzeRequest):
+    """Combine the selected sessions with existing tag sessions and return
+    a freshly computed analysis without persisting anything."""
+    from pose_analysis import analyze_sessions  # local import for App Service cold path
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        existing = _collect_session_ids_for_tag(cursor, body.tag_id)
+        combined = sorted(existing | set(body.session_ids))
+        if not combined:
+            return {"session_count": 0, "joints": {}, "landmark_mean": []}
+
+        result = analyze_sessions(_fetch_frames(cursor, combined))
+
+    result["new_session_ids"] = sorted(set(body.session_ids) - existing)
+    result["existing_session_ids"] = sorted(existing)
+    return result
+
+
+class AnalysisSaveRequest(BaseModel):
+    tag_id: int
+    session_ids: list[int]
+    summary_json: str
+
+
+@app.post("/analyses", status_code=201)
+def save_analysis(body: AnalysisSaveRequest):
+    """Persist an analysis result and link the input sessions so they show up
+    as 'used' for future selections."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT 1 FROM Tag WHERE id = ?", (body.tag_id,))
+        if cursor.fetchone() is None:
+            raise HTTPException(status_code=404, detail="tag not found")
+
+        cursor.execute(
+            """
+            INSERT INTO AnalysisResult (tag_id, summary_json)
+            OUTPUT INSERTED.id
+            VALUES (?, ?)
+            """,
+            (body.tag_id, body.summary_json),
+        )
+        analysis_id = int(cursor.fetchone()[0])
+
+        # Combine new + previously-used (so a saved analysis carries the full set).
+        existing = _collect_session_ids_for_tag(cursor, body.tag_id)
+        all_ids = sorted(existing | set(body.session_ids))
+        for sid in all_ids:
+            cursor.execute(
+                """
+                IF NOT EXISTS (
+                    SELECT 1 FROM AnalysisInputSession
+                    WHERE analysis_id = ? AND session_id = ?
+                )
+                INSERT INTO AnalysisInputSession (analysis_id, session_id)
+                VALUES (?, ?)
+                """,
+                (analysis_id, sid, analysis_id, sid),
+            )
+        conn.commit()
+
+    return {"id": analysis_id, "tag_id": body.tag_id, "session_count": len(all_ids)}
+
+
+@app.get("/tags/{tag_id}/analyses")
+def list_analyses_for_tag(tag_id: int):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT ar.id, ar.created_at,
+                   (SELECT COUNT(*) FROM AnalysisInputSession ais
+                    WHERE ais.analysis_id = ar.id) AS session_count
+            FROM AnalysisResult ar
+            WHERE ar.tag_id = ?
+            ORDER BY ar.id DESC
+            """,
+            (tag_id,),
+        )
+        return [
+            {
+                "id": r[0],
+                "created_at": r[1].isoformat() if r[1] else None,
+                "session_count": r[2],
+            }
+            for r in cursor.fetchall()
+        ]
+
+
+@app.get("/analyses/{analysis_id}")
+def get_analysis(analysis_id: int):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT ar.id, ar.tag_id, ar.summary_json, ar.created_at, t.name
+            FROM AnalysisResult ar
+            JOIN Tag t ON t.id = ar.tag_id
+            WHERE ar.id = ?
+            """,
+            (analysis_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="analysis not found")
+        return {
+            "id": row[0],
+            "tag_id": row[1],
+            "summary_json": row[2],
+            "created_at": row[3].isoformat() if row[3] else None,
+            "tag_name": row[4],
+        }
