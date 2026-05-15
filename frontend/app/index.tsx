@@ -1,5 +1,5 @@
-﻿import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+﻿import { router } from 'expo-router';
+import { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -10,21 +10,8 @@ import {
   View,
 } from 'react-native';
 
-import { loadAll } from '../lib/storage';
-
 export default function Index() {
   const [exerciseName, setExerciseName] = useState('');
-  const [savedCount, setSavedCount] = useState(0);
-  const [pendingCount, setPendingCount] = useState(0);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadAll().then((all) => {
-        setSavedCount(all.length);
-        setPendingCount(all.filter((s) => s.status !== 'uploaded').length);
-      });
-    }, []),
-  );
 
   const canProceed = exerciseName.trim().length > 0;
 
@@ -35,8 +22,6 @@ export default function Index() {
       params: { exercise: exerciseName.trim() },
     });
   };
-
-  const handleHistory = () => router.push('/history');
 
   return (
     <KeyboardAvoidingView
@@ -63,19 +48,8 @@ export default function Index() {
           <Text style={styles.buttonText}>撮影を始める</Text>
         </Pressable>
 
-        <Pressable style={styles.historyButton} onPress={handleHistory}>
-          <Text style={styles.historyText}>
-            保存済みを見る
-            {savedCount > 0 && (
-              <Text style={styles.historyMeta}>
-                {`  (${savedCount}件${pendingCount > 0 ? ` ・ 未送信 ${pendingCount}` : ''})`}
-              </Text>
-            )}
-          </Text>
-        </Pressable>
-
         <Text style={styles.hint}>
-          撮影 → 範囲選択 → 保存。サーバー復活後に履歴から送信できます。
+          撮影 → 範囲選択 → サーバーへ送信。
         </Text>
       </View>
     </KeyboardAvoidingView>
@@ -121,22 +95,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
-  },
-  historyButton: {
-    marginTop: 12,
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#374151',
-  },
-  historyText: {
-    color: '#e5e7eb',
-    fontSize: 16,
-  },
-  historyMeta: {
-    color: '#9ca3af',
-    fontSize: 13,
   },
   hint: {
     color: '#9ca3af',

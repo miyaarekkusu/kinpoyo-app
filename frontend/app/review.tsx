@@ -12,8 +12,8 @@ import {
   View,
 } from 'react-native';
 
-import { add, type LocalSession } from '../lib/storage';
-import { uploadSession } from '../lib/upload';
+import { deleteVideo } from '../lib/files';
+import { uploadSession, type UploadInput } from '../lib/upload';
 
 const formatTime = (sec: number) =>
   `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}.${String(
@@ -79,38 +79,26 @@ export default function ReviewScreen() {
     if (!canSave) return;
     setBusy(true);
 
-    const session: LocalSession = {
+    const input: UploadInput = {
       id: sessionId,
       exerciseName: exercise ?? '',
       videoUri,
-      recordedAt: new Date().toISOString(),
       startTimeSec: startTime!,
       endTimeSec: endTime!,
-      durationSec: duration,
-      status: 'pending',
     };
 
     try {
-      await add(session);
-    } catch (err: any) {
-      setBusy(false);
-      Alert.alert('ローカル保存失敗', err.message ?? String(err));
-      return;
-    }
-
-    // Optimistically try to upload, but treat failure as "saved-only".
-    try {
-      const result = await uploadSession(session);
+      const result = await uploadSession(input);
+      await deleteVideo(videoUri);
       Alert.alert(
-        '保存 & アップロード完了',
+        '送信完了',
         `セッション #${result.remoteSessionId}\nポーズ: ${result.poseCount}件\n画像: ${result.imageCount}件`,
         [{ text: 'OK', onPress: () => router.replace('/') }],
       );
     } catch (err: any) {
       Alert.alert(
-        '端末に保存しました',
-        `サーバーへの送信は失敗 (${err.message ?? 'unknown'})。\n履歴から後で再送信できます。`,
-        [{ text: 'OK', onPress: () => router.replace('/') }],
+        '送信失敗',
+        `${err.message ?? 'unknown'}\n「保存する」を再度押してリトライしてください。`,
       );
     } finally {
       setBusy(false);

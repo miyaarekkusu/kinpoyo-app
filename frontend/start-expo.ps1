@@ -1,16 +1,16 @@
 ﻿
-# Start Expo dev server with the current LAN IP wired into API_URL and Metro.
+# Start the Expo dev server. Metro binds to the LAN IP so Expo Go on the phone
+# can fetch the JS bundle by scanning the QR code. The app itself talks to the
+# Azure backend (see constants/api.ts) - this script never touches that file.
 # Usage:
 #   cd frontend
-#   .\start-expo.ps1                  # auto-detect LAN IP, backend port 8000
-#   .\start-expo.ps1 -Port 8000
-#   .\start-expo.ps1 -Ip 192.168.1.50 # force a specific IP
+#   .\start-expo.ps1                  # auto-detect LAN IP
+#   .\start-expo.ps1 -Ip 192.168.1.50 # force a specific LAN IP for Metro
 #   .\start-expo.ps1 -Tunnel          # use Expo tunnel instead of LAN
 #   .\start-expo.ps1 -Clear           # start with --clear (reset Metro cache)
 [CmdletBinding()]
 param(
     [string]$Ip,
-    [int]$Port = 8000,
     [int]$MetroPort = 8080,
     [switch]$Tunnel,
     [switch]$Clear
@@ -47,7 +47,7 @@ function Ensure-FirewallPort {
 
     try {
         New-NetFirewallRule -DisplayName $RuleName -Direction Inbound -Action Allow `
-            -Protocol TCP -LocalPort $PortSpec -Profile Private,Domain `
+            -Protocol TCP -LocalPort $PortSpec -Profile Any `
             -ErrorAction Stop | Out-Null
         Write-Host ('Firewall  : opened port {0} ({1})' -f $PortSpec, $RuleName) -ForegroundColor Green
     } catch {
@@ -109,29 +109,22 @@ function Get-LanIp {
 
 if (-not $Ip) { $Ip = Get-LanIp }
 Write-Host ('LAN IP    : {0}' -f $Ip) -ForegroundColor Cyan
-Write-Host ('Backend   : http://{0}:{1}' -f $Ip, $Port) -ForegroundColor Cyan
+
+# Show the API target (read-only - this script no longer rewrites it).
+$apiFile = Join-Path $PSScriptRoot 'constants\api.ts'
+if (Test-Path -LiteralPath $apiFile) {
+    $apiMatch = [regex]::Match((Get-Content -LiteralPath $apiFile -Raw), "export const API_URL = '([^']*)';")
+    if ($apiMatch.Success) {
+        Write-Host ('API_URL   : {0}' -f $apiMatch.Groups[1].Value) -ForegroundColor Cyan
+    }
+}
 
 # Kill any leftover Metro/Expo node processes so the new one binds to $MetroPort.
 Stop-ExistingExpo -Ports @(8080..8090 + 19000..19002)
 
-# Make sure the LAN can reach Metro / Expo DevTools / backend.
-Ensure-FirewallPort -PortSpec ([string]$Port) -RuleName ('Expo Dev - Backend {0}' -f $Port)
+# Make sure the LAN can reach Metro / Expo DevTools (Profile Any covers Public Wi-Fi too).
 Ensure-FirewallPort -PortSpec '8080-8090' -RuleName 'Expo Dev - Metro 8080-8090'
 Ensure-FirewallPort -PortSpec '19000-19002' -RuleName 'Expo Dev - DevTools 19000-19002'
-
-# Rewrite frontend/constants/api.ts -> http://<ip>:<port>
-$apiFile = Join-Path $PSScriptRoot 'constants\api.ts'
-if (-not (Test-Path -LiteralPath $apiFile)) { throw "Missing $apiFile" }
-$newUrl = 'http://{0}:{1}' -f $Ip, $Port
-$content = Get-Content -LiteralPath $apiFile -Raw
-$updated = [regex]::Replace($content, "export const API_URL = '[^']*';", "export const API_URL = '$newUrl';")
-if ($updated -ne $content) {
-    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($apiFile, $updated, $utf8NoBom)
-    Write-Host ('Updated API_URL -> {0}' -f $newUrl) -ForegroundColor Green
-} else {
-    Write-Host ('API_URL already {0}' -f $newUrl) -ForegroundColor DarkGray
-}
 
 # Make Expo Go connect to Metro on the same IP and bake it into the QR URL.
 $env:REACT_NATIVE_PACKAGER_HOSTNAME = $Ip
