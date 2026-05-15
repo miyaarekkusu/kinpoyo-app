@@ -133,8 +133,16 @@ $env:REACT_NATIVE_PACKAGER_HOSTNAME = $Ip
 # (some environments alias/shim npx in ways that mangle the command line).
 $expoBin = Join-Path $PSScriptRoot 'node_modules\.bin\expo.cmd'
 if (-not (Test-Path -LiteralPath $expoBin)) {
-    Write-Host ('Expo CLI not found at {0}. Run `npm install` in this folder first.' -f $expoBin) -ForegroundColor Red
-    exit 1
+    Write-Host ('Expo CLI not found - running `npm install` first...') -ForegroundColor Yellow
+    & npm.cmd install
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ('npm install failed (exit {0}).' -f $LASTEXITCODE) -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
+    if (-not (Test-Path -LiteralPath $expoBin)) {
+        Write-Host ('Expo CLI still missing after npm install: {0}' -f $expoBin) -ForegroundColor Red
+        exit 1
+    }
 }
 $expoArgs = @('start', '--port', $MetroPort)
 if ($Tunnel) { $expoArgs += '--tunnel' }
