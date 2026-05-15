@@ -129,9 +129,15 @@ Ensure-FirewallPort -PortSpec '19000-19002' -RuleName 'Expo Dev - DevTools 19000
 # Make Expo Go connect to Metro on the same IP and bake it into the QR URL.
 $env:REACT_NATIVE_PACKAGER_HOSTNAME = $Ip
 
-# Hand off to Expo. It prints the QR code in the terminal.
-$expoArgs = @('expo', 'start', '--port', $MetroPort)
+# Hand off to Expo. Call the local CLI directly so we don't depend on npx
+# (some environments alias/shim npx in ways that mangle the command line).
+$expoBin = Join-Path $PSScriptRoot 'node_modules\.bin\expo.cmd'
+if (-not (Test-Path -LiteralPath $expoBin)) {
+    Write-Host ('Expo CLI not found at {0}. Run `npm install` in this folder first.' -f $expoBin) -ForegroundColor Red
+    exit 1
+}
+$expoArgs = @('start', '--port', $MetroPort)
 if ($Tunnel) { $expoArgs += '--tunnel' }
 if ($Clear)  { $expoArgs += '--clear' }
-Write-Host ('Running: npx {0}' -f ($expoArgs -join ' ')) -ForegroundColor Cyan
-& npx @expoArgs
+Write-Host ('Running: expo {0}' -f ($expoArgs -join ' ')) -ForegroundColor Cyan
+& $expoBin @expoArgs
