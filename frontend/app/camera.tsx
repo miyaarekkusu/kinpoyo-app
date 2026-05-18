@@ -10,8 +10,6 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { persistVideo } from '../lib/files';
 
-const FRONT_CAMERA: CameraType = 'front';
-
 export default function CameraScreen() {
   const { exercise } = useLocalSearchParams<{ exercise: string }>();
 
@@ -20,6 +18,7 @@ export default function CameraScreen() {
 
   const cameraRef = useRef<CameraView>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [facing, setFacing] = useState<CameraType>('front');
 
   if (!cameraPermission || !micPermission) {
     return (
@@ -79,7 +78,7 @@ export default function CameraScreen() {
       <CameraView
         ref={cameraRef}
         style={styles.camera}
-        facing={FRONT_CAMERA}
+        facing={facing}
         mode="video"
         videoQuality="720p"
       />
@@ -89,6 +88,7 @@ export default function CameraScreen() {
       </View>
 
       <View style={styles.controls}>
+        <View style={styles.controlSide} />
         <Pressable
           style={[styles.recordButton, isRecording && styles.recordingButton]}
           onPress={handleRecord}
@@ -100,6 +100,19 @@ export default function CameraScreen() {
             ]}
           />
         </Pressable>
+        <View style={styles.controlSide}>
+          <Pressable
+            style={[styles.flipButton, isRecording && styles.flipButtonDisabled]}
+            disabled={isRecording}
+            onPress={() =>
+              setFacing((prev) => (prev === 'front' ? 'back' : 'front'))
+            }
+          >
+            <Text style={styles.flipButtonText}>
+              {facing === 'front' ? '背面' : '前面'}
+            </Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -128,10 +141,31 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   controls: {
-    justifyContent: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 32,
+    paddingHorizontal: 24,
     backgroundColor: '#000',
+  },
+  controlSide: {
+    width: 76,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  flipButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+  flipButtonDisabled: {
+    opacity: 0.4,
+  },
+  flipButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   recordButton: {
     width: 76,

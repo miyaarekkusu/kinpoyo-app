@@ -58,11 +58,15 @@ def init_schema():
 
     IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Tag' AND xtype='U')
     CREATE TABLE Tag (
-        id              INT IDENTITY(1,1) PRIMARY KEY,
-        name            NVARCHAR(100) NOT NULL UNIQUE,
-        description     NVARCHAR(500) NULL,
-        created_at      DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+        id                INT IDENTITY(1,1) PRIMARY KEY,
+        name              NVARCHAR(100) NOT NULL UNIQUE,
+        description       NVARCHAR(500) NULL,
+        monitored_joints  NVARCHAR(MAX) NULL,
+        created_at        DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
     );
+
+    IF COL_LENGTH('Tag', 'monitored_joints') IS NULL
+    ALTER TABLE Tag ADD monitored_joints NVARCHAR(MAX) NULL;
 
     IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='AnalysisResult' AND xtype='U')
     CREATE TABLE AnalysisResult (

@@ -15,9 +15,17 @@ export type Tag = {
   id: number;
   name: string;
   description: string | null;
+  monitored_joints: string[];
   created_at: string | null;
   analysis_count: number;
   session_count: number;
+};
+
+export type TagDetail = {
+  id: number;
+  name: string;
+  description: string | null;
+  monitored_joints: string[];
 };
 
 export type JointStats = {
@@ -30,10 +38,13 @@ export type JointStats = {
 
 export type SeriesPoint = { frame: number; angle: number };
 export type SessionSeries = { session_id: number; points: SeriesPoint[] };
+export type CurvePoint = { t: number; angle: number; n: number };
 
 export type JointResult = {
   stats: JointStats;
   series: SessionSeries[];
+  curve_new?: CurvePoint[];
+  curve_existing?: CurvePoint[];
 };
 
 export type LandmarkMean = {
@@ -53,6 +64,7 @@ export type AnalyzeResult = {
   landmark_mean: LandmarkMean[];
   new_session_ids: number[];
   existing_session_ids: number[];
+  monitored_joints: string[];
 };
 
 async function jsonFetch<T>(
@@ -73,13 +85,32 @@ async function jsonFetch<T>(
 
 // Tags
 export const listTags = () => jsonFetch<Tag[]>('/tags');
-export const createTag = (name: string, description?: string) =>
-  jsonFetch<{ id: number; name: string; description: string | null }>('/tags', {
+export const getTag = (id: number) => jsonFetch<TagDetail>(`/tags/${id}`);
+export const createTag = (
+  name: string,
+  description?: string,
+  monitoredJoints?: string[],
+) =>
+  jsonFetch<TagDetail>('/tags', {
     method: 'POST',
-    body: JSON.stringify({ name, description }),
+    body: JSON.stringify({
+      name,
+      description,
+      monitored_joints: monitoredJoints,
+    }),
+  });
+export const updateTag = (
+  id: number,
+  patch: { name?: string; description?: string | null; monitored_joints?: string[] },
+) =>
+  jsonFetch<TagDetail>(`/tags/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
   });
 export const deleteTag = (id: number) =>
   jsonFetch<void>(`/tags/${id}`, { method: 'DELETE' });
+
+export const listJoints = () => jsonFetch<string[]>('/joints');
 
 // Sessions
 export type SessionFilter = {
@@ -133,3 +164,16 @@ export const listAnalysesForTag = (tagId: number) =>
   jsonFetch<{ id: number; created_at: string; session_count: number }[]>(
     `/tags/${tagId}/analyses`,
   );
+
+// Frame-by-frame review
+export type SessionFrameRow = {
+  frame_number: number;
+  pose_landmarks: { x: number; y: number; z: number; visibility?: number }[] | null;
+  has_image: boolean;
+};
+
+export const listSessionFrames = (sessionId: number) =>
+  jsonFetch<SessionFrameRow[]>(`/sessions/${sessionId}/frames`);
+
+export const frameImageUrl = (sessionId: number, frameNumber: number) =>
+  `${API_URL}/sessions/${sessionId}/frame-image/${frameNumber}`;

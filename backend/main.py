@@ -9,6 +9,7 @@ import mediapipe as mp
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from database import get_connection, init_schema
@@ -371,6 +372,52 @@ def list_sessions(
         ]
 
 
+@app.get("/sessions/{session_id}/frames")
+def list_session_frames(session_id: int):
+    """Return frame_number + pose_landmarks for every frame in a session (no
+    image bytes). The analyzer uses this to drive the frame-by-frame scrubber
+    and fetches images one at a time via /frame-image/{n}."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT frame_number, pose_landmarks,
+                   CASE WHEN image IS NULL THEN 0 ELSE 1 END AS has_image
+            FROM FrameSample
+            WHERE session_id = ?
+            ORDER BY frame_number
+            """,
+            (session_id,),
+        )
+        return [
+            {
+                "frame_number": int(r[0]),
+                "pose_landmarks": json.loads(r[1]) if r[1] else None,
+                "has_image": bool(r[2]),
+            }
+            for r in cursor.fetchall()
+        ]
+
+
+@app.get("/sessions/{session_id}/frame-image/{frame_number}")
+def get_session_frame_image(session_id: int, frame_number: int):
+    """Return the JPEG bytes for a single frame so the analyzer can lazy-load
+    images while scrubbing."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT image FROM FrameSample
+            WHERE session_id = ? AND frame_number = ?
+            """,
+            (session_id, frame_number),
+        )
+        row = cursor.fetchone()
+    if row is None or row[0] is None:
+        raise HTTPException(status_code=404, detail="frame image not found")
+    return Response(content=bytes(row[0]), media_type="image/jpeg")
+
+
 @app.delete("/sessions/{session_id}", status_code=204)
 def delete_session(session_id: int):
     with get_connection() as conn:
@@ -406,6 +453,45 @@ def bulk_delete_sessions(body: BulkDeleteRequest):
 class TagCreateRequest(BaseModel):
     name: str
     description: str | None = None
+    monitored_joints: list[str] | None = None
+
+
+class TagUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    monitored_joints: list[str] | None = None
+
+
+def _validate_monitored_joints(joints: list[str] | None) -> str | None:
+    """Filter to canonical names, dedupe, store as JSON. None -> NULL."""
+    from pose_analysis import JOINT_DEFINITIONS_JA
+
+    if joints is None:
+        return None
+    valid = [n for n in JOINT_DEFINITIONS_JA if n in set(joints)]
+    return json.dumps(valid, ensure_ascii=False)
+
+
+def _parse_monitored_joints(raw: str | None) -> list[str]:
+    """JSON column -> list. Bad/empty -> []."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed]
+    except (ValueError, TypeError):
+        pass
+    return []
+
+
+@app.get("/joints")
+def list_joints():
+    """Canonical joint names so the analyzer UI can render checkboxes without
+    duplicating the list."""
+    from pose_analysis import JOINT_DEFINITIONS_JA
+
+    return list(JOINT_DEFINITIONS_JA.keys())
 
 
 @app.get("/tags")
@@ -414,7 +500,7 @@ def list_tags():
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT t.id, t.name, t.description, t.created_at,
+            SELECT t.id, t.name, t.description, t.monitored_joints, t.created_at,
                    (SELECT COUNT(*) FROM AnalysisResult ar WHERE ar.tag_id = t.id) AS analysis_count,
                    (SELECT COUNT(DISTINCT ais.session_id)
                     FROM AnalysisResult ar
@@ -429,12 +515,32 @@ def list_tags():
                 "id": r[0],
                 "name": r[1],
                 "description": r[2],
-                "created_at": r[3].isoformat() if r[3] else None,
-                "analysis_count": r[4],
-                "session_count": r[5],
+                "monitored_joints": _parse_monitored_joints(r[3]),
+                "created_at": r[4].isoformat() if r[4] else None,
+                "analysis_count": r[5],
+                "session_count": r[6],
             }
             for r in cursor.fetchall()
         ]
+
+
+@app.get("/tags/{tag_id}")
+def get_tag(tag_id: int):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, name, description, monitored_joints FROM Tag WHERE id = ?",
+            (tag_id,),
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="tag not found")
+    return {
+        "id": row[0],
+        "name": row[1],
+        "description": row[2],
+        "monitored_joints": _parse_monitored_joints(row[3]),
+    }
 
 
 @app.post("/tags", status_code=201)
@@ -442,18 +548,64 @@ def create_tag(body: TagCreateRequest):
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
+    joints_json = _validate_monitored_joints(body.monitored_joints)
     with get_connection() as conn:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO Tag (name, description) OUTPUT INSERTED.id VALUES (?, ?)",
-                (name, body.description),
+                """
+                INSERT INTO Tag (name, description, monitored_joints)
+                OUTPUT INSERTED.id
+                VALUES (?, ?, ?)
+                """,
+                (name, body.description, joints_json),
             )
             tag_id = int(cursor.fetchone()[0])
             conn.commit()
         except Exception as exc:
             raise HTTPException(status_code=409, detail=f"tag exists: {exc}")
-    return {"id": tag_id, "name": name, "description": body.description}
+    return {
+        "id": tag_id,
+        "name": name,
+        "description": body.description,
+        "monitored_joints": _parse_monitored_joints(joints_json),
+    }
+
+
+@app.patch("/tags/{tag_id}")
+def update_tag(tag_id: int, body: TagUpdateRequest):
+    sets: list[str] = []
+    params: list = []
+    if body.name is not None:
+        trimmed = body.name.strip()
+        if not trimmed:
+            raise HTTPException(status_code=400, detail="name cannot be empty")
+        sets.append("name = ?")
+        params.append(trimmed)
+    if body.description is not None:
+        sets.append("description = ?")
+        params.append(body.description)
+    if body.monitored_joints is not None:
+        sets.append("monitored_joints = ?")
+        params.append(_validate_monitored_joints(body.monitored_joints))
+    if not sets:
+        raise HTTPException(status_code=400, detail="nothing to update")
+
+    params.append(tag_id)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                f"UPDATE Tag SET {', '.join(sets)} WHERE id = ?", tuple(params)
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="tag not found")
+            conn.commit()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=f"update failed: {exc}")
+    return get_tag(tag_id)
 
 
 @app.delete("/tags/{tag_id}", status_code=204)
@@ -515,15 +667,35 @@ def analyze_preview(body: AnalyzeRequest):
 
     with get_connection() as conn:
         cursor = conn.cursor()
+        cursor.execute("SELECT monitored_joints FROM Tag WHERE id = ?", (body.tag_id,))
+        tag_row = cursor.fetchone()
+        if tag_row is None:
+            raise HTTPException(status_code=404, detail="tag not found")
+        monitored = _parse_monitored_joints(tag_row[0])
+
         existing = _collect_session_ids_for_tag(cursor, body.tag_id)
         combined = sorted(existing | set(body.session_ids))
         if not combined:
-            return {"session_count": 0, "joints": {}, "landmark_mean": []}
+            return {
+                "session_count": 0,
+                "joints": {},
+                "landmark_mean": [],
+                "monitored_joints": monitored,
+                "new_session_ids": [],
+                "existing_session_ids": [],
+            }
 
-        result = analyze_sessions(_fetch_frames(cursor, combined))
+        new_ids = set(body.session_ids) - existing
+        result = analyze_sessions(
+            _fetch_frames(cursor, combined),
+            new_session_ids=new_ids,
+            existing_session_ids=existing,
+            monitored_joints=monitored or None,
+        )
 
-    result["new_session_ids"] = sorted(set(body.session_ids) - existing)
+    result["new_session_ids"] = sorted(new_ids)
     result["existing_session_ids"] = sorted(existing)
+    result["monitored_joints"] = monitored
     return result
 
 

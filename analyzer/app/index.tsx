@@ -129,14 +129,39 @@ export default function TagListScreen() {
                 <Text style={styles.meta}>
                   分析 {item.analysis_count} 回 ・ 学習データ {item.session_count} 件
                 </Text>
+                <Text
+                  style={[
+                    styles.joints,
+                    item.monitored_joints.length === 0 && styles.jointsWarn,
+                  ]}
+                >
+                  {item.monitored_joints.length === 0
+                    ? '⚠ 監視関節 未設定 (編集してください)'
+                    : `監視: ${item.monitored_joints.join(' / ')}`}
+                </Text>
               </View>
-              <Pressable
-                onPress={() => handleDelete(item)}
-                style={styles.deleteIcon}
-                hitSlop={8}
-              >
-                <Text style={{ color: colors.danger, fontSize: 18 }}>×</Text>
-              </Pressable>
+              <View style={{ gap: 8, alignItems: 'flex-end' }}>
+                <Pressable
+                  onPress={() => handleDelete(item)}
+                  style={styles.deleteIcon}
+                  hitSlop={8}
+                >
+                  <Text style={{ color: colors.danger, fontSize: 18 }}>×</Text>
+                </Pressable>
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    router.push({
+                      pathname: '/tag-new',
+                      params: { tagId: item.id },
+                    });
+                  }}
+                  style={styles.editBtn}
+                  hitSlop={8}
+                >
+                  <Text style={styles.editBtnText}>編集</Text>
+                </Pressable>
+              </View>
             </View>
           </Pressable>
         )}
@@ -158,6 +183,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 6,
   },
+  joints: {
+    color: colors.textDim,
+    fontSize: 11,
+    marginTop: 4,
+  },
+  jointsWarn: {
+    color: colors.warning,
+    fontWeight: '600',
+  },
   deleteIcon: {
     width: 28,
     height: 28,
@@ -165,5 +199,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.dangerDim,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  editBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: colors.cardBorder,
+  },
+  editBtnText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

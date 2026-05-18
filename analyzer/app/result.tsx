@@ -1,5 +1,5 @@
 ﻿import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,7 +11,8 @@ import {
   View,
 } from 'react-native';
 
-import JointChart from '../components/JointChart';
+import FrameScrubber from '../components/FrameScrubber';
+import JointCompareChart from '../components/JointCompareChart';
 import StickFigure from '../components/StickFigure';
 import {
   previewAnalysis,
@@ -36,6 +37,25 @@ export default function ResultScreen() {
   const [saving, setSaving] = useState(false);
   const { width } = useWindowDimensions();
   const chartWidth = Math.min(width - 32, 700);
+
+  // joint -> session -> frame -> angle, pre-built per new session for the
+  // frame-by-frame scrubber.
+  const newSessionAngles = useMemo(() => {
+    if (!result) return {} as Record<number, Record<number, Record<string, number>>>;
+    const newSet = new Set(result.new_session_ids);
+    const out: Record<number, Record<number, Record<string, number>>> = {};
+    for (const [jointName, j] of Object.entries(result.joints)) {
+      for (const s of j.series) {
+        if (!newSet.has(s.session_id)) continue;
+        const byFrame = out[s.session_id] ?? (out[s.session_id] = {});
+        for (const p of s.points) {
+          const frameRow = byFrame[p.frame] ?? (byFrame[p.frame] = {});
+          frameRow[jointName] = p.angle;
+        }
+      }
+    }
+    return out;
+  }, [result]);
 
   useEffect(() => {
     (async () => {
@@ -98,6 +118,15 @@ export default function ResultScreen() {
           <Text style={[sharedStyles.subtitle, { marginTop: 4 }]}>
             新規 {result.new_session_ids.length} 件 + 既存 {result.existing_session_ids.length} 件
           </Text>
+          {result.monitored_joints.length === 0 ? (
+            <Text style={styles.warn}>
+              ⚠ このタグは監視関節が未設定です。今は全関節を表示しています。タグ編集で対象を絞ってください。
+            </Text>
+          ) : (
+            <Text style={[sharedStyles.subtitle, { marginTop: 4 }]}>
+              監視関節: {result.monitored_joints.join(' / ')}
+            </Text>
+          )}
         </View>
 
         <View style={sharedStyles.card}>
@@ -132,15 +161,46 @@ export default function ResultScreen() {
           </View>
         </View>
 
+        {result.new_session_ids.map((sid) => (
+          <View key={`scrub-${sid}`} style={sharedStyles.card}>
+            <Text style={styles.sectionTitle}>
+              フレーム別レビュー (セッション #{sid})
+            </Text>
+            <Text style={[sharedStyles.subtitle, { marginBottom: 8 }]}>
+              画像と各関節角度をフレーム単位で確認できます。
+            </Text>
+            <FrameScrubber
+              sessionId={sid}
+              jointNames={Object.keys(result.joints)}
+              anglesByFrame={newSessionAngles[sid] ?? {}}
+              width={chartWidth}
+            />
+          </View>
+        ))}
+
         <View style={sharedStyles.card}>
-          <Text style={styles.sectionTitle}>関節角度 時系列</Text>
-          {Object.entries(result.joints).map(([name, j]) =>
-            j.series.length === 0 ? null : (
+          <Text style={styles.sectionTitle}>
+            関節角度 推移 (0〜100% で正規化)
+          </Text>
+          <Text style={[sharedStyles.subtitle, { marginBottom: 8 }]}>
+            今回 (新規 {result.new_session_ids.length} 件) vs 既存学習データ
+            ({result.existing_session_ids.length} 件) の平均カーブ。
+          </Text>
+          {Object.entries(result.joints).map(([name, j]) => {
+            const hasNew = (j.curve_new?.length ?? 0) > 0;
+            const hasExisting = (j.curve_existing?.length ?? 0) > 0;
+            if (!hasNew && !hasExisting) return null;
+            return (
               <View key={name} style={{ marginVertical: 6 }}>
-                <JointChart jointName={name} series={j.series} width={chartWidth} />
+                <JointCompareChart
+                  jointName={name}
+                  curveNew={j.curve_new}
+                  curveExisting={j.curve_existing}
+                  width={chartWidth}
+                />
               </View>
-            ),
-          )}
+            );
+          })}
         </View>
 
         <View style={sharedStyles.row}>
@@ -207,5 +267,11 @@ const styles = StyleSheet.create({
     color: colors.textDim,
     fontSize: 12,
     textAlign: 'right',
+  },
+  warn: {
+    color: colors.warning,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 8,
   },
 });
