@@ -49,7 +49,7 @@ export default function Index() {
         </Pressable>
 
         <Text style={styles.hint}>
-          撮影 → 範囲選択 → サーバーへ送信。
+          撮影 → 範囲を複数選択 → サーバーへ送信。
         </Text>
       </View>
     </KeyboardAvoidingView>
