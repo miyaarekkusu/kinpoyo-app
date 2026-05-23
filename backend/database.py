@@ -35,14 +35,37 @@ def init_schema():
     ddl = """
     IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='RecordingSession' AND xtype='U')
     CREATE TABLE RecordingSession (
-        id              INT IDENTITY(1,1) PRIMARY KEY,
-        exercise_name   NVARCHAR(100) NOT NULL,
-        recorded_at     DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME(),
-        fps             FLOAT         NULL,
-        total_frames    INT           NULL,
-        start_frame     INT           NULL,
-        end_frame       INT           NULL
+        id                       INT IDENTITY(1,1) PRIMARY KEY,
+        exercise_name            NVARCHAR(100) NOT NULL,
+        recorded_at              DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME(),
+        fps                      FLOAT         NULL,
+        total_frames             INT           NULL,
+        start_frame              INT           NULL,
+        end_frame                INT           NULL,
+        deleted                  BIT           NOT NULL DEFAULT 0,
+        processing_status        NVARCHAR(20)  NOT NULL DEFAULT 'done',
+        processed_frames         INT           NOT NULL DEFAULT 0,
+        total_frames_expected    INT           NULL,
+        processing_error         NVARCHAR(500) NULL
     );
+
+    IF COL_LENGTH('RecordingSession', 'deleted') IS NULL
+    ALTER TABLE RecordingSession ADD deleted BIT NOT NULL
+        CONSTRAINT DF_RecordingSession_deleted DEFAULT 0;
+
+    IF COL_LENGTH('RecordingSession', 'processing_status') IS NULL
+    ALTER TABLE RecordingSession ADD processing_status NVARCHAR(20) NOT NULL
+        CONSTRAINT DF_RecordingSession_proc_status DEFAULT 'done';
+
+    IF COL_LENGTH('RecordingSession', 'processed_frames') IS NULL
+    ALTER TABLE RecordingSession ADD processed_frames INT NOT NULL
+        CONSTRAINT DF_RecordingSession_proc_frames DEFAULT 0;
+
+    IF COL_LENGTH('RecordingSession', 'total_frames_expected') IS NULL
+    ALTER TABLE RecordingSession ADD total_frames_expected INT NULL;
+
+    IF COL_LENGTH('RecordingSession', 'processing_error') IS NULL
+    ALTER TABLE RecordingSession ADD processing_error NVARCHAR(500) NULL;
 
     IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='FrameSample' AND xtype='U')
     CREATE TABLE FrameSample (
@@ -55,6 +78,14 @@ def init_schema():
         CONSTRAINT FK_FrameSample_Session FOREIGN KEY (session_id)
             REFERENCES RecordingSession(id) ON DELETE CASCADE
     );
+
+    IF NOT EXISTS (
+        SELECT 1 FROM sys.indexes
+        WHERE name = 'IX_FrameSample_session_frame'
+          AND object_id = OBJECT_ID('FrameSample')
+    )
+    CREATE INDEX IX_FrameSample_session_frame
+        ON FrameSample(session_id, frame_number);
 
     IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Tag' AND xtype='U')
     CREATE TABLE Tag (

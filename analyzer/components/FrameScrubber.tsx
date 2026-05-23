@@ -8,8 +8,9 @@ import {
   View,
 } from 'react-native';
 
-import { frameImageUrl, listSessionFrames } from '../lib/api';
+import { fetchAllSessionFrames, frameImageUrl } from '../lib/api';
 import { colors } from '../lib/theme';
+import ProgressBar from './ProgressBar';
 
 type AnglesByFrame = Record<number, Record<string, number>>;
 
@@ -29,6 +30,9 @@ export default function FrameScrubber({
   const [frames, setFrames] = useState<number[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
+  const [progress, setProgress] = useState<{ received: number; total: number }>(
+    { received: 0, total: 0 },
+  );
 
   const angleFrames = useMemo(
     () =>
@@ -39,24 +43,25 @@ export default function FrameScrubber({
   );
 
   useEffect(() => {
-    let cancelled = false;
+    const ac = new AbortController();
     (async () => {
       try {
-        const rows = await listSessionFrames(sessionId);
-        if (cancelled) return;
+        const rows = await fetchAllSessionFrames(sessionId, {
+          chunkSize: 100,
+          signal: ac.signal,
+          onProgress: (received, total) =>
+            setProgress({ received, total }),
+        });
+        if (ac.signal.aborted) return;
         const withImage = rows
           .filter((r) => r.has_image)
           .map((r) => r.frame_number);
-        // If the session somehow has no images stored, fall back to whatever
-        // frames we have angles for so the user can still scrub through angles.
         setFrames(withImage.length ? withImage : angleFrames);
       } catch (e: any) {
-        if (!cancelled) setLoadError(e.message ?? String(e));
+        if (!ac.signal.aborted) setLoadError(e.message ?? String(e));
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => ac.abort();
   }, [sessionId, angleFrames]);
 
   if (loadError) {
@@ -73,9 +78,16 @@ export default function FrameScrubber({
     return (
       <View style={styles.empty}>
         <ActivityIndicator color={colors.accent} />
-        <Text style={{ color: colors.textDim, marginTop: 6 }}>
+        <Text style={{ color: colors.textDim, marginTop: 6, marginBottom: 10 }}>
           フレーム情報を取得中...
         </Text>
+        <View style={{ width: '100%', maxWidth: 320 }}>
+          <ProgressBar
+            value={progress.received}
+            total={progress.total}
+            label="フレーム取得中"
+          />
+        </View>
       </View>
     );
   }

@@ -1,5 +1,5 @@
-﻿import { router } from 'expo-router';
-import { useState } from 'react';
+﻿import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -10,8 +10,17 @@ import {
   View,
 } from 'react-native';
 
+import { pendingCount } from '../lib/pending';
+
 export default function Index() {
   const [exerciseName, setExerciseName] = useState('');
+  const [pendingNum, setPendingNum] = useState(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      pendingCount().then(setPendingNum).catch(() => setPendingNum(0));
+    }, []),
+  );
 
   const canProceed = exerciseName.trim().length > 0;
 
@@ -46,6 +55,15 @@ export default function Index() {
           disabled={!canProceed}
         >
           <Text style={styles.buttonText}>撮影を始める</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.pendingButton}
+          onPress={() => router.push('/pending')}
+        >
+          <Text style={styles.pendingButtonText}>
+            保留一覧 ({pendingNum}件)
+          </Text>
         </Pressable>
 
         <Text style={styles.hint}>
@@ -94,6 +112,20 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#fff',
     fontSize: 18,
+    fontWeight: 'bold',
+  },
+  pendingButton: {
+    marginTop: 12,
+    backgroundColor: '#1f2937',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+  },
+  pendingButtonText: {
+    color: '#f59e0b',
+    fontSize: 16,
     fontWeight: 'bold',
   },
   hint: {

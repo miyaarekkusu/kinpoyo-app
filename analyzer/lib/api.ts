@@ -172,8 +172,49 @@ export type SessionFrameRow = {
   has_image: boolean;
 };
 
-export const listSessionFrames = (sessionId: number) =>
-  jsonFetch<SessionFrameRow[]>(`/sessions/${sessionId}/frames`);
+export type SessionFramesPage = {
+  total: number;
+  start: number;
+  frames: SessionFrameRow[];
+};
+
+export const listSessionFramesPage = (
+  sessionId: number,
+  start: number,
+  limit: number,
+) =>
+  jsonFetch<SessionFramesPage>(
+    `/sessions/${sessionId}/frames?start=${start}&limit=${limit}`,
+  );
+
+export type FetchAllSessionFramesOptions = {
+  chunkSize?: number;
+  onProgress?: (received: number, total: number) => void;
+  signal?: AbortSignal;
+};
+
+/** Fetch every frame for a session in chunks so the UI can render a
+ * progress bar and the JSON payload doesn't arrive as one giant blob. */
+export async function fetchAllSessionFrames(
+  sessionId: number,
+  opts: FetchAllSessionFramesOptions = {},
+): Promise<SessionFrameRow[]> {
+  const chunkSize = opts.chunkSize ?? 100;
+  const all: SessionFrameRow[] = [];
+  let start = 0;
+  let total = Infinity;
+
+  while (start < total) {
+    if (opts.signal?.aborted) throw new Error('aborted');
+    const page = await listSessionFramesPage(sessionId, start, chunkSize);
+    total = page.total;
+    all.push(...page.frames);
+    start += page.frames.length;
+    opts.onProgress?.(all.length, total);
+    if (page.frames.length === 0) break;
+  }
+  return all;
+}
 
 export const frameImageUrl = (sessionId: number, frameNumber: number) =>
   `${API_URL}/sessions/${sessionId}/frame-image/${frameNumber}`;

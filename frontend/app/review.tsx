@@ -9,13 +9,16 @@ import {
   FlatList,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 
+import { ProgressBar } from '../components/progress-bar';
 import { deleteVideo } from '../lib/files';
-import { uploadSession, type UploadInput } from '../lib/upload';
+import { addPending } from '../lib/pending';
+import { uploadSession, type UploadInput, type UploadProgress } from '../lib/upload';
 
 type SegmentStatus = 'pending' | 'success' | 'failed';
 
@@ -58,6 +61,11 @@ export default function ReviewScreen() {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [busy, setBusy] = useState(false);
   const [showList, setShowList] = useState(false);
+  const [currentProgress, setCurrentProgress] = useState<{
+    segmentIndex: number;
+    totalSegments: number;
+    progress: UploadProgress;
+  } | null>(null);
 
   useEffect(() => {
     if (status === 'readyToPlay' && duration === 0 && player.duration > 0) {
@@ -108,18 +116,47 @@ export default function ReviewScreen() {
 
   const pendingSegments = segments.filter((s) => s.status !== 'success');
   const canSend = pendingSegments.length > 0 && !busy;
+  const canDefer = pendingSegments.length > 0 && !busy;
+
+  const handleDefer = async () => {
+    if (!canDefer) return;
+    try {
+      await addPending({
+        id: sessionId,
+        videoUri,
+        exerciseName: exercise ?? '',
+        segments: pendingSegments.map((s) => ({
+          id: s.id,
+          startTime: s.startTime,
+          endTime: s.endTime,
+        })),
+        createdAt: Date.now(),
+      });
+      Alert.alert(
+        '保留しました',
+        `${pendingSegments.length}件の区間を送信保留に追加しました。メニュー > 保留一覧から送信できます。`,
+        [{ text: 'OK', onPress: () => router.replace('/') }],
+      );
+    } catch (err) {
+      console.error('defer failed', err);
+      Alert.alert('保留に失敗しました', String(err));
+    }
+  };
 
   const handleSend = async () => {
     if (!canSend) return;
     setBusy(true);
 
     const updated: Segment[] = [...segments];
+    const pendingIndices = updated
+      .map((s, i) => (s.status === 'success' ? -1 : i))
+      .filter((i) => i >= 0);
     let successCount = 0;
     let failureCount = 0;
 
-    for (let i = 0; i < updated.length; i++) {
+    for (let pi = 0; pi < pendingIndices.length; pi++) {
+      const i = pendingIndices[pi];
       const seg = updated[i];
-      if (seg.status === 'success') continue;
 
       const input: UploadInput = {
         id: `${sessionId}-${seg.id}`,
@@ -130,7 +167,14 @@ export default function ReviewScreen() {
       };
 
       try {
-        const result = await uploadSession(input);
+        const result = await uploadSession(input, {
+          onProgress: (p) =>
+            setCurrentProgress({
+              segmentIndex: pi,
+              totalSegments: pendingIndices.length,
+              progress: p,
+            }),
+        });
         updated[i] = {
           ...seg,
           status: 'success',
@@ -145,6 +189,7 @@ export default function ReviewScreen() {
       setSegments([...updated]);
     }
 
+    setCurrentProgress(null);
     setBusy(false);
 
     const allSuccess = updated.every((s) => s.status === 'success');
@@ -172,7 +217,10 @@ export default function ReviewScreen() {
         nativeControls={false}
       />
 
-      <View style={styles.controls}>
+      <ScrollView
+        style={styles.controlsScroll}
+        contentContainerStyle={styles.controls}
+      >
         <Text style={styles.exerciseTag}>{exercise}</Text>
 
         <View style={styles.timeRow}>
@@ -238,7 +286,29 @@ export default function ReviewScreen() {
             <Text style={styles.saveButtonText}>送信する</Text>
           )}
         </Pressable>
-      </View>
+
+        <Pressable
+          style={[styles.deferButton, !canDefer && styles.deferButtonDisabled]}
+          onPress={handleDefer}
+          disabled={!canDefer}
+        >
+          <Text style={styles.deferButtonText}>送信保留に追加</Text>
+        </Pressable>
+
+        {currentProgress && (
+          <View style={styles.progressBlock}>
+            <ProgressBar
+              value={currentProgress.progress.processed}
+              total={currentProgress.progress.total}
+              label={
+                currentProgress.progress.phase === 'uploading'
+                  ? `送信中 (${currentProgress.segmentIndex + 1}/${currentProgress.totalSegments}) - 動画アップロード`
+                  : `処理中 (${currentProgress.segmentIndex + 1}/${currentProgress.totalSegments}) - サーバ解析`
+              }
+            />
+          </View>
+        )}
+      </ScrollView>
 
       <Modal
         visible={showList}
@@ -322,9 +392,12 @@ const styles = StyleSheet.create({
     height: '38%',
     backgroundColor: '#000',
   },
-  controls: {
+  controlsScroll: {
     flex: 1,
+  },
+  controls: {
     padding: 16,
+    paddingBottom: 32,
     gap: 8,
   },
   exerciseTag: {
@@ -527,6 +600,31 @@ const styles = StyleSheet.create({
   saveButtonText: {
     color: '#fff',
     fontSize: 18,
+    fontWeight: 'bold',
+  },
+  progressBlock: {
+    marginTop: 8,
+    padding: 12,
+    backgroundColor: '#1f2937',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  deferButton: {
+    marginTop: 8,
+    backgroundColor: '#1f2937',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+  },
+  deferButtonDisabled: {
+    opacity: 0.4,
+  },
+  deferButtonText: {
+    color: '#f59e0b',
+    fontSize: 16,
     fontWeight: 'bold',
   },
 });

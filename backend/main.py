@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import mediapipe as mp
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -47,76 +47,98 @@ def root():
     return {"message": "kinpoyo backend is running"}
 
 
-# --- Single-shot upload + range save ---
+# --- Single-shot upload + range save (async job) ---
 
 
-class SessionSavedResponse(BaseModel):
+class SessionCreatedResponse(BaseModel):
+    """Returned immediately after the upload is accepted. The MediaPipe run
+    and per-frame INSERTs happen in a background task; clients should poll
+    /sessions/{id}/progress to observe completion."""
+
     session_id: int
     fps: float
     total_frames: int
-    pose_count: int
-    image_count: int
+    start_frame: int
+    end_frame: int
+    total_frames_expected: int
+    processing_status: str
     image_sample_interval: int
 
 
-@app.post("/sessions", response_model=SessionSavedResponse)
-async def create_session(
-    exercise_name: str = Form(...),
-    video: UploadFile = File(...),
-    start_time_sec: float = Form(...),
-    end_time_sec: float = Form(...),
-):
-    """
-    Receive the video + exercise + selected range in a single request,
-    run MediaPipe on the range, persist pose + sampled images to the DB,
-    and discard the video. The server never keeps the video file.
-    """
-    if end_time_sec < start_time_sec:
-        raise HTTPException(status_code=400, detail="end < start")
-
-    suffix = Path(video.filename or "").suffix or ".mp4"
-    tmp_path = UPLOAD_DIR / f"session_{uuid.uuid4().hex}{suffix}"
-
+def _update_progress(session_id: int, processed: int) -> None:
     try:
-        with tmp_path.open("wb") as f:
-            f.write(await video.read())
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE RecordingSession SET processed_frames = ? WHERE id = ?",
+                (processed, session_id),
+            )
+            conn.commit()
+    except Exception as exc:
+        print(f"[progress] update failed for session {session_id}: {exc}")
 
-        cap = cv2.VideoCapture(str(tmp_path))
+
+def _mark_session_done(session_id: int, processed: int) -> None:
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE RecordingSession
+                SET processing_status = 'done', processed_frames = ?, processing_error = NULL
+                WHERE id = ?
+                """,
+                (processed, session_id),
+            )
+            conn.commit()
+    except Exception as exc:
+        print(f"[done] update failed for session {session_id}: {exc}")
+
+
+def _mark_session_error(session_id: int, message: str) -> None:
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE RecordingSession
+                SET processing_status = 'error', processing_error = ?
+                WHERE id = ?
+                """,
+                (message[:500], session_id),
+            )
+            conn.commit()
+    except Exception as exc:
+        print(f"[error-mark] update failed for session {session_id}: {exc}")
+
+
+def _process_session_job(
+    session_id: int,
+    tmp_path_str: str,
+    start_frame: int,
+    end_frame: int,
+) -> None:
+    """Background worker: run MediaPipe on the saved video, INSERT one frame
+    at a time, and bump processed_frames every PROGRESS_BATCH frames so the
+    client's progress bar advances smoothly."""
+    PROGRESS_BATCH = 10
+    tmp_path = Path(tmp_path_str)
+    cap = None
+    try:
+        cap = cv2.VideoCapture(tmp_path_str)
         if not cap.isOpened():
-            raise HTTPException(status_code=400, detail="Could not open uploaded video.")
+            raise RuntimeError("cannot open buffered video")
 
         try:
             cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
         except Exception:
             pass
 
-        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
-        if fps <= 0:
-            cap.release()
-            raise HTTPException(status_code=400, detail="invalid fps")
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
-        start_frame = int(round(start_time_sec * fps))
-        end_frame = int(round(end_time_sec * fps))
-
+        processed = 0
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO RecordingSession
-                    (exercise_name, fps, total_frames, start_frame, end_frame)
-                OUTPUT INSERTED.id
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (exercise_name, fps, total_frames, start_frame, end_frame),
-            )
-            session_id = int(cursor.fetchone()[0])
-
-            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-
-            pose_count = 0
-            image_count = 0
-
             with mp_pose.Pose(static_image_mode=False, model_complexity=1) as pose:
                 frame_no = start_frame
                 while frame_no <= end_frame:
@@ -145,7 +167,6 @@ async def create_session(
                         encoded_ok, buf = cv2.imencode(".jpg", frame_bgr)
                         if encoded_ok:
                             image_bytes = buf.tobytes()
-                            image_count += 1
 
                     cursor.execute(
                         """
@@ -160,26 +181,155 @@ async def create_session(
                             json.dumps(landmarks) if landmarks is not None else None,
                         ),
                     )
-                    pose_count += 1
+                    processed += 1
                     frame_no += 1
 
+                    if processed % PROGRESS_BATCH == 0:
+                        conn.commit()
+                        _update_progress(session_id, processed)
             conn.commit()
-
-        cap.release()
-
-        return SessionSavedResponse(
-            session_id=session_id,
-            fps=fps,
-            total_frames=total_frames,
-            pose_count=pose_count,
-            image_count=image_count,
-            image_sample_interval=IMAGE_SAMPLE_INTERVAL,
-        )
+        _mark_session_done(session_id, processed)
+    except Exception as exc:
+        print(f"[process] session {session_id} failed: {exc}")
+        _mark_session_error(session_id, str(exc))
     finally:
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
         try:
             tmp_path.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+@app.post(
+    "/sessions",
+    response_model=SessionCreatedResponse,
+    status_code=202,
+)
+async def create_session(
+    background_tasks: BackgroundTasks,
+    exercise_name: str = Form(...),
+    video: UploadFile = File(...),
+    start_time_sec: float = Form(...),
+    end_time_sec: float = Form(...),
+):
+    """Accept the video + range, persist the row, and hand off the MediaPipe
+    pass to a background task. The response returns as soon as the upload
+    has been buffered and the session row exists, so the client can start
+    polling /sessions/{id}/progress immediately."""
+    if end_time_sec < start_time_sec:
+        raise HTTPException(status_code=400, detail="end < start")
+
+    suffix = Path(video.filename or "").suffix or ".mp4"
+    tmp_path = UPLOAD_DIR / f"session_{uuid.uuid4().hex}{suffix}"
+
+    with tmp_path.open("wb") as f:
+        f.write(await video.read())
+
+    cap = cv2.VideoCapture(str(tmp_path))
+    if not cap.isOpened():
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail="Could not open uploaded video.")
+
+    try:
+        cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+    except Exception:
+        pass
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    cap.release()
+
+    if fps <= 0:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail="invalid fps")
+
+    start_frame = int(round(start_time_sec * fps))
+    end_frame = int(round(end_time_sec * fps))
+    total_frames_expected = max(0, end_frame - start_frame + 1)
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO RecordingSession
+                (exercise_name, fps, total_frames, start_frame, end_frame,
+                 processing_status, processed_frames, total_frames_expected)
+            OUTPUT INSERTED.id
+            VALUES (?, ?, ?, ?, ?, 'processing', 0, ?)
+            """,
+            (
+                exercise_name,
+                fps,
+                total_frames,
+                start_frame,
+                end_frame,
+                total_frames_expected,
+            ),
+        )
+        session_id = int(cursor.fetchone()[0])
+        conn.commit()
+
+    background_tasks.add_task(
+        _process_session_job,
+        session_id,
+        str(tmp_path),
+        start_frame,
+        end_frame,
+    )
+
+    return SessionCreatedResponse(
+        session_id=session_id,
+        fps=fps,
+        total_frames=total_frames,
+        start_frame=start_frame,
+        end_frame=end_frame,
+        total_frames_expected=total_frames_expected,
+        processing_status="processing",
+        image_sample_interval=IMAGE_SAMPLE_INTERVAL,
+    )
+
+
+class SessionProgressResponse(BaseModel):
+    session_id: int
+    processing_status: str  # 'processing' | 'done' | 'error'
+    processed_frames: int
+    total_frames_expected: int | None
+    processing_error: str | None
+
+
+@app.get("/sessions/{session_id}/progress", response_model=SessionProgressResponse)
+def get_session_progress(session_id: int):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT processing_status, processed_frames, total_frames_expected,
+                   processing_error, deleted
+            FROM RecordingSession
+            WHERE id = ?
+            """,
+            (session_id,),
+        )
+        row = cursor.fetchone()
+    if row is None or bool(row[4]):
+        raise HTTPException(status_code=404, detail="session not found")
+    return SessionProgressResponse(
+        session_id=session_id,
+        processing_status=str(row[0]),
+        processed_frames=int(row[1]),
+        total_frames_expected=int(row[2]) if row[2] is not None else None,
+        processing_error=row[3],
+    )
 
 
 # --- Read-back endpoints for verification ---
@@ -327,7 +477,7 @@ def list_sessions(
     sort_col = _SORT_COLUMNS.get(sort, "id")
     order_dir = "ASC" if order.lower() == "asc" else "DESC"
 
-    where_parts: list[str] = []
+    where_parts: list[str] = ["s.deleted = 0", "s.processing_status = 'done'"]
     params: list = []
     if search:
         where_parts.append("LOWER(s.exercise_name) LIKE ?")
@@ -340,7 +490,7 @@ def list_sessions(
         where_parts.append(
             "NOT EXISTS (SELECT 1 FROM AnalysisInputSession ais WHERE ais.session_id = s.id)"
         )
-    where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    where_clause = "WHERE " + " AND ".join(where_parts)
 
     sql = f"""
         SELECT s.id, s.exercise_name, s.recorded_at, s.fps, s.total_frames,
@@ -372,24 +522,64 @@ def list_sessions(
         ]
 
 
+def _ensure_session_alive(cursor, session_id: int) -> None:
+    cursor.execute(
+        "SELECT deleted FROM RecordingSession WHERE id = ?", (session_id,)
+    )
+    row = cursor.fetchone()
+    if row is None or bool(row[0]):
+        raise HTTPException(status_code=404, detail="session not found")
+
+
 @app.get("/sessions/{session_id}/frames")
-def list_session_frames(session_id: int):
-    """Return frame_number + pose_landmarks for every frame in a session (no
-    image bytes). The analyzer uses this to drive the frame-by-frame scrubber
-    and fetches images one at a time via /frame-image/{n}."""
+def list_session_frames(
+    session_id: int,
+    start: int = 0,
+    limit: int | None = None,
+):
+    """Return frame_number + pose_landmarks for the requested chunk of a
+    session (no image bytes). Pass start/limit to page through; omit limit
+    to keep the legacy behavior of returning every frame at once.
+
+    Response always includes the total frame count so the analyzer can drive
+    a progress bar while it pulls successive chunks."""
     with get_connection() as conn:
         cursor = conn.cursor()
+        _ensure_session_alive(cursor, session_id)
+
         cursor.execute(
-            """
-            SELECT frame_number, pose_landmarks,
-                   CASE WHEN image IS NULL THEN 0 ELSE 1 END AS has_image
-            FROM FrameSample
-            WHERE session_id = ?
-            ORDER BY frame_number
-            """,
+            "SELECT COUNT(*) FROM FrameSample WHERE session_id = ?",
             (session_id,),
         )
-        return [
+        total = int(cursor.fetchone()[0])
+
+        if limit is None:
+            cursor.execute(
+                """
+                SELECT frame_number, pose_landmarks,
+                       CASE WHEN image IS NULL THEN 0 ELSE 1 END AS has_image
+                FROM FrameSample
+                WHERE session_id = ?
+                ORDER BY frame_number
+                """,
+                (session_id,),
+            )
+        else:
+            safe_start = max(0, int(start))
+            safe_limit = max(0, int(limit))
+            cursor.execute(
+                """
+                SELECT frame_number, pose_landmarks,
+                       CASE WHEN image IS NULL THEN 0 ELSE 1 END AS has_image
+                FROM FrameSample
+                WHERE session_id = ?
+                ORDER BY frame_number
+                OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+                """,
+                (session_id, safe_start, safe_limit),
+            )
+
+        frames = [
             {
                 "frame_number": int(r[0]),
                 "pose_landmarks": json.loads(r[1]) if r[1] else None,
@@ -398,6 +588,8 @@ def list_session_frames(session_id: int):
             for r in cursor.fetchall()
         ]
 
+    return {"total": total, "start": start, "frames": frames}
+
 
 @app.get("/sessions/{session_id}/frame-image/{frame_number}")
 def get_session_frame_image(session_id: int, frame_number: int):
@@ -405,6 +597,7 @@ def get_session_frame_image(session_id: int, frame_number: int):
     images while scrubbing."""
     with get_connection() as conn:
         cursor = conn.cursor()
+        _ensure_session_alive(cursor, session_id)
         cursor.execute(
             """
             SELECT image FROM FrameSample
@@ -418,12 +611,41 @@ def get_session_frame_image(session_id: int, frame_number: int):
     return Response(content=bytes(row[0]), media_type="image/jpeg")
 
 
+def _hard_delete_sessions(session_ids: list[int]) -> None:
+    """Physically delete sessions and their FrameSample rows.
+
+    Why: the user-facing DELETE returns 204 immediately after flipping the
+    deleted flag; the actual VARBINARY purge happens here so the request
+    isn't blocked on it."""
+    if not session_ids:
+        return
+    placeholders = ",".join(["?"] * len(session_ids))
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"DELETE FROM FrameSample WHERE session_id IN ({placeholders})",
+                tuple(session_ids),
+            )
+            cursor.execute(
+                f"DELETE FROM RecordingSession WHERE id IN ({placeholders})",
+                tuple(session_ids),
+            )
+            conn.commit()
+    except Exception as exc:
+        print(f"[hard-delete] failed for {session_ids}: {exc}")
+
+
 @app.delete("/sessions/{session_id}", status_code=204)
-def delete_session(session_id: int):
+def delete_session(session_id: int, background_tasks: BackgroundTasks):
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM RecordingSession WHERE id = ?", (session_id,))
+        cursor.execute(
+            "UPDATE RecordingSession SET deleted = 1 WHERE id = ? AND deleted = 0",
+            (session_id,),
+        )
         conn.commit()
+    background_tasks.add_task(_hard_delete_sessions, [session_id])
     return None
 
 
@@ -432,18 +654,20 @@ class BulkDeleteRequest(BaseModel):
 
 
 @app.post("/sessions/bulk-delete")
-def bulk_delete_sessions(body: BulkDeleteRequest):
+def bulk_delete_sessions(body: BulkDeleteRequest, background_tasks: BackgroundTasks):
     if not body.ids:
         return {"deleted": 0}
     placeholders = ",".join(["?"] * len(body.ids))
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            f"DELETE FROM RecordingSession WHERE id IN ({placeholders})",
+            f"UPDATE RecordingSession SET deleted = 1 "
+            f"WHERE id IN ({placeholders}) AND deleted = 0",
             tuple(body.ids),
         )
         deleted = cursor.rowcount
         conn.commit()
+    background_tasks.add_task(_hard_delete_sessions, list(body.ids))
     return {"deleted": deleted}
 
 
