@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(npm *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(python --version; python -c \"import sys; print\\(sys.executable\\)\")",
+      "PowerShell(Get-ChildItem \"C:\\\\HAL名古屋\\\\kinpoyo\" -Recurse -Depth 1 | Where-Object { $_.Name -notmatch \"node_modules|venv|\\\\.expo\" } | Select-Object FullName)",
+      "PowerShell(cmd /c rename \"C:\\\\HAL名古屋\\\\kinpoyo\\\\kinpoyo-app\" \"frontend\" 2>&1; Write-Host \"exit: $LASTEXITCODE\")",
+      "PowerShell(Get-Process *)",
+      "PowerShell([System.IO.Directory]::Move\\(\"C:\\\\HAL名古屋\\\\kinpoyo\\\\kinpoyo-app\", \"C:\\\\HAL名古屋\\\\kinpoyo\\\\frontend\"\\); Write-Host \"frontend ok\")",
+      "PowerShell(robocopy \"C:\\\\HAL名古屋\\\\kinpoyo\\\\kinpoyo-app\" \"C:\\\\HAL名古屋\\\\kinpoyo\\\\frontend\" /E /COPYALL /NFL /NDL /NJH /NJS 2>&1 | Select-Object -Last 5)",
+      "PowerShell(robocopy \"C:\\\\HAL名古屋\\\\kinpoyo\\\\kinpoyo-app\" \"C:\\\\HAL名古屋\\\\kinpoyo\\\\frontend\" /E /NFL /NDL /NJH /NJS; Write-Host \"robocopy exit: $LASTEXITCODE\")",
+      "PowerShell(Get-ChildItem \"C:\\\\HAL名古屋\\\\kinpoyo\" -Depth 1 | Where-Object { $_.Name -notmatch \"node_modules|venv|\\\\.expo\" } | Select-Object FullName)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8000\" -Method Get | ConvertTo-Json)",
+      "PowerShell(fastapi *)",
+      "PowerShell(pip install *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(python -m fastapi dev \"C:\\\\HAL名古屋\\\\kinpoyo\\\\backend-core\\\\main.py\" 2>&1)",
+      "PowerShell($env:PYTHONUTF8 = \"1\"; Set-Location \"C:\\\\HAL名古屋\\\\kinpoyo\\\\backend-core\"; python -m fastapi dev main.py 2>&1)",
+      "PowerShell(cmd /c \"rmdir /s /q \"\"C:\\\\HAL名古屋\\\\kinpoyo\\\\frontend\\\\node_modules\"\"\"; Write-Host \"exit: $LASTEXITCODE\")",
+      "PowerShell(docker --version)",
+      "PowerShell(docker info *)"
+    ]
+  }
+}
