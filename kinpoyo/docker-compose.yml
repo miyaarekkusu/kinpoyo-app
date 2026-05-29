@@ -1,0 +1,17 @@
+services:
+  frontend:
+    build: ./frontend/kinpoyo-app
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./frontend/kinpoyo-app:/app
+      - /app/node_modules
+    environment:
+      - EXPO_DEVTOOLS_LISTEN_ADDRESS=0.0.0.0
+
+  backend:
+    build: ./backend-core
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend-core:/app
