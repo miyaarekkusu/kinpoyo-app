@@ -8,6 +8,9 @@ backend-core/.env
 frontend/node_modules/
 frontend/.expo/
 
+# Claude Code
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db
