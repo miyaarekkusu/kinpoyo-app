@@ -119,20 +119,22 @@ kinpoyo/
 ├── AGENTS.md              # このファイル（必ず更新すること）
 ├── frontend/              # React Native (Expo) フロントエンド ← Expoアプリのルート
 │   ├── app/
-│   │   ├── _layout.tsx               # ルートレイアウト
-│   │   ├── modal.tsx
-│   │   ├── calendar.tsx              # カレンダー画面 ✅
-│   │   ├── kintore-touroku.tsx       # 筋トレ登録フォーム ✅
-│   │   ├── program-ichiran.tsx       # プログラム一覧 ✅
-│   │   ├── program-shousa1.tsx       # BIG3強化プログラム詳細 ✅
-│   │   ├── program-shousa2.tsx       # ボディウェイト詳細 ✅
-│   │   └── (tabs)/
-│   │       ├── _layout.tsx      # タブナビゲーション（5タブ）
-│   │       ├── index.tsx        # ホーム画面 ✅
-│   │       ├── community.tsx    # コミュニティー（準備中）
-│   │       ├── workout.tsx      # 筋トレ開始（準備中）
-│   │       ├── records.tsx      # 記録（準備中）
-│   │       └── profile.tsx      # プロフィール（準備中）
+│   │   ├── _layout.tsx               # ルートレイアウト（Stack ナビゲーション）
+│   │   ├── (screens)/                # フルスクリーン画面グループ（URLパスは変わらない）
+│   │   │   ├── modal.tsx             # モーダル画面
+│   │   │   ├── calendar.tsx          # カレンダー画面 ✅
+│   │   │   ├── workout-register.tsx  # 筋トレ登録フォーム ✅
+│   │   │   └── program/             # プログラム関連画面
+│   │   │       ├── index.tsx        # プログラム一覧 ✅  (route: /program)
+│   │   │       ├── big3.tsx         # BIG3強化プログラム詳細 ✅  (route: /program/big3)
+│   │   │       └── bodyweight.tsx   # ボディウェイト詳細 ✅  (route: /program/bodyweight)
+│   │   └── (tabs)/                   # タブナビゲーショングループ
+│   │       ├── _layout.tsx           # タブナビゲーション（5タブ）
+│   │       ├── index.tsx             # ホーム画面 ✅
+│   │       ├── community.tsx         # コミュニティー ✅
+│   │       ├── workout.tsx           # 筋トレ開始（準備中）
+│   │       ├── records.tsx           # 記録 ✅
+│   │       └── profile.tsx           # プロフィール ✅
 │   ├── components/    # 共通コンポーネント
 │   ├── constants/     # デザイントークン（theme.ts）
 │   ├── styles/        # CSSテンプレート
@@ -146,6 +148,11 @@ kinpoyo/
     └── DATABASE.md        # DB設計書（テーブル定義・ER図・設計方針）
 ```
 
+> **Expo Router ルートグループについて**
+> `(screens)` と `(tabs)` はどちらもルートグループ（括弧で囲んだフォルダー）。
+> URLパスには影響しない（例: `(screens)/calendar.tsx` → `/calendar`）。
+> ファイル整理のためだけに使用している。
+
 ---
 
 ## 画面一覧・実装状況
@@ -153,11 +160,11 @@ kinpoyo/
 | 画面 | ファイル | 状態 | 備考 |
 |------|---------|------|------|
 | ホーム | `(tabs)/index.tsx` | ✅ 実装済み | ヒーローバナー・スクロール週カレンダー・統計グリッド・体重・プログラムカード（→遷移接続済） |
-| カレンダー | `calendar.tsx` | ✅ 実装済み | 月表示・色フィルターモーダル・筋トレ登録（→kintore-touroku）・修正ボタン・筋トレ一覧 |
-| 筋トレ登録 | `kintore-touroku.tsx` | ✅ 実装済み | 種目追加モーダル（Push/Pull/Leg・部位別フィルター、24種目）・セット数/レップ数/重量(kg) 3カラムテーブル・×でキャンセル |
-| プログラム一覧 | `program-ichiran.tsx` | ✅ 実装済み | BIG3強化・ボディウェイトの2プログラムカード |
-| BIG3プログラム詳細 | `program-shousa1.tsx` | ✅ 実装済み | ヒーロー・概要グリッド・週スケジュール・3種目・開始ボタン |
-| ボディウェイト詳細 | `program-shousa2.tsx` | ✅ 実装済み | ヒーロー・概要グリッド・週スケジュール・6種目・開始ボタン |
+| カレンダー | `(screens)/calendar.tsx` | ✅ 実装済み | 月表示・色フィルターモーダル・筋トレ登録（→workout-register）・修正ボタン・筋トレ一覧 |
+| 筋トレ登録 | `(screens)/workout-register.tsx` | ✅ 実装済み | 種目追加モーダル（Push/Pull/Leg・部位別フィルター、24種目）・セット数/レップ数/重量(kg) 3カラムテーブル・×でキャンセル |
+| プログラム一覧 | `(screens)/program/index.tsx` | ✅ 実装済み | BIG3強化・ボディウェイトの2プログラムカード |
+| BIG3プログラム詳細 | `(screens)/program/big3.tsx` | ✅ 実装済み | ヒーロー・概要グリッド・週スケジュール・3種目・開始ボタン |
+| ボディウェイト詳細 | `(screens)/program/bodyweight.tsx` | ✅ 実装済み | ヒーロー・概要グリッド・週スケジュール・6種目・開始ボタン |
 | コミュニティー | `(tabs)/community.tsx` | ✅ 実装済み | 4タブ・投稿カード(サンプル3件)・FABボタン |
 | 筋トレ開始 | `(tabs)/workout.tsx` | 🔲 未実装（準備中） | カメラ・AIカウント実装予定 |
 | 記録 | `(tabs)/records.tsx` | ✅ 実装済み | 期間セレクター・AI週間レポート・曜日別サークル・筋肉疲労度バー・週間サマリー |
@@ -251,3 +258,5 @@ kinpoyo/
 | 2026-06-02 | 全画面mockup実装（サブエージェント2並列）。ホーム：ヒーローバナー・炎ストリーク・統計グリッド追加。コミュニティー：4タブ・投稿カード・FAB。記録：期間セレクター・AI週間レポート・曜日サークル・筋肉疲労度バー。プロフィール：ユーザーカード・実績4グリッド・BIG3・身体情報・設定。icon-symbol.tsx拡充 |
 | 2026-06-02 | ナビゲーション接続：ワークアウト登録→calendar、プログラムカード→program-ichiran、筋トレ登録→kintore-touroku。新規画面：kintore-touroku・program-ichiran・program-shousa1・program-shousa2 |
 | 2026-06-02 | ホームのヒーローバナー削除。筋トレ登録：種目追加モーダル(PPL/部位別)・セット/種目×削除・空状態UI。カレンダー：ヘッダー2行構成・月タイトル小さく・筋トレ修正を中央ダイアログ化・削除をメイン一覧に反映。backend-core/DATABASE.md作成（16テーブルDB設計書） |
+| 2026-06-02 | フォルダー構成整理：app/直下の画面ファイルを `(screens)/` ルートグループに移動。URLパスは変更なし。_layout.tsx のStack.Screen名を更新 |
+| 2026-06-02 | ファイル名を英語に統一・プログラム画面を `(screens)/program/` サブフォルダーにまとめる：kintore-touroku→workout-register、program-ichiran→program/index、program-shousa1→program/big3、program-shousa2→program/bodyweight。ナビゲーションルートも更新 |
