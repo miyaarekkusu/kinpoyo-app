@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "kinpoyo",
+    "slug": "kinpoyo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "kinpoyo",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kinpoyo.app"
+    },
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.kinpoyo.app"
+    },
+    "web": {
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-splash-screen"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
