@@ -225,12 +225,6 @@ export default function HomeScreen() {
           <Text style={styles.emptySubtitle}>ワークアウトを登録してみましょう</Text>
         </View>
 
-        {/* ── Register Button ──────────────────── */}
-        <TouchableOpacity style={styles.registerBtn} activeOpacity={0.85} onPress={() => router.push('/calendar')}>
-          <IconSymbol name="dumbbell.fill" size={20} color={Colors.textOnPrimary} style={styles.registerBtnIcon} />
-          <Text style={styles.registerBtnText}>ワークアウト登録</Text>
-        </TouchableOpacity>
-
         {/* ── Stats Row ────────────────────────── */}
         <View style={styles.statsRow}>
           <View style={styles.statCard}>
@@ -513,6 +507,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     paddingVertical: Space[1],
+    paddingHorizontal: Space[4],
   },
   dayCol: {
     alignItems: 'center',
@@ -605,27 +600,6 @@ const styles = StyleSheet.create({
   emptySubtitle: {
     fontSize: FontSize.sm,
     color: Colors.textHint,
-  },
-
-  // ── Register Button
-  registerBtn: {
-    backgroundColor: Colors.primaryDark,
-    borderRadius: Radius.lg,
-    height: Layout.buttonHeightLg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Space[4],
-    flexDirection: 'row',
-    gap: Space[2],
-    ...Shadow.md,
-    shadowColor: Colors.primaryDark,
-  },
-  registerBtnIcon: {},
-  registerBtnText: {
-    color: Colors.textOnPrimary,
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.bold,
-    letterSpacing: 0.5,
   },
 
   // ── Stats Row
