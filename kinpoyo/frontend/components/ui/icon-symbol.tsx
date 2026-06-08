@@ -52,6 +52,11 @@ const MAPPING = {
   'scale.3d': 'monitor-weight',
   'figure.arms.open': 'accessibility',
   'percent': 'percent',
+  // 認証画面用追加アイコン
+  'eye': 'visibility',
+  'eye.slash': 'visibility-off',
+  'envelope': 'email',
+  'checkmark': 'check',
 } as IconMapping;
 
 /**
