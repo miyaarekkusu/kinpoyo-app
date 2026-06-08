@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, Stack } from 'expo-router';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -110,6 +110,7 @@ function newExercise(id: number, name = '', part: MusclePart | null = null): Exe
 
 // ─── コンポーネント ────────────────────────────────────────────
 export default function KintoreTourokuScreen() {
+  const insets = useSafeAreaInsets();
   const today = new Date();
   const dateLabel = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日（${WEEKDAYS[today.getDay()]}）`;
 
@@ -351,10 +352,11 @@ export default function KintoreTourokuScreen() {
         visible={showModal}
         animationType="slide"
         onRequestClose={() => setShowModal(false)}>
-        <SafeAreaView style={styles.modalSafe} edges={['top']}>
+        {/* Modal内ではSafeAreaViewが正しく動作しないため、useSafeAreaInsetsで手動対応 */}
+        <View style={styles.modalSafe}>
 
-          {/* モーダルヘッダー */}
-          <View style={styles.modalHeader}>
+          {/* モーダルヘッダー（ノッチ分を paddingTop で確保） */}
+          <View style={[styles.modalHeader, { paddingTop: insets.top + Space[3] }]}>
             <Text style={styles.modalTitle}>種目を選ぶ</Text>
             <TouchableOpacity
               onPress={() => setShowModal(false)}
@@ -431,10 +433,10 @@ export default function KintoreTourokuScreen() {
             )}
           </ScrollView>
 
-          {/* 種目リスト */}
+          {/* 種目リスト（ホームインジケーター分を paddingBottom で確保） */}
           <ScrollView
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.exListContent}>
+            contentContainerStyle={[styles.exListContent, { paddingBottom: insets.bottom + 40 }]}>
             {filteredExercises.map((ex, i) => {
               const col = MUSCLE_COLORS[ex.muscle];
               return (
@@ -459,7 +461,7 @@ export default function KintoreTourokuScreen() {
               );
             })}
           </ScrollView>
-        </SafeAreaView>
+        </View>
       </Modal>
     </>
   );

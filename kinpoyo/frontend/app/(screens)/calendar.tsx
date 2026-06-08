@@ -232,23 +232,6 @@ export default function CalendarScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* ── ヘッダー Row2: 年月 + 今日ボタン ────── */}
-      <View style={styles.headerRow2}>
-        <TouchableOpacity onPress={prevMonth} hitSlop={8} style={styles.monthArrow}>
-          <IconSymbol name="chevron.left" size={20} color={Colors.textSecondary} />
-        </TouchableOpacity>
-        <Text style={styles.monthTitle}>{year}年{month + 1}月</Text>
-        <TouchableOpacity onPress={nextMonth} hitSlop={8} style={styles.monthArrow}>
-          <IconSymbol name="chevron.right" size={20} color={Colors.textSecondary} />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }} />
-        <TouchableOpacity onPress={goToToday} hitSlop={8}>
-          <View style={styles.todayBtnInner}>
-            <Text style={styles.todayBtnDate}>{today.getDate()}</Text>
-          </View>
-        </TouchableOpacity>
-      </View>
-
       {/* ── 絞り込みバー ─────────────────────────── */}
       <View style={styles.filterBar}>
         <TouchableOpacity
@@ -269,6 +252,24 @@ export default function CalendarScreen() {
             })}
           </View>
         )}
+      </View>
+
+      {/* ── ヘッダー Row2: 年月（中央ぞろえ）+ 今日ボタン ── */}
+      <View style={styles.headerRow2}>
+        <View style={styles.monthNav}>
+          <TouchableOpacity onPress={prevMonth} hitSlop={8} style={styles.monthArrow}>
+            <IconSymbol name="chevron.left" size={20} color={Colors.textSecondary} />
+          </TouchableOpacity>
+          <Text style={styles.monthTitle}>{year}年{month + 1}月</Text>
+          <TouchableOpacity onPress={nextMonth} hitSlop={8} style={styles.monthArrow}>
+            <IconSymbol name="chevron.right" size={20} color={Colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity onPress={goToToday} hitSlop={8} style={styles.todayBtn}>
+          <View style={styles.todayBtnInner}>
+            <Text style={styles.todayBtnDate}>{today.getDate()}</Text>
+          </View>
+        </TouchableOpacity>
       </View>
 
       {/* ── スクロールエリア ─────────────────────── */}
@@ -531,10 +532,21 @@ const styles = StyleSheet.create({
   headerRow2: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: Layout.screenPaddingH,
     paddingBottom: Space[3],
     backgroundColor: Colors.bgCard,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
+  },
+  monthNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: Space[2],
+  },
+  todayBtn: {
+    position: 'absolute',
+    right: Layout.screenPaddingH,
   },
   monthArrow: { padding: Space[1] },
   monthTitle: {
@@ -566,8 +578,6 @@ const styles = StyleSheet.create({
     paddingVertical: Space[2],
     gap: Space[2],
     backgroundColor: Colors.bgCard,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.divider,
   },
   filterToggle: {
     flexDirection: 'row',
