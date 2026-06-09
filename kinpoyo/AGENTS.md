@@ -362,3 +362,4 @@ kinpoyo/
 | 2026-06-09 | weight.tsx→weight-goal.tsx へ体重・単位をルーターパラメータで渡す実装：router.push に params: { currentWeight, unit } 追加・weight-goal.tsx で useLocalSearchParams で受け取り、currentWeightKg・初期 unit に反映。大数字・現在体重ラベル・定規ラベルの kg/lbs 変換も対応 |
 | 2026-06-09 | オンボーディング完了フロー修正：train-goal.tsx の「はじめる」で signIn を直接呼ぶ代わりに /success へ遷移（params: { from: 'onboarding' }）。success.tsx で from=onboarding 時は signIn() を呼んで tabs へ、それ以外は /login へ。success.tsx のコンテンツを画面中央に修正（paddingTop → justifyContent: center） |
 | 2026-06-09 | login.tsx：ログインボタンを /gender（オンボーディング）→ signIn() 直接呼び出しに変更。オンボーディングは signup.tsx からのみ開始するよう修正 |
+| 2026-06-09 | ホーム画面（index.tsx）：体重カード・体重入力モーダル・関連ステート・未使用インポート（KeyboardAvoidingView/Modal/TextInput/Platform）・未使用スタイルを削除 |

@@ -2,15 +2,11 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   FlatList,
-  KeyboardAvoidingView,
-  Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -127,25 +123,6 @@ export default function HomeScreen() {
   const selDate = new Date(selectedDateStr);
   const selLabel = `${selDate.getMonth() + 1}月${selDate.getDate()}日（${WEEKDAYS[selDate.getDay()]}）`;
 
-  // 体重モーダル
-  const [weightModalOpen, setWeightModalOpen] = useState(false);
-  const [weight, setWeight] = useState('');
-  const [bodyFat, setBodyFat] = useState('');
-  const [savedWeight, setSavedWeight] = useState('');
-  const [savedBodyFat, setSavedBodyFat] = useState('');
-
-  const openWeightModal = () => {
-    setWeight(savedWeight);
-    setBodyFat(savedBodyFat);
-    setWeightModalOpen(true);
-  };
-
-  const saveWeight = () => {
-    setSavedWeight(weight);
-    setSavedBodyFat(bodyFat);
-    setWeightModalOpen(false);
-  };
-
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* ── Header ─────────────────────────────── */}
@@ -245,31 +222,6 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* ── Body Weight Card ─────────────────── */}
-        <TouchableOpacity style={styles.card} activeOpacity={0.75} onPress={openWeightModal}>
-          <View style={styles.cardRow}>
-            <View style={styles.cardLeft}>
-              <View style={[styles.cardIconWrap, { backgroundColor: '#EFF6FF' }]}>
-                <Text style={styles.cardEmoji}>⚖️</Text>
-              </View>
-              <View>
-                <Text style={styles.cardTitle}>体重</Text>
-                <Text style={styles.cardValue}>
-                  {savedWeight ? `${savedWeight} kg` : '-- kg'}
-                </Text>
-              </View>
-            </View>
-            <IconSymbol name="chevron.right" size={20} color={Colors.textHint} />
-          </View>
-          {savedWeight ? (
-            <Text style={styles.cardHint}>
-              {savedBodyFat ? `体脂肪率 ${savedBodyFat}%` : 'タップして更新'}
-            </Text>
-          ) : (
-            <Text style={styles.cardHint}>タップして体重を記録しましょう</Text>
-          )}
-        </TouchableOpacity>
-
         {/* ── Program Card ─────────────────────── */}
         <TouchableOpacity style={styles.card} activeOpacity={0.75} onPress={() => router.push('/program')}>
           <View style={styles.cardRow}>
@@ -290,70 +242,6 @@ export default function HomeScreen() {
         <View style={{ height: Space[8] }} />
       </ScrollView>
 
-      {/* ── 体重入力モーダル ─────────────────── */}
-      <Modal
-        visible={weightModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setWeightModalOpen(false)}>
-        <KeyboardAvoidingView
-          style={styles.modalOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={StyleSheet.absoluteFillObject} />
-
-          <View style={styles.modalDialog}>
-            {/* ヘッダー */}
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>体重を記録</Text>
-              <TouchableOpacity
-                onPress={() => setWeightModalOpen(false)}
-                hitSlop={8}
-                style={styles.modalCloseBtn}>
-                <IconSymbol name="xmark" size={18} color={Colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            {/* 体重入力 */}
-            <View style={styles.inputRow}>
-              <Text style={styles.inputIcon}>⚖️</Text>
-              <TextInput
-                style={styles.weightInput}
-                value={weight}
-                onChangeText={setWeight}
-                keyboardType="decimal-pad"
-                placeholder="0.0"
-                placeholderTextColor={Colors.textHint}
-                textAlign="center"
-              />
-              <Text style={styles.inputUnit}>kg</Text>
-            </View>
-
-            {/* 体脂肪率入力（任意） */}
-            <View style={styles.inputRow}>
-              <Text style={styles.inputIcon}>📊</Text>
-              <TextInput
-                style={[styles.weightInput, styles.secondaryInput]}
-                value={bodyFat}
-                onChangeText={setBodyFat}
-                keyboardType="decimal-pad"
-                placeholder="0.0"
-                placeholderTextColor={Colors.textHint}
-                textAlign="center"
-              />
-              <Text style={styles.inputUnit}>%　体脂肪率（任意）</Text>
-            </View>
-
-            {/* 保存ボタン */}
-            <TouchableOpacity
-              style={[styles.saveBtn, !weight && styles.saveBtnDisabled]}
-              onPress={saveWeight}
-              activeOpacity={0.85}
-              disabled={!weight}>
-              <Text style={styles.saveBtnText}>保存する</Text>
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -678,11 +566,6 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.semibold,
     color: Colors.textPrimary,
   },
-  cardValue: {
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.bold,
-    color: Colors.primaryDark,
-  },
   cardSubtitle: {
     fontSize: FontSize.sm,
     color: Colors.textHint,
@@ -693,87 +576,4 @@ const styles = StyleSheet.create({
     color: Colors.textHint,
   },
 
-  // ── 体重モーダル
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: Colors.bgOverlay,
-    paddingHorizontal: Space[5],
-  },
-  modalDialog: {
-    backgroundColor: Colors.bgCard,
-    borderRadius: Radius.xl,
-    width: '100%',
-    padding: Space[5],
-    ...Shadow.lg,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: Space[5],
-  },
-  modalTitle: {
-    fontSize: FontSize.lg,
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
-  },
-  modalCloseBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: Colors.bgScreen,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Space[3],
-    marginBottom: Space[4],
-  },
-  inputIcon: { fontSize: 22, width: 28, textAlign: 'center' },
-  weightInput: {
-    width: 90,
-    height: 52,
-    borderRadius: Radius.md,
-    borderWidth: 2,
-    borderColor: Colors.primaryBorder,
-    backgroundColor: Colors.primarySubtle,
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.bold,
-    color: Colors.primaryDark,
-  },
-  secondaryInput: {
-    borderColor: Colors.border,
-    backgroundColor: Colors.bgScreen,
-    fontSize: FontSize.lg,
-    color: Colors.textPrimary,
-    width: 80,
-    height: 44,
-  },
-  inputUnit: {
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-    fontWeight: FontWeight.medium,
-  },
-  saveBtn: {
-    height: Layout.buttonHeightMd,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.primaryDark,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: Space[2],
-    ...Shadow.sm,
-    shadowColor: Colors.primaryDark,
-  },
-  saveBtnDisabled: {
-    backgroundColor: Colors.border,
-  },
-  saveBtnText: {
-    fontSize: FontSize.base,
-    fontWeight: FontWeight.bold,
-    color: Colors.textOnPrimary,
-  },
 });
