@@ -27,7 +27,6 @@ import {
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -53,7 +52,7 @@ export default function LoginScreen() {
                   style={styles.input}
                   value={email}
                   onChangeText={setEmail}
-                  placeholder="contact@dscodetech.com"
+                  placeholder="メールアドレス"
                   placeholderTextColor={Colors.textHint}
                   keyboardType="email-address"
                   autoCapitalize="none"

@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, Stack } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -12,11 +12,15 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors, Radius, Space } from '@/constants/theme';
+import { useAuth } from '@/hooks/use-auth';
+import { Colors, Radius } from '@/constants/theme';
 
 const AUTO_NAVIGATE_DELAY = 1600;
 
 export default function SuccessScreen() {
+  const { from } = useLocalSearchParams<{ from: string }>();
+  const { signIn } = useAuth();
+
   const scale = useSharedValue(0);
   const opacity = useSharedValue(0);
   const checkOpacity = useSharedValue(0);
@@ -30,10 +34,14 @@ export default function SuccessScreen() {
     checkOpacity.value = withDelay(220, withTiming(1, { duration: 200 }));
 
     const timer = setTimeout(() => {
-      router.replace('/login');
+      if (from === 'onboarding') {
+        signIn();
+      } else {
+        router.replace('/login');
+      }
     }, AUTO_NAVIGATE_DELAY);
     return () => clearTimeout(timer);
-  }, [checkOpacity, opacity, scale]);
+  }, [checkOpacity, from, opacity, scale, signIn]);
 
   const circleStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
@@ -67,7 +75,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     alignItems: 'center',
-    paddingTop: Space[16] * 2,
+    justifyContent: 'center',
   },
   circle: {
     width: 88,

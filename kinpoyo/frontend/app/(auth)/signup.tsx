@@ -14,7 +14,6 @@ import { router, Stack } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { useAuth } from '@/hooks/use-auth';
 import {
   Colors,
   FontSize,
@@ -26,8 +25,6 @@ import {
 } from '@/constants/theme';
 
 export default function SignupScreen() {
-  const { signIn } = useAuth();
-
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -54,7 +51,7 @@ export default function SignupScreen() {
                   style={styles.input}
                   value={name}
                   onChangeText={setName}
-                  placeholder="きんぽよ太郎"
+                  placeholder="ニックネーム"
                   placeholderTextColor={Colors.textHint}
                 />
               </View>
@@ -65,7 +62,7 @@ export default function SignupScreen() {
                   style={styles.input}
                   value={email}
                   onChangeText={setEmail}
-                  placeholder="contact@dscodetech.com"
+                  placeholder="メールアドレス"
                   placeholderTextColor={Colors.textHint}
                   keyboardType="email-address"
                   autoCapitalize="none"
@@ -96,7 +93,7 @@ export default function SignupScreen() {
               <TouchableOpacity
                 style={[styles.primaryBtn, { marginTop: Space[2] }]}
                 activeOpacity={0.85}
-                onPress={signIn}>
+                onPress={() => router.push('/gender')}>
                 <Text style={styles.primaryBtnText}>新規作成</Text>
               </TouchableOpacity>
 
