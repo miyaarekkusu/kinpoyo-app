@@ -239,6 +239,73 @@ export default function HomeScreen() {
           <Text style={styles.cardHint}>プログラムに参加して一歩成長しましょう</Text>
         </TouchableOpacity>
 
+        {/* ── トレーニング知識セクション ── */}
+        <View style={styles.knowledgeSection}>
+          <Text style={styles.knowledgeSectionTitle}>💡 トレーニング知識</Text>
+
+          <View style={styles.knowledgeGrid}>
+            {/* 筋肥大とは */}
+            <TouchableOpacity
+              style={styles.knowledgeCard}
+              activeOpacity={0.75}
+              onPress={() => router.push('/program/hypertrophy' as any)}
+            >
+              <View style={styles.cardRow}>
+                <View style={styles.cardLeft}>
+                  <View style={[styles.cardIconWrap, { backgroundColor: '#FEF3C7' }]}>
+                    <Text style={styles.cardEmoji}>💪</Text>
+                  </View>
+                  <View>
+                    <Text style={styles.cardTitle}>筋肥大とは</Text>
+                    <Text style={styles.cardSubtitle}>効率よく筋肉を大きくするメカニズム</Text>
+                  </View>
+                </View>
+                <IconSymbol name="chevron.right" size={20} color={Colors.textHint} />
+              </View>
+            </TouchableOpacity>
+
+            {/* プログラム組み方 */}
+            <TouchableOpacity
+              style={styles.knowledgeCard}
+              activeOpacity={0.75}
+              onPress={() => router.push('/program/program-design' as any)}
+            >
+              <View style={styles.cardRow}>
+                <View style={styles.cardLeft}>
+                  <View style={[styles.cardIconWrap, { backgroundColor: '#E0F2FE' }]}>
+                    <Text style={styles.cardEmoji}>📋</Text>
+                  </View>
+                  <View>
+                    <Text style={styles.cardTitle}>プログラム組み方</Text>
+                    <Text style={styles.cardSubtitle}>分割法や適切なボリュームの設定方法</Text>
+                  </View>
+                </View>
+                <IconSymbol name="chevron.right" size={20} color={Colors.textHint} />
+              </View>
+            </TouchableOpacity>
+
+            {/* RPEとは */}
+            <TouchableOpacity
+              style={styles.knowledgeCard}
+              activeOpacity={0.75}
+              onPress={() => router.push('/program/rpe' as any)}
+            >
+              <View style={styles.cardRow}>
+                <View style={styles.cardLeft}>
+                  <View style={[styles.cardIconWrap, { backgroundColor: '#DCFCE7' }]}>
+                    <Text style={styles.cardEmoji}>🏋️</Text>
+                  </View>
+                  <View>
+                    <Text style={styles.cardTitle}>RPEとは</Text>
+                    <Text style={styles.cardSubtitle}>自覚的運動強度を用いた強度管理</Text>
+                  </View>
+                </View>
+                <IconSymbol name="chevron.right" size={20} color={Colors.textHint} />
+              </View>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         <View style={{ height: Space[8] }} />
       </ScrollView>
 
@@ -576,4 +643,26 @@ const styles = StyleSheet.create({
     color: Colors.textHint,
   },
 
+  // ── Knowledge Section
+  knowledgeSection: {
+    marginTop: Space[4],
+  },
+  knowledgeSectionTitle: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+    marginBottom: Space[3],
+    paddingLeft: Space[1],
+  },
+  knowledgeGrid: {
+    gap: Space[2],
+  },
+  knowledgeCard: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Layout.cardPadding,
+    paddingTop: Layout.cardPadding,
+    paddingBottom: Layout.cardPadding - Space[2],
+    ...Shadow.sm,
+  },
 });

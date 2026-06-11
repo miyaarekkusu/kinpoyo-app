@@ -151,9 +151,12 @@ kinpoyo/
 │   │   │   ├── calendar.tsx          # カレンダー画面 ✅
 │   │   │   ├── workout-register.tsx  # 筋トレ登録フォーム ✅
 │   │   │   └── program/             # プログラム関連画面
-│   │   │       ├── index.tsx        # プログラム一覧 ✅  (route: /program)
-│   │   │       ├── big3.tsx         # BIG3強化プログラム詳細 ✅  (route: /program/big3)
-│   │   │       └── bodyweight.tsx   # ボディウェイト詳細 ✅  (route: /program/bodyweight)
+│   │   │       ├── index.tsx           # プログラム一覧 ✅  (route: /program)
+│   │   │       ├── big3.tsx            # BIG3強化プログラム詳細 ✅  (route: /program/big3)
+│   │   │       ├── bodyweight.tsx      # ボディウェイト詳細 ✅  (route: /program/bodyweight)
+│   │   │       ├── hypertrophy.tsx     # 筋肥大とは ✅  (route: /program/hypertrophy)
+│   │   │       ├── program-design.tsx  # プログラム組み方 ✅  (route: /program/program-design)
+│   │   │       └── rpe.tsx             # RPEとは ✅  (route: /program/rpe)
 │   │   └── (tabs)/                   # タブナビゲーショングループ
 │   │       ├── _layout.tsx           # タブナビゲーション（5タブ）
 │   │       ├── index.tsx             # ホーム画面 ✅
@@ -198,6 +201,9 @@ kinpoyo/
 | プログラム一覧         | `(screens)/program/index.tsx`      | ✅ 実装済み           | BIG3強化・ボディウェイトの2プログラムカード                                                                                                                                               |
 | BIG3プログラム詳細     | `(screens)/program/big3.tsx`       | ✅ 実装済み           | ヒーロー・概要グリッド・週スケジュール・3種目・開始ボタン                                                                                                                                 |
 | ボディウェイト詳細     | `(screens)/program/bodyweight.tsx` | ✅ 実装済み           | ヒーロー・概要グリッド・週スケジュール・6種目・開始ボタン                                                                                                                                 |
+| 筋肥大とは             | `(screens)/program/hypertrophy.tsx` | ✅ 実装済み          | ホーム「トレーニング知識」カードから遷移。筋肥大の三大原則（トレーニング・栄養・休養）の解説                                                                                              |
+| プログラム組み方       | `(screens)/program/program-design.tsx` | ✅ 実装済み       | ホーム「トレーニング知識」カードから遷移。分割法・適切なボリューム設定の解説                                                                                                              |
+| RPEとは                | `(screens)/program/rpe.tsx`        | ✅ 実装済み           | ホーム「トレーニング知識」カードから遷移。自覚的運動強度（RPE）を用いた強度管理の解説                                                                                                     |
 | コミュニティー         | `(tabs)/community.tsx`             | ✅ 実装済み           | 4タブ(フォロー中・フィード・Q&A・お知らせ)・フォロー中空状態・ユーザーID検索モーダル・投稿カード一覧・投稿詳細モーダル(ワークアウトサマリー・種目リスト・いいね・コメント送信)・FABボタン |
 | 筋トレ開始             | `(tabs)/workout.tsx`               | ✅ 実装済み           | 今日の登録メニュー一覧・種目数/セット数サマリー・開始ボタン（登録あり時のみ）・未登録時はカレンダーへ誘導                                                                                 |
 | 記録                   | `(tabs)/records.tsx`               | ✅ 実装済み           | 週/月/年グラフ（折れ線・react-native-gifted-charts）・種目別最大重量・筋トレ履歴（期間+部位絞り込み・モーダル展開）                                                                       |
@@ -233,8 +239,8 @@ kinpoyo/
 - 週間カレンダー: 当日ハイライト（グリーン）・スワイプで8週先まで閲覧
 - 今日のトレーニング空状態表示（選択日）
 - 統計カード: 合計時間・今週の筋トレ回数
-- 体重カード（タップで入力モーダル）
 - プログラムカード（→ /program へ遷移）
+- トレーニング知識セクション: 「筋肥大とは」「プログラム組み方」「RPEとは」の3カード（→各詳細画面へ遷移）
 
 ### 筋トレ開始タブの構成（実装済み）
 
@@ -363,3 +369,4 @@ kinpoyo/
 | 2026-06-09 | オンボーディング完了フロー修正：train-goal.tsx の「はじめる」で signIn を直接呼ぶ代わりに /success へ遷移（params: { from: 'onboarding' }）。success.tsx で from=onboarding 時は signIn() を呼んで tabs へ、それ以外は /login へ。success.tsx のコンテンツを画面中央に修正（paddingTop → justifyContent: center） |
 | 2026-06-09 | login.tsx：ログインボタンを /gender（オンボーディング）→ signIn() 直接呼び出しに変更。オンボーディングは signup.tsx からのみ開始するよう修正 |
 | 2026-06-09 | ホーム画面（index.tsx）：体重カード・体重入力モーダル・関連ステート・未使用インポート（KeyboardAvoidingView/Modal/TextInput/Platform）・未使用スタイルを削除 |
+| 2026-06-11 | ホーム画面に「💡トレーニング知識」セクション追加（プログラムカードの下）：「筋肥大とは」「プログラム組み方」「RPEとは」の3カードから各詳細画面へ遷移。新規画面 `(screens)/program/hypertrophy.tsx`・`program-design.tsx`・`rpe.tsx` を追加（解説コンテンツのみ・ナビゲーションのみ） |
