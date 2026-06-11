@@ -152,7 +152,7 @@ export default function WeightGoalScreen() {
 
           <View style={styles.goalCard}>
             <View style={styles.goalHeaderRow}>
-              <TrainerAvatar size={28} />
+              <TrainerAvatar size={56} />
               <Text style={styles.goalHeading}>{message.heading}</Text>
             </View>
             <Text style={styles.goalBody}>{message.body}</Text>

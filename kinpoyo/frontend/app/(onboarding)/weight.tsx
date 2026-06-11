@@ -120,7 +120,7 @@ export default function WeightScreen() {
 
           <View style={styles.bmiCard}>
             <View style={styles.bmiHeaderRow}>
-              <TrainerAvatar size={28} />
+              <TrainerAvatar size={56} />
               <Text style={styles.bmiHeaderText}>現在のBMI</Text>
             </View>
             <View style={styles.bmiRow}>

@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LineChart } from 'react-native-gifted-charts';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { TrainerAvatar } from '@/components/ui/trainer-avatar';
 import {
   Colors, FontSize, FontWeight, Layout, Radius, Shadow, Space,
 } from '@/constants/theme';
@@ -164,6 +165,26 @@ function fmtVol(v: number): string {
   if (v >= 10000) return `${(v / 1000).toFixed(0)}k`;
   if (v > 0)      return `${(v / 1000).toFixed(1)}k`;
   return '';
+}
+
+// AIトレーナーのコメント（仮実装 — 今後 Claude API 連携のレビューに置き換え予定）
+function aiComment(period: GraphPeriod, vol: VolPoint[], summary: { count: number; volume: number }): string {
+  const points = vol.map(v => v.value).filter(v => v > 0);
+  const trendUp = points.length >= 2 && points[points.length - 1] >= points[0];
+
+  if (period === '週') {
+    return trendUp
+      ? `今週は${summary.count}回のトレーニングでボリュームが順調に伸びています。この調子で来週も継続していきましょう。`
+      : `今週は${summary.count}回トレーニングできました。次回は少し強度を上げてみると、さらに成長につながりそうです。`;
+  }
+  if (period === '月') {
+    return trendUp
+      ? `今月は週を追うごとにボリュームが増加傾向です。順調にステップアップできています。`
+      : `今月のボリュームは横ばい傾向です。種目のバリエーションを増やすと新しい刺激になりそうです。`;
+  }
+  return trendUp
+    ? `年間を通してボリュームが右肩上がりです。長期的な積み重ねが成果に繋がっています。`
+    : `直近の月でボリュームが落ち着いています。無理のないペースで継続していきましょう。`;
 }
 
 function applyHistFilter(
@@ -375,6 +396,22 @@ export default function RecordsScreen() {
               <Text style={[s.periodText, graphPeriod === p && s.periodTextActive]}>{p}</Text>
             </TouchableOpacity>
           ))}
+        </View>
+
+        {/* ── AIトレーナー（仮実装） ─────── */}
+        <View style={s.aiCard}>
+          <View style={s.aiHeaderRow}>
+            <TrainerAvatar size={36} />
+            <View style={s.aiHeaderTextWrap}>
+              <Text style={s.aiTitle}>AIトレーナー</Text>
+              <Text style={s.aiSubtitle}>
+                {graphPeriod === '週' && '今週のレビュー'}
+                {graphPeriod === '月' && '今月のレビュー'}
+                {graphPeriod === '年' && '今年のレビュー'}
+              </Text>
+            </View>
+          </View>
+          <Text style={s.aiComment}>{aiComment(graphPeriod, volData, summary)}</Text>
         </View>
 
         {/* ── サマリー ──────────────────────── */}
@@ -590,6 +627,21 @@ const s = StyleSheet.create({
   periodBtnActive: { backgroundColor: Colors.primaryDark },
   periodText:      { fontSize: FontSize.sm, fontWeight: FontWeight.semibold, color: Colors.textSecondary },
   periodTextActive:{ color: Colors.textOnPrimary },
+
+  // ── AIトレーナーカード（仮実装）
+  aiCard: {
+    backgroundColor: Colors.primarySubtle,
+    borderRadius: Radius.lg,
+    padding: CARD_PAD,
+    marginBottom: Space[4],
+    borderWidth: 1,
+    borderColor: Colors.primaryBorder,
+  },
+  aiHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: Space[3], marginBottom: Space[3] },
+  aiHeaderTextWrap: { flex: 1 },
+  aiTitle:    { fontSize: FontSize.base, fontWeight: FontWeight.bold, color: Colors.textPrimary },
+  aiSubtitle: { fontSize: FontSize.xs, color: Colors.textHint, marginTop: 1 },
+  aiComment:  { fontSize: FontSize.sm, color: Colors.textSecondary, lineHeight: FontSize.sm * 1.6 },
 
   summaryRow: { flexDirection: 'row', gap: Space[3], marginBottom: Space[4] },
   summaryCard: {
