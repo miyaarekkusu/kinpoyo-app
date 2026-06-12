@@ -1,6 +1,7 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -11,6 +12,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -43,6 +46,7 @@ interface FeedItem {
   title: string;
   body: string;
   imageCount?: number;
+  images?: string[];
   likes: number;
   commentCount: number;
   comments?: CommentItem[];
@@ -173,12 +177,17 @@ const NEWS_DATA: FeedItem[] = [
 export default function CommunityScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabKey>('follow');
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedPost, setSelectedPost] = useState<FeedItem | null>(null);
   const [showFollowModal, setShowFollowModal] = useState(false);
   const [followSearch, setFollowSearch] = useState('');
   const [showQrModal, setShowQrModal] = useState(false);
   const [showNotifModal, setShowNotifModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingPost, setEditingPost] = useState<FeedItem | null>(null);
+  const [postModalKey, setPostModalKey] = useState(0);
+  const [deletingPost, setDeletingPost] = useState<FeedItem | null>(null);
   const [feedData, setFeedData] = useState<FeedItem[]>(FEED_DATA);
   const [qaData, setQaData] = useState<FeedItem[]>(QA_DATA);
 
@@ -189,7 +198,7 @@ export default function CommunityScreen() {
     { key: 'news',   label: 'お知らせ' },
   ];
 
-  const handleCreatePost = (type: 'feed' | 'qa', title: string, body: string, imageCount: number) => {
+  const handleCreatePost = (type: 'feed' | 'qa', title: string, body: string, images: string[]) => {
     const newPost: FeedItem = {
       id: `${type}-${Date.now()}`,
       type,
@@ -198,7 +207,7 @@ export default function CommunityScreen() {
       timeAgo: '今',
       title,
       body,
-      ...(imageCount > 0 ? { imageCount } : {}),
+      ...(images.length > 0 ? { images, imageCount: images.length } : {}),
       likes: 0,
       commentCount: 0,
       comments: [],
@@ -213,14 +222,76 @@ export default function CommunityScreen() {
     setShowCreateModal(false);
   };
 
+  const handleUpdatePost = (type: 'feed' | 'qa', title: string, body: string, images: string[]) => {
+    if (!editingPost) return;
+    const updated: FeedItem = {
+      ...editingPost,
+      title,
+      body,
+      images: images.length > 0 ? images : undefined,
+      imageCount: images.length > 0 ? images.length : undefined,
+    };
+    if (type === 'feed') {
+      setFeedData(prev => prev.map(p => (p.id === editingPost.id ? updated : p)));
+    } else {
+      setQaData(prev => prev.map(p => (p.id === editingPost.id ? updated : p)));
+    }
+    setEditingPost(null);
+  };
+
+  const handleDeletePost = (post: FeedItem) => {
+    if (post.type === 'feed') {
+      setFeedData(prev => prev.filter(p => p.id !== post.id));
+    } else {
+      setQaData(prev => prev.filter(p => p.id !== post.id));
+    }
+    setSelectedPost(null);
+  };
+
+  const openCreateModal = () => {
+    setPostModalKey(k => k + 1);
+    setShowCreateModal(true);
+  };
+
+  const openEditModal = (post: FeedItem) => {
+    setSelectedPost(null);
+    setPostModalKey(k => k + 1);
+    setEditingPost(post);
+  };
+
+  const toggleSearch = () => {
+    setSearchVisible(prev => !prev);
+    setSearchQuery('');
+  };
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const filterByQuery = (data: FeedItem[]) => {
+    if (!normalizedQuery) return data;
+    return data.filter(item =>
+      item.title.toLowerCase().includes(normalizedQuery)
+      || item.body.toLowerCase().includes(normalizedQuery)
+      || item.user.toLowerCase().includes(normalizedQuery)
+    );
+  };
+
+  const filteredFeedData = filterByQuery(feedData);
+  const filteredQaData = filterByQuery(qaData);
+  const filteredNewsData = filterByQuery(NEWS_DATA);
+  const searchEmptyMessage = normalizedQuery ? '一致する投稿が見つかりませんでした' : undefined;
+
   return (
     <SafeAreaView style={s.safe}>
       {/* Header */}
       <View style={s.header}>
         <Text style={s.headerTitle}>コミュニティー</Text>
         <View style={s.headerRight}>
-          <TouchableOpacity style={s.headerBtn}>
-            <IconSymbol name="magnifyingglass" size={22} color={Colors.textPrimary} />
+          <TouchableOpacity style={s.headerBtn} onPress={toggleSearch} hitSlop={8}>
+            <IconSymbol
+              name={searchVisible ? 'xmark' : 'magnifyingglass'}
+              size={22}
+              color={Colors.textPrimary}
+            />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setShowNotifModal(true)}
@@ -235,6 +306,27 @@ export default function CommunityScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Search Bar */}
+      {searchVisible && (
+        <View style={s.searchBarContainer}>
+          <MaterialIcons name="search" size={20} color={Colors.textHint} />
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="投稿を検索"
+            placeholderTextColor={Colors.textHint}
+            style={s.searchBarInput}
+            autoFocus
+            returnKeyType="search"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={8}>
+              <MaterialIcons name="close" size={18} color={Colors.textHint} />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {/* Info Banner */}
       <TouchableOpacity style={s.infoBanner} activeOpacity={0.8}>
@@ -267,13 +359,13 @@ export default function CommunityScreen() {
           <FollowTab onSearchPress={() => setShowFollowModal(true)} />
         )}
         {activeTab === 'feed' && (
-          <FeedTab data={feedData} onPostPress={setSelectedPost} />
+          <FeedTab data={filteredFeedData} emptyMessage={searchEmptyMessage} onPostPress={setSelectedPost} onEdit={openEditModal} onDelete={setDeletingPost} />
         )}
         {activeTab === 'qa' && (
-          <FeedTab data={qaData} onPostPress={setSelectedPost} />
+          <FeedTab data={filteredQaData} emptyMessage={searchEmptyMessage} onPostPress={setSelectedPost} onEdit={openEditModal} onDelete={setDeletingPost} />
         )}
         {activeTab === 'news' && (
-          <FeedTab data={NEWS_DATA} onPostPress={setSelectedPost} />
+          <FeedTab data={filteredNewsData} emptyMessage={searchEmptyMessage} onPostPress={setSelectedPost} onEdit={openEditModal} onDelete={setDeletingPost} />
         )}
       </View>
 
@@ -282,7 +374,7 @@ export default function CommunityScreen() {
         <TouchableOpacity
           style={s.fab}
           activeOpacity={0.85}
-          onPress={() => setShowCreateModal(true)}
+          onPress={openCreateModal}
         >
           <MaterialIcons name="edit" size={24} color="#fff" />
         </TouchableOpacity>
@@ -369,16 +461,41 @@ export default function CommunityScreen() {
           <PostDetailScreen
             post={selectedPost}
             onClose={() => setSelectedPost(null)}
+            onEdit={openEditModal}
+            onDelete={handleDeletePost}
           />
         )}
       </Modal>
 
-      {/* ── 投稿作成 Modal ──────────────────────────────────── */}
-      <Modal visible={showCreateModal} animationType="slide" presentationStyle="pageSheet">
+      {/* ── 投稿作成・編集 Modal ──────────────────────────────── */}
+      <Modal visible={showCreateModal || !!editingPost} animationType="slide" presentationStyle="pageSheet">
         <PostCreateScreen
-          onClose={() => setShowCreateModal(false)}
-          onSubmit={handleCreatePost}
+          key={postModalKey}
+          initialPost={editingPost}
+          onClose={() => {
+            setShowCreateModal(false);
+            setEditingPost(null);
+          }}
+          onSubmit={editingPost ? handleUpdatePost : handleCreatePost}
         />
+      </Modal>
+
+      {/* ── 削除確認 Modal（投稿一覧から） ───────────────────── */}
+      <Modal
+        visible={!!deletingPost}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDeletingPost(null)}
+      >
+        {deletingPost && (
+          <DeleteConfirmDialog
+            onCancel={() => setDeletingPost(null)}
+            onConfirm={() => {
+              handleDeletePost(deletingPost);
+              setDeletingPost(null);
+            }}
+          />
+        )}
       </Modal>
 
       {/* ── 通知 Modal ──────────────────────────────────────── */}
@@ -405,10 +522,16 @@ function FollowTab({ onSearchPress }: { onSearchPress: () => void }) {
 
 function FeedTab({
   data,
+  emptyMessage,
   onPostPress,
+  onEdit,
+  onDelete,
 }: {
   data: FeedItem[];
+  emptyMessage?: string;
   onPostPress: (p: FeedItem) => void;
+  onEdit: (post: FeedItem) => void;
+  onDelete: (post: FeedItem) => void;
 }) {
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
 
@@ -420,6 +543,15 @@ function FeedTab({
       return next;
     });
   };
+
+  if (data.length === 0 && emptyMessage) {
+    return (
+      <View style={s.searchEmptyState}>
+        <MaterialIcons name="search-off" size={56} color={Colors.textHint} />
+        <Text style={s.searchEmptyText}>{emptyMessage}</Text>
+      </View>
+    );
+  }
 
   return (
     <ScrollView contentContainerStyle={s.feedList} showsVerticalScrollIndicator={false}>
@@ -448,31 +580,49 @@ function FeedTab({
                 contentContainerStyle={s.mediaScrollContent}
                 style={s.mediaScroll}
               >
-                {Array.from({ length: item.imageCount }).map((_, i) => (
-                  <View key={i} style={s.mediaSquare} />
-                ))}
+                {item.images
+                  ? item.images.map((uri, i) => (
+                      <Image key={i} source={{ uri }} style={s.mediaSquare} contentFit="cover" />
+                    ))
+                  : Array.from({ length: item.imageCount }).map((_, i) => (
+                      <View key={i} style={s.mediaSquare} />
+                    ))}
               </ScrollView>
             )}
 
-            {/* アクション行: いいねは色変更のみ、コメントは詳細を開く */}
+            {/* アクション行: 自分の投稿は編集・削除、いいねとコメントは右側 */}
             <View style={s.postActions}>
-              <TouchableOpacity
-                style={s.actionBtn}
-                onPress={() => toggleLike(item.id)}
-              >
-                <MaterialIcons
-                  name={liked ? 'thumb-up' : 'thumb-up-off-alt'}
-                  size={20}
-                  color={liked ? Colors.primary : Colors.textHint}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={s.actionBtn}
-                onPress={() => onPostPress(item)}
-              >
-                <MaterialIcons name="chat-bubble-outline" size={20} color={Colors.textHint} />
-                <Text style={s.actionCount}> {item.commentCount}</Text>
-              </TouchableOpacity>
+              <View style={s.postActionsLeft}>
+                {item.user === 'あなた' && (
+                  <>
+                    <TouchableOpacity onPress={() => onEdit(item)}>
+                      <Text style={s.textActionBtn}>編集</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => onDelete(item)}>
+                      <Text style={[s.textActionBtn, s.textActionBtnDanger]}>削除</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+              <View style={s.postActionsRight}>
+                <TouchableOpacity
+                  style={s.actionBtn}
+                  onPress={() => toggleLike(item.id)}
+                >
+                  <MaterialIcons
+                    name={liked ? 'thumb-up' : 'thumb-up-off-alt'}
+                    size={20}
+                    color={liked ? Colors.primary : Colors.textHint}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={s.actionBtn}
+                  onPress={() => onPostPress(item)}
+                >
+                  <MaterialIcons name="chat-bubble-outline" size={20} color={Colors.textHint} />
+                  <Text style={s.actionCount}> {item.commentCount}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         );
@@ -486,9 +636,13 @@ function FeedTab({
 function PostDetailScreen({
   post,
   onClose,
+  onEdit,
+  onDelete,
 }: {
   post: FeedItem;
   onClose: () => void;
+  onEdit: (post: FeedItem) => void;
+  onDelete: (post: FeedItem) => void;
 }) {
   const [liked, setLiked] = useState(false);
   const [bookmarked, setBookmarked] = useState(false);
@@ -496,6 +650,8 @@ function PostDetailScreen({
   const [comments, setComments] = useState<CommentItem[]>(post.comments ?? []);
   const [sortBy, setSortBy] = useState<'recent' | 'popular'>('recent');
   const [mainImageIndex, setMainImageIndex] = useState(0);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const isOwnPost = post.user === 'あなた';
 
   const handleSend = () => {
     if (!commentText.trim()) return;
@@ -520,6 +676,16 @@ function PostDetailScreen({
         <TouchableOpacity onPress={onClose} style={s.iconBtn}>
           <MaterialIcons name="chevron-left" size={28} color={Colors.textPrimary} />
         </TouchableOpacity>
+        {isOwnPost && (
+          <View style={s.detailHeaderActions}>
+            <TouchableOpacity onPress={() => onEdit(post)} style={s.detailHeaderTextBtn}>
+              <Text style={s.textActionBtn}>編集</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowDeleteConfirm(true)} style={s.detailHeaderTextBtn}>
+              <Text style={[s.textActionBtn, s.textActionBtnDanger]}>削除</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       <KeyboardAvoidingView
@@ -535,9 +701,13 @@ function PostDetailScreen({
           {/* 画像（複数ある場合はmain画像＋サムネイル一覧） */}
           {!!post.imageCount && (
             <View style={s.detailImageSection}>
-              <View style={s.detailImagePlaceholder}>
-                <Text style={s.detailImageLabel}>{mainImageIndex + 1}</Text>
-              </View>
+              {post.images ? (
+                <Image source={{ uri: post.images[mainImageIndex] }} style={s.detailImagePlaceholder} contentFit="cover" />
+              ) : (
+                <View style={s.detailImagePlaceholder}>
+                  <Text style={s.detailImageLabel}>{mainImageIndex + 1}</Text>
+                </View>
+              )}
               {post.imageCount > 1 && (
                 <ScrollView
                   horizontal
@@ -551,7 +721,11 @@ function PostDetailScreen({
                         onPress={() => setMainImageIndex(i)}
                         style={s.detailThumb}
                       >
-                        <Text style={s.detailImageLabel}>{i + 1}</Text>
+                        {post.images ? (
+                          <Image source={{ uri: post.images[i] }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                        ) : (
+                          <Text style={s.detailImageLabel}>{i + 1}</Text>
+                        )}
                       </TouchableOpacity>
                     )
                   ))}
@@ -653,6 +827,41 @@ function PostDetailScreen({
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* 削除確認: ネストしたModalを避け、画面内オーバーレイで表示 */}
+      {showDeleteConfirm && (
+        <DeleteConfirmDialog
+          onCancel={() => setShowDeleteConfirm(false)}
+          onConfirm={() => onDelete(post)}
+        />
+      )}
+    </View>
+  );
+}
+
+// ─── 削除確認ダイアログ ────────────────────────────────────────
+
+function DeleteConfirmDialog({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <View style={s.dialogOverlay}>
+      <View style={s.dialogBox}>
+        <Text style={s.dialogTitle}>投稿を削除しますか？</Text>
+        <Text style={s.dialogMessage}>削除すると元に戻せません。</Text>
+        <View style={s.dialogActions}>
+          <TouchableOpacity style={s.dialogCancelBtn} onPress={onCancel}>
+            <Text style={s.dialogCancelBtnText}>キャンセル</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.dialogDeleteBtn} onPress={onConfirm}>
+            <Text style={s.dialogDeleteBtnText}>削除</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     </View>
   );
 }
@@ -660,33 +869,46 @@ function PostDetailScreen({
 // ─── 投稿作成画面 ────────────────────────────────────────────
 
 function PostCreateScreen({
+  initialPost,
   onClose,
   onSubmit,
 }: {
+  initialPost?: FeedItem | null;
   onClose: () => void;
-  onSubmit: (type: 'feed' | 'qa', title: string, body: string, imageCount: number) => void;
+  onSubmit: (type: 'feed' | 'qa', title: string, body: string, images: string[]) => void;
 }) {
-  const [type, setType] = useState<'feed' | 'qa'>('feed');
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
-  const [images, setImages] = useState<number[]>([]);
-  const nextImageId = useRef(0);
+  const isEditing = !!initialPost;
+  const [type, setType] = useState<'feed' | 'qa'>(initialPost?.type === 'qa' ? 'qa' : 'feed');
+  const [title, setTitle] = useState(initialPost?.title ?? '');
+  const [body, setBody] = useState(initialPost?.body ?? '');
+  const [images, setImages] = useState<string[]>(initialPost?.images ?? []);
 
   const canSubmit = title.trim().length > 0 && body.trim().length > 0;
 
-  const addImage = () => {
+  const addImage = async () => {
     if (images.length >= 5) return;
-    nextImageId.current += 1;
-    setImages(prev => [...prev, nextImageId.current]);
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('権限が必要です', '画像を選択するには写真へのアクセスを許可してください');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: 5 - images.length,
+      quality: 0.8,
+    });
+    if (result.canceled) return;
+    setImages(prev => [...prev, ...result.assets.map(a => a.uri)].slice(0, 5));
   };
 
-  const removeImage = (id: number) => {
-    setImages(prev => prev.filter(i => i !== id));
+  const removeImage = (uri: string) => {
+    setImages(prev => prev.filter(i => i !== uri));
   };
 
   const handleSubmit = () => {
     if (!canSubmit) return;
-    onSubmit(type, title.trim(), body.trim(), images.length);
+    onSubmit(type, title.trim(), body.trim(), images);
   };
 
   return (
@@ -695,9 +917,11 @@ function PostCreateScreen({
         <TouchableOpacity onPress={onClose} style={s.iconBtn}>
           <MaterialIcons name="close" size={24} color={Colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={s.modalTitle}>投稿を作成</Text>
-        <TouchableOpacity onPress={handleSubmit} disabled={!canSubmit} style={s.iconBtn}>
-          <Text style={[s.postSubmitText, !canSubmit && s.postSubmitTextDisabled]}>投稿</Text>
+        <Text style={s.modalTitle}>{isEditing ? '投稿を編集' : '投稿を作成'}</Text>
+        <TouchableOpacity onPress={handleSubmit} disabled={!canSubmit} style={[s.iconBtn, s.postSubmitBtn]}>
+          <Text style={[s.postSubmitText, !canSubmit && s.postSubmitTextDisabled]}>
+            {isEditing ? '更新' : '投稿'}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -711,21 +935,23 @@ function PostCreateScreen({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* 投稿先タイプ */}
-          <View style={s.createTypeRow}>
-            <TouchableOpacity
-              style={[s.tabPill, type === 'feed' && s.tabPillActive]}
-              onPress={() => setType('feed')}
-            >
-              <Text style={[s.tabLabel, type === 'feed' && s.tabLabelActive]}>フィード</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.tabPill, type === 'qa' && s.tabPillActive]}
-              onPress={() => setType('qa')}
-            >
-              <Text style={[s.tabLabel, type === 'qa' && s.tabLabelActive]}>Q&A</Text>
-            </TouchableOpacity>
-          </View>
+          {/* 投稿先タイプ（編集時は変更不可のため非表示） */}
+          {!isEditing && (
+            <View style={s.createTypeRow}>
+              <TouchableOpacity
+                style={[s.tabPill, type === 'feed' && s.tabPillActive]}
+                onPress={() => setType('feed')}
+              >
+                <Text style={[s.tabLabel, type === 'feed' && s.tabLabelActive]}>フィード</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.tabPill, type === 'qa' && s.tabPillActive]}
+                onPress={() => setType('qa')}
+              >
+                <Text style={[s.tabLabel, type === 'qa' && s.tabLabelActive]}>Q&A</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* タイトル */}
           <TextInput
@@ -755,9 +981,10 @@ function PostCreateScreen({
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={s.createImageRow}
             >
-              {images.map(id => (
-                <View key={id} style={s.createImagePreview}>
-                  <TouchableOpacity onPress={() => removeImage(id)} style={s.createImageRemoveBtn}>
+              {images.map(uri => (
+                <View key={uri} style={s.createImagePreview}>
+                  <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                  <TouchableOpacity onPress={() => removeImage(uri)} style={s.createImageRemoveBtn}>
                     <MaterialIcons name="close" size={16} color="#fff" />
                   </TouchableOpacity>
                 </View>
@@ -813,6 +1040,39 @@ const s = StyleSheet.create({
     color: Colors.textOnPrimary,
     fontSize: FontSize.sm,
     fontWeight: FontWeight.bold,
+  },
+
+  // ── Search Bar ────────────────────────────────────────────
+  searchBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space[2],
+    marginHorizontal: Layout.screenPaddingH,
+    marginBottom: Space[3],
+    paddingHorizontal: Space[3],
+    height: Layout.inputHeight,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bgCard,
+  },
+  searchBarInput: {
+    flex: 1,
+    fontSize: FontSize.base,
+    color: Colors.textPrimary,
+  },
+  searchEmptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Space[3],
+    paddingHorizontal: Space[8],
+    paddingBottom: 80,
+  },
+  searchEmptyText: {
+    fontSize: FontSize.base,
+    color: Colors.textSecondary,
+    textAlign: 'center',
   },
 
   // ── Info Banner ───────────────────────────────────────────
@@ -944,12 +1204,20 @@ const s = StyleSheet.create({
   },
   postActions: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: Space[4],
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginTop: Space[2],
   },
+  postActionsLeft: { flexDirection: 'row', gap: Space[3] },
+  postActionsRight: { flexDirection: 'row', gap: Space[4] },
   actionBtn: { flexDirection: 'row', alignItems: 'center' },
   actionCount: { fontSize: FontSize.sm, color: Colors.textHint },
+  textActionBtn: {
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.medium,
+    color: Colors.textSecondary,
+  },
+  textActionBtnDanger: { color: Colors.error },
 
   // ── FAB ──────────────────────────────────────────────────
   fab: {
@@ -990,6 +1258,7 @@ const s = StyleSheet.create({
     color: Colors.primary,
   },
   postSubmitTextDisabled: { color: Colors.textHint },
+  postSubmitBtn: { marginRight: Space[2] },
 
   // ── 投稿作成 Modal ─────────────────────────────────────────
   createBody: {
@@ -1031,6 +1300,7 @@ const s = StyleSheet.create({
     width: 110, height: 110,
     borderRadius: Radius.md,
     backgroundColor: Colors.border,
+    overflow: 'hidden',
   },
   createImageRemoveBtn: {
     position: 'absolute',
@@ -1134,6 +1404,66 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.divider,
   },
+  detailHeaderActions: { flexDirection: 'row' },
+  detailHeaderTextBtn: {
+    paddingHorizontal: Space[3],
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ── 削除確認ダイアログ（画面内オーバーレイ） ──────────────────
+  dialogOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.bgOverlay,
+    paddingHorizontal: Space[5],
+  },
+  dialogBox: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.xl,
+    width: '100%',
+    padding: Space[5],
+    gap: Space[2],
+  },
+  dialogTitle: {
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+  },
+  dialogMessage: {
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: Space[2],
+  },
+  dialogActions: { flexDirection: 'row', gap: Space[3] },
+  dialogCancelBtn: {
+    flex: 1,
+    paddingVertical: Space[3],
+    borderRadius: Radius.md,
+    backgroundColor: Colors.bgScreen,
+    alignItems: 'center',
+  },
+  dialogCancelBtnText: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textPrimary,
+  },
+  dialogDeleteBtn: {
+    flex: 1,
+    paddingVertical: Space[3],
+    borderRadius: Radius.md,
+    backgroundColor: Colors.error,
+    alignItems: 'center',
+  },
+  dialogDeleteBtnText: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textOnPrimary,
+  },
   detailBody: { padding: Layout.screenPaddingH, paddingBottom: Space[10] },
   detailImageSection: { marginBottom: Space[3] },
   detailImagePlaceholder: {
@@ -1159,6 +1489,7 @@ const s = StyleSheet.create({
     backgroundColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
   detailTitle: {
     fontSize: FontSize.lg,
