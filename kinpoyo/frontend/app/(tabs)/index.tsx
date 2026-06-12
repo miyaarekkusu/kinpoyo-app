@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 
+import { NotificationsModal } from '@/components/notifications-modal';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
   Colors,
@@ -68,6 +69,7 @@ export default function HomeScreen() {
   const weeks = useMemo(() => buildWeeks(), []);
   const [weekIndex, setWeekIndex] = useState(0);
   const [selectedDateStr, setSelectedDateStr] = useState(today.toDateString());
+  const [showNotifModal, setShowNotifModal] = useState(false);
   const flatListRef = useRef<FlatList<DayInfo[]>>(null);
 
   const currentWeek = weeks[weekIndex];
@@ -141,7 +143,10 @@ export default function HomeScreen() {
             style={styles.iconBtn}>
             <IconSymbol name="calendar" size={22} color={Colors.textSecondary} />
           </TouchableOpacity>
-          <TouchableOpacity hitSlop={8} style={styles.iconBtn}>
+          <TouchableOpacity
+            onPress={() => setShowNotifModal(true)}
+            hitSlop={8}
+            style={styles.iconBtn}>
             <IconSymbol name="bell.fill" size={22} color={Colors.textSecondary} />
           </TouchableOpacity>
         </View>
@@ -309,6 +314,7 @@ export default function HomeScreen() {
         <View style={{ height: Space[8] }} />
       </ScrollView>
 
+      <NotificationsModal visible={showNotifModal} onClose={() => setShowNotifModal(false)} />
     </SafeAreaView>
   );
 }

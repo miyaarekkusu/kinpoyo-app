@@ -153,7 +153,10 @@ export default function WeightGoalScreen() {
           <View style={styles.goalCard}>
             <View style={styles.goalHeaderRow}>
               <TrainerAvatar size={56} />
-              <Text style={styles.goalHeading}>{message.heading}</Text>
+              <View style={styles.goalHeaderTextWrap}>
+                <Text style={styles.goalHeaderTitle}>AIトレーナー</Text>
+                <Text style={styles.goalHeaderSubtitle}>{message.heading}</Text>
+              </View>
             </View>
             <Text style={styles.goalBody}>{message.body}</Text>
             <View style={styles.bulletList}>
@@ -292,12 +295,18 @@ const styles = StyleSheet.create({
   goalHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Space[2],
+    gap: Space[3],
   },
-  goalHeading: {
+  goalHeaderTextWrap: { flex: 1 },
+  goalHeaderTitle: {
     fontSize: FontSize.base,
     fontWeight: FontWeight.bold,
     color: Colors.textPrimary,
+  },
+  goalHeaderSubtitle: {
+    fontSize: FontSize.xs,
+    color: Colors.textHint,
+    marginTop: 1,
   },
   goalBody: {
     fontSize: FontSize.sm,

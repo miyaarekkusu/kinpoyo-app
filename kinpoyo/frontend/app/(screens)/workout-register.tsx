@@ -10,8 +10,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router, Stack } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
@@ -110,11 +110,17 @@ function newExercise(id: number, name = '', part: MusclePart | null = null): Exe
 
 // ─── コンポーネント ────────────────────────────────────────────
 export default function KintoreTourokuScreen() {
-  const insets = useSafeAreaInsets();
+  const { year, month, date } = useLocalSearchParams<{ year?: string; month?: string; date?: string }>();
   const today = new Date();
-  const dateLabel = `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日（${WEEKDAYS[today.getDay()]}）`;
+  const targetDate = year && month && date
+    ? new Date(Number(year), Number(month), Number(date))
+    : today;
+  const dateLabel = `${targetDate.getFullYear()}年${targetDate.getMonth() + 1}月${targetDate.getDate()}日（${WEEKDAYS[targetDate.getDay()]}）`;
 
   const [exercises, setExercises] = useState<ExerciseEntry[]>([]);
+
+  // 保存完了モーダル
+  const [showSavedModal, setShowSavedModal] = useState(false);
 
   // 種目選択モーダル
   const [showModal, setShowModal] = useState(false);
@@ -187,7 +193,7 @@ export default function KintoreTourokuScreen() {
               <IconSymbol name="chevron.left" size={26} color={Colors.textPrimary} />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>筋トレ登録</Text>
-            <TouchableOpacity onPress={() => router.back()} hitSlop={8} style={styles.headerSide}>
+            <TouchableOpacity onPress={() => router.push('/workout')} hitSlop={8} style={styles.headerSide}>
               <Text style={styles.headerDone}>完了</Text>
             </TouchableOpacity>
           </View>
@@ -202,7 +208,7 @@ export default function KintoreTourokuScreen() {
             <View style={styles.dateCard}>
               <Text style={styles.dateEmoji}>📅</Text>
               <Text style={styles.dateText}>{dateLabel}</Text>
-              <TouchableOpacity style={styles.changeBtn} hitSlop={8}>
+              <TouchableOpacity style={styles.changeBtn} hitSlop={8} onPress={() => router.back()}>
                 <Text style={styles.changeBtnText}>変更</Text>
               </TouchableOpacity>
             </View>
@@ -334,7 +340,7 @@ export default function KintoreTourokuScreen() {
             <SafeAreaView edges={['bottom']}>
               <TouchableOpacity
                 style={styles.saveBtn}
-                onPress={() => router.back()}
+                onPress={() => setShowSavedModal(true)}
                 activeOpacity={0.85}>
                 <IconSymbol name="dumbbell.fill" size={20} color={Colors.textOnPrimary} />
                 <Text style={styles.saveBtnText}>筋トレを保存する</Text>
@@ -351,12 +357,12 @@ export default function KintoreTourokuScreen() {
       <Modal
         visible={showModal}
         animationType="slide"
+        presentationStyle="pageSheet"
         onRequestClose={() => setShowModal(false)}>
-        {/* Modal内ではSafeAreaViewが正しく動作しないため、useSafeAreaInsetsで手動対応 */}
-        <View style={styles.modalSafe}>
+        <SafeAreaView style={styles.modalSafe} edges={['top', 'bottom']}>
 
-          {/* モーダルヘッダー（ノッチ分を paddingTop で確保） */}
-          <View style={[styles.modalHeader, { paddingTop: insets.top + Space[3] }]}>
+          {/* モーダルヘッダー */}
+          <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>種目を選ぶ</Text>
             <TouchableOpacity
               onPress={() => setShowModal(false)}
@@ -433,10 +439,11 @@ export default function KintoreTourokuScreen() {
             )}
           </ScrollView>
 
-          {/* 種目リスト（ホームインジケーター分を paddingBottom で確保） */}
+          {/* 種目リスト */}
           <ScrollView
+            style={styles.exList}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={[styles.exListContent, { paddingBottom: insets.bottom + 40 }]}>
+            contentContainerStyle={styles.exListContent}>
             {filteredExercises.map((ex, i) => {
               const col = MUSCLE_COLORS[ex.muscle];
               return (
@@ -461,6 +468,33 @@ export default function KintoreTourokuScreen() {
               );
             })}
           </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ════════════════════════════════════════
+          保存完了モーダル
+      ════════════════════════════════════════ */}
+      <Modal
+        visible={showSavedModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSavedModal(false)}>
+        <View style={styles.centeredOverlay}>
+          <View style={styles.centeredDialog}>
+            <View style={styles.savedContent}>
+              <IconSymbol name="checkmark.circle" size={48} color={Colors.primaryDark} />
+              <Text style={styles.savedTitle}>筋トレを保存しました</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.savedOkBtn}
+              onPress={() => {
+                setShowSavedModal(false);
+                router.back();
+              }}
+              activeOpacity={0.85}>
+              <Text style={styles.savedOkBtnText}>OK</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
     </>
@@ -772,6 +806,7 @@ const styles = StyleSheet.create({
     fontSize: FontSize.lg,
     fontWeight: FontWeight.bold,
     color: Colors.textPrimary,
+    marginLeft: Space[2],
   },
   modalCloseBtn: {
     width: 36,
@@ -847,6 +882,7 @@ const styles = StyleSheet.create({
   },
 
   // 種目リスト
+  exList: { flex: 1 },
   exListContent: {
     paddingHorizontal: Layout.screenPaddingH,
     paddingTop: Space[2],
@@ -885,6 +921,48 @@ const styles = StyleSheet.create({
   },
   exListTagText: {
     fontSize: FontSize.xs,
+    fontWeight: FontWeight.bold,
+  },
+
+  // ── 保存完了モーダル（中央ダイアログ）
+  centeredOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.bgOverlay,
+    paddingHorizontal: Space[5],
+  },
+  centeredDialog: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.xl,
+    width: '100%',
+    paddingVertical: Space[6],
+    paddingHorizontal: Space[4],
+    alignItems: 'center',
+    gap: Space[4],
+  },
+  savedContent: {
+    alignItems: 'center',
+    gap: Space[3],
+  },
+  savedTitle: {
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+  },
+  savedOkBtn: {
+    width: '100%',
+    height: Layout.buttonHeightMd,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.primaryDark,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Shadow.sm,
+  },
+  savedOkBtnText: {
+    color: Colors.textOnPrimary,
+    fontSize: FontSize.base,
     fontWeight: FontWeight.bold,
   },
 });

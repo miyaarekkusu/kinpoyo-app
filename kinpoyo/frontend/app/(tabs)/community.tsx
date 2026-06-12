@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import { useRouter } from 'expo-router';
 import {
-  Dimensions,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -12,13 +12,13 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import QRCode from 'react-native-qrcode-svg';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { NotificationsModal } from '@/components/notifications-modal';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
   Colors, FontSize, FontWeight, Layout, Radius, Shadow, Space,
 } from '@/constants/theme';
-
-const { width: SCREEN_W } = Dimensions.get('window');
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -33,11 +33,6 @@ interface CommentItem {
   isPro?: boolean;
 }
 
-interface ExerciseRow {
-  name: string;
-  sets: { weight?: number; reps: number }[];
-}
-
 interface FeedItem {
   id: string;
   type: 'feed' | 'qa' | 'news';
@@ -47,15 +42,7 @@ interface FeedItem {
   timeAgo: string;
   title: string;
   body: string;
-  workoutSummary?: {
-    date: string;
-    duration: string;
-    exerciseCount: number;
-    volume: string;
-    calories?: string;
-  };
   imageCount?: number;
-  exercises?: ExerciseRow[];
   likes: number;
   commentCount: number;
   comments?: CommentItem[];
@@ -73,27 +60,6 @@ const FEED_DATA: FeedItem[] = [
     title: '2026-06-06 等運動',
     body: '운동을 공유했어요 💪',
     imageCount: 1,
-    workoutSummary: {
-      date: '6月6日 土',
-      duration: '1時間58分',
-      exerciseCount: 12,
-      volume: '18,648kg',
-      calories: '-kcal',
-    },
-    exercises: [
-      {
-        name: '背筋 | プルアップ',
-        sets: Array.from({ length: 6 }, () => ({ reps: 10 })),
-      },
-      {
-        name: '腹筋 | クロスクランチ',
-        sets: Array.from({ length: 6 }, () => ({ reps: 30 })),
-      },
-      {
-        name: '肩 | ダンベルYレイズ',
-        sets: Array.from({ length: 6 }, () => ({ weight: 10, reps: 12 })),
-      },
-    ],
     likes: 0,
     commentCount: 0,
     comments: [],
@@ -107,18 +73,6 @@ const FEED_DATA: FeedItem[] = [
     title: '2026年6月6日 腕 トレーニング',
     body: '今日からリストカール始めてみたけど上手くできない。どうやって上手くやるんだろ',
     imageCount: 3,
-    workoutSummary: {
-      date: '6月6日 土',
-      duration: '45分',
-      exerciseCount: 4,
-      volume: '3,200kg',
-    },
-    exercises: [
-      {
-        name: '腕 | リストカール',
-        sets: Array.from({ length: 3 }, () => ({ weight: 5, reps: 15 })),
-      },
-    ],
     likes: 2,
     commentCount: 1,
     comments: [
@@ -129,6 +83,18 @@ const FEED_DATA: FeedItem[] = [
         text: 'リストを固定して、肘を動かさないのがコツですよ！',
       },
     ],
+  },
+  {
+    id: 'f3',
+    type: 'feed',
+    user: 'みき 🇯🇵',
+    userInitial: 'み',
+    timeAgo: '5時間前',
+    title: '今日もお疲れ様でした！',
+    body: '久しぶりに脚トレ。スクワットのフォームを見直したらしっくりきた気がする。明日は筋肉痛かな〜',
+    likes: 1,
+    commentCount: 0,
+    comments: [],
   },
 ];
 
@@ -205,10 +171,16 @@ const NEWS_DATA: FeedItem[] = [
 // ─── Main Screen ──────────────────────────────────────────────
 
 export default function CommunityScreen() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabKey>('follow');
   const [selectedPost, setSelectedPost] = useState<FeedItem | null>(null);
   const [showFollowModal, setShowFollowModal] = useState(false);
   const [followSearch, setFollowSearch] = useState('');
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [showNotifModal, setShowNotifModal] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [feedData, setFeedData] = useState<FeedItem[]>(FEED_DATA);
+  const [qaData, setQaData] = useState<FeedItem[]>(QA_DATA);
 
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'follow', label: 'フォロー中' },
@@ -217,6 +189,30 @@ export default function CommunityScreen() {
     { key: 'news',   label: 'お知らせ' },
   ];
 
+  const handleCreatePost = (type: 'feed' | 'qa', title: string, body: string, imageCount: number) => {
+    const newPost: FeedItem = {
+      id: `${type}-${Date.now()}`,
+      type,
+      user: 'あなた',
+      userInitial: 'あ',
+      timeAgo: '今',
+      title,
+      body,
+      ...(imageCount > 0 ? { imageCount } : {}),
+      likes: 0,
+      commentCount: 0,
+      comments: [],
+    };
+    if (type === 'feed') {
+      setFeedData(prev => [newPost, ...prev]);
+      setActiveTab('feed');
+    } else {
+      setQaData(prev => [newPost, ...prev]);
+      setActiveTab('qa');
+    }
+    setShowCreateModal(false);
+  };
+
   return (
     <SafeAreaView style={s.safe}>
       {/* Header */}
@@ -224,14 +220,19 @@ export default function CommunityScreen() {
         <Text style={s.headerTitle}>コミュニティー</Text>
         <View style={s.headerRight}>
           <TouchableOpacity style={s.headerBtn}>
-            <IconSymbol name="search" size={22} color={Colors.textPrimary} />
+            <IconSymbol name="magnifyingglass" size={22} color={Colors.textPrimary} />
           </TouchableOpacity>
-          <TouchableOpacity style={s.headerBtn}>
-            <IconSymbol name="bell.fill" size={22} color={Colors.textPrimary} />
+          <TouchableOpacity
+            onPress={() => setShowNotifModal(true)}
+            hitSlop={8}
+            style={s.notifBtn}>
+            <IconSymbol name="bell.fill" size={22} color={Colors.textSecondary} />
           </TouchableOpacity>
-          <View style={s.avatar}>
-            <Text style={s.avatarText}>K</Text>
-          </View>
+          <TouchableOpacity onPress={() => router.push('/profile')}>
+            <View style={s.avatar}>
+              <Text style={s.avatarText}>K</Text>
+            </View>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -266,10 +267,10 @@ export default function CommunityScreen() {
           <FollowTab onSearchPress={() => setShowFollowModal(true)} />
         )}
         {activeTab === 'feed' && (
-          <FeedTab data={FEED_DATA} onPostPress={setSelectedPost} />
+          <FeedTab data={feedData} onPostPress={setSelectedPost} />
         )}
         {activeTab === 'qa' && (
-          <FeedTab data={QA_DATA} onPostPress={setSelectedPost} />
+          <FeedTab data={qaData} onPostPress={setSelectedPost} />
         )}
         {activeTab === 'news' && (
           <FeedTab data={NEWS_DATA} onPostPress={setSelectedPost} />
@@ -278,46 +279,82 @@ export default function CommunityScreen() {
 
       {/* FAB (フォロー中・フィード・Q&A のみ) */}
       {activeTab !== 'news' && (
-        <TouchableOpacity style={s.fab} activeOpacity={0.85}>
+        <TouchableOpacity
+          style={s.fab}
+          activeOpacity={0.85}
+          onPress={() => setShowCreateModal(true)}
+        >
           <MaterialIcons name="edit" size={24} color="#fff" />
         </TouchableOpacity>
       )}
 
       {/* ── ユーザー検索 Modal ───────────────────────────────── */}
-      <Modal visible={showFollowModal} animationType="slide" presentationStyle="pageSheet">
+      <Modal
+        visible={showFollowModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => {
+          setShowFollowModal(false);
+          setShowQrModal(false);
+        }}
+        onDismiss={() => {
+          setShowFollowModal(false);
+          setShowQrModal(false);
+        }}
+      >
         <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
           <View style={s.modalHeader}>
-            <TouchableOpacity onPress={() => setShowFollowModal(false)} style={s.iconBtn}>
+            <TouchableOpacity
+              onPress={() => {
+                if (showQrModal) {
+                  setShowQrModal(false);
+                } else {
+                  setShowFollowModal(false);
+                }
+              }}
+              style={s.iconBtn}>
               <MaterialIcons name="chevron-left" size={28} color={Colors.textPrimary} />
             </TouchableOpacity>
-            <Text style={s.modalTitle}>ユーザー検索</Text>
+            <Text style={s.modalTitle}>{showQrModal ? 'マイQRコード' : 'ユーザー検索'}</Text>
             <View style={s.iconBtn} />
           </View>
 
-          <ScrollView contentContainerStyle={s.modalBody}>
-            {/* Search Input */}
-            <View style={s.searchBox}>
-              <TextInput
-                value={followSearch}
-                onChangeText={setFollowSearch}
-                placeholder="IDで友達を検索してフォローしましょう"
-                placeholderTextColor={Colors.textHint}
-                style={s.searchInput}
-              />
-            </View>
-
-            {/* My ID Card */}
-            <View style={s.userIdCard}>
-              <View style={[s.avatar, { backgroundColor: Colors.error }]}>
-                <Text style={s.avatarText}>K</Text>
+          {showQrModal ? (
+            <View style={s.qrContainer}>
+              <View style={s.qrCodeBox}>
+                <QRCode value="user_kinpoyo" size={220} />
               </View>
-              <Text style={s.userIdText}>ID: user_kinpoyo</Text>
-              <TouchableOpacity style={s.shareBtn}>
-                <MaterialIcons name="share" size={20} color={Colors.textSecondary} />
-              </TouchableOpacity>
+              <Text style={s.qrIdText}>ID: user_kinpoyo</Text>
             </View>
+          ) : (
+            <ScrollView contentContainerStyle={s.modalBody}>
+              {/* Search Input */}
+              <View style={s.searchBox}>
+                <TextInput
+                  value={followSearch}
+                  onChangeText={setFollowSearch}
+                  placeholder="IDで友達を検索してフォローしましょう"
+                  placeholderTextColor={Colors.textHint}
+                  style={s.searchInput}
+                />
+              </View>
 
-          </ScrollView>
+              {/* My ID Card */}
+              <View style={s.userIdCard}>
+                <View style={[s.avatar, { backgroundColor: Colors.error }]}>
+                  <Text style={s.avatarText}>K</Text>
+                </View>
+                <Text style={s.userIdText}>ID: user_kinpoyo</Text>
+                <TouchableOpacity style={s.shareBtn} onPress={() => setShowQrModal(true)}>
+                  <MaterialIcons name="qr-code-2" size={20} color={Colors.textSecondary} />
+                </TouchableOpacity>
+                <TouchableOpacity style={s.shareBtn}>
+                  <MaterialIcons name="share" size={20} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+            </ScrollView>
+          )}
         </SafeAreaView>
       </Modal>
 
@@ -335,6 +372,17 @@ export default function CommunityScreen() {
           />
         )}
       </Modal>
+
+      {/* ── 投稿作成 Modal ──────────────────────────────────── */}
+      <Modal visible={showCreateModal} animationType="slide" presentationStyle="pageSheet">
+        <PostCreateScreen
+          onClose={() => setShowCreateModal(false)}
+          onSubmit={handleCreatePost}
+        />
+      </Modal>
+
+      {/* ── 通知 Modal ──────────────────────────────────────── */}
+      <NotificationsModal visible={showNotifModal} onClose={() => setShowNotifModal(false)} />
     </SafeAreaView>
   );
 }
@@ -392,32 +440,17 @@ function FeedTab({
               <Text style={s.postBody} numberOfLines={3}>{item.body}</Text>
             </TouchableOpacity>
 
-            {/* 画像＋ワークアウトサマリー: 独立した横スクロール */}
-            {item.workoutSummary && (
+            {/* 画像: 独立した横スクロール */}
+            {!!item.imageCount && (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={s.mediaScrollContent}
                 style={s.mediaScroll}
               >
-                {Array.from({ length: item.imageCount ?? 1 }).map((_, i) => (
+                {Array.from({ length: item.imageCount }).map((_, i) => (
                   <View key={i} style={s.mediaSquare} />
                 ))}
-                <View style={s.workoutSquare}>
-                  <Text style={s.workoutDate}>{item.workoutSummary.date}</Text>
-                  <View style={s.workoutStatRow}>
-                    <MaterialIcons name="schedule" size={12} color={Colors.textSecondary} />
-                    <Text style={s.workoutStat}> {item.workoutSummary.duration}</Text>
-                  </View>
-                  <View style={s.workoutStatRow}>
-                    <MaterialIcons name="fitness-center" size={12} color={Colors.textSecondary} />
-                    <Text style={s.workoutStat}> {item.workoutSummary.exerciseCount}個</Text>
-                  </View>
-                  <View style={s.workoutStatRow}>
-                    <MaterialIcons name="emoji-events" size={12} color={Colors.warning} />
-                    <Text style={s.workoutStat}> {item.workoutSummary.volume}</Text>
-                  </View>
-                </View>
               </ScrollView>
             )}
 
@@ -462,6 +495,7 @@ function PostDetailScreen({
   const [commentText, setCommentText] = useState('');
   const [comments, setComments] = useState<CommentItem[]>(post.comments ?? []);
   const [sortBy, setSortBy] = useState<'recent' | 'popular'>('recent');
+  const [mainImageIndex, setMainImageIndex] = useState(0);
 
   const handleSend = () => {
     if (!commentText.trim()) return;
@@ -486,9 +520,6 @@ function PostDetailScreen({
         <TouchableOpacity onPress={onClose} style={s.iconBtn}>
           <MaterialIcons name="chevron-left" size={28} color={Colors.textPrimary} />
         </TouchableOpacity>
-        <TouchableOpacity style={s.iconBtn}>
-          <MaterialIcons name="error-outline" size={22} color={Colors.textHint} />
-        </TouchableOpacity>
       </View>
 
       <KeyboardAvoidingView
@@ -501,9 +532,32 @@ function PostDetailScreen({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* フィードのみ: 画像プレースホルダー */}
-          {post.type === 'feed' && (
-            <View style={s.detailImagePlaceholder} />
+          {/* 画像（複数ある場合はmain画像＋サムネイル一覧） */}
+          {!!post.imageCount && (
+            <View style={s.detailImageSection}>
+              <View style={s.detailImagePlaceholder}>
+                <Text style={s.detailImageLabel}>{mainImageIndex + 1}</Text>
+              </View>
+              {post.imageCount > 1 && (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={s.detailThumbRow}
+                >
+                  {Array.from({ length: post.imageCount }).map((_, i) => (
+                    i !== mainImageIndex && (
+                      <TouchableOpacity
+                        key={i}
+                        onPress={() => setMainImageIndex(i)}
+                        style={s.detailThumb}
+                      >
+                        <Text style={s.detailImageLabel}>{i + 1}</Text>
+                      </TouchableOpacity>
+                    )
+                  ))}
+                </ScrollView>
+              )}
+            </View>
           )}
 
           {/* Q&A・お知らせ: タイトル先頭表示 */}
@@ -522,58 +576,6 @@ function PostDetailScreen({
 
           {/* 本文 */}
           <Text style={s.detailBodyText}>{post.body}</Text>
-
-          {/* フィードのみ: ワークアウトサマリーカード */}
-          {post.type === 'feed' && post.workoutSummary && (
-            <View style={s.summaryCard}>
-              <Text style={s.summaryDateTitle}>
-                {post.workoutSummary.date}のトレーニングサマリー
-              </Text>
-              <View style={s.summaryRow}>
-                <View style={s.summaryCell}>
-                  <MaterialIcons name="schedule" size={20} color={Colors.textHint} />
-                  <Text style={s.summaryCellValue}>{post.workoutSummary.duration}</Text>
-                  <Text style={s.summaryCellLabel}>トレーニング時間</Text>
-                </View>
-                <View style={s.summaryCell}>
-                  <MaterialIcons name="fitness-center" size={20} color={Colors.textHint} />
-                  <Text style={s.summaryCellValue}>{post.workoutSummary.exerciseCount}個</Text>
-                  <Text style={s.summaryCellLabel}>トレーニング個数</Text>
-                </View>
-              </View>
-              <View style={s.summaryRow}>
-                <View style={s.summaryCell}>
-                  <MaterialIcons name="emoji-events" size={20} color={Colors.warning} />
-                  <Text style={s.summaryCellValue}>{post.workoutSummary.volume}</Text>
-                  <Text style={s.summaryCellLabel}>全体のボリューム</Text>
-                </View>
-                <View style={s.summaryCell}>
-                  <MaterialIcons name="local-fire-department" size={20} color={Colors.error} />
-                  <Text style={s.summaryCellValue}>{post.workoutSummary.calories ?? '-kcal'}</Text>
-                  <Text style={s.summaryCellLabel}>カロリー</Text>
-                </View>
-              </View>
-            </View>
-          )}
-
-          {/* フィードのみ: 種目リスト */}
-          {post.type === 'feed' && post.exercises?.map((ex, i) => (
-            <View key={i} style={s.exCard}>
-              {ex.sets.map((set, j) => (
-                <View key={j} style={s.exRow}>
-                  {j === 0
-                    ? <Text style={s.exName}>{ex.name}</Text>
-                    : <View style={s.exNameSpacer} />
-                  }
-                  <Text style={s.exSetNum}>{j + 1}</Text>
-                  {set.weight !== undefined && (
-                    <Text style={s.exWeight}>{set.weight}kg</Text>
-                  )}
-                  <Text style={s.exReps}>{set.reps}回</Text>
-                </View>
-              ))}
-            </View>
-          ))}
 
           {/* いいね・ブックマーク */}
           <View style={s.detailActions}>
@@ -655,9 +657,125 @@ function PostDetailScreen({
   );
 }
 
-// ─── Styles ──────────────────────────────────────────────────
+// ─── 投稿作成画面 ────────────────────────────────────────────
 
-const CELL_W = (SCREEN_W - Layout.screenPaddingH * 2 - Layout.cardPadding * 2 - Space[2]) / 2;
+function PostCreateScreen({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: (type: 'feed' | 'qa', title: string, body: string, imageCount: number) => void;
+}) {
+  const [type, setType] = useState<'feed' | 'qa'>('feed');
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [images, setImages] = useState<number[]>([]);
+  const nextImageId = useRef(0);
+
+  const canSubmit = title.trim().length > 0 && body.trim().length > 0;
+
+  const addImage = () => {
+    if (images.length >= 5) return;
+    nextImageId.current += 1;
+    setImages(prev => [...prev, nextImageId.current]);
+  };
+
+  const removeImage = (id: number) => {
+    setImages(prev => prev.filter(i => i !== id));
+  };
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    onSubmit(type, title.trim(), body.trim(), images.length);
+  };
+
+  return (
+    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+      <View style={s.modalHeader}>
+        <TouchableOpacity onPress={onClose} style={s.iconBtn}>
+          <MaterialIcons name="close" size={24} color={Colors.textPrimary} />
+        </TouchableOpacity>
+        <Text style={s.modalTitle}>投稿を作成</Text>
+        <TouchableOpacity onPress={handleSubmit} disabled={!canSubmit} style={s.iconBtn}>
+          <Text style={[s.postSubmitText, !canSubmit && s.postSubmitTextDisabled]}>投稿</Text>
+        </TouchableOpacity>
+      </View>
+
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={s.createBody}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* 投稿先タイプ */}
+          <View style={s.createTypeRow}>
+            <TouchableOpacity
+              style={[s.tabPill, type === 'feed' && s.tabPillActive]}
+              onPress={() => setType('feed')}
+            >
+              <Text style={[s.tabLabel, type === 'feed' && s.tabLabelActive]}>フィード</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.tabPill, type === 'qa' && s.tabPillActive]}
+              onPress={() => setType('qa')}
+            >
+              <Text style={[s.tabLabel, type === 'qa' && s.tabLabelActive]}>Q&A</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* タイトル */}
+          <TextInput
+            value={title}
+            onChangeText={setTitle}
+            placeholder={type === 'qa' ? '質問のタイトルを入力' : 'タイトルを入力'}
+            placeholderTextColor={Colors.textHint}
+            style={s.createTitleInput}
+          />
+
+          {/* 本文: 残りスペースを埋める */}
+          <TextInput
+            value={body}
+            onChangeText={setBody}
+            placeholder={type === 'qa' ? '質問内容を入力' : '内容を入力'}
+            placeholderTextColor={Colors.textHint}
+            style={s.createBodyInput}
+            multiline
+            textAlignVertical="top"
+          />
+
+          {/* 画像添付 */}
+          <View>
+            <Text style={s.createSectionLabel}>画像（最大5枚）</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={s.createImageRow}
+            >
+              {images.map(id => (
+                <View key={id} style={s.createImagePreview}>
+                  <TouchableOpacity onPress={() => removeImage(id)} style={s.createImageRemoveBtn}>
+                    <MaterialIcons name="close" size={16} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              {images.length < 5 && (
+                <TouchableOpacity style={s.createImageAddBtn} onPress={addImage}>
+                  <MaterialIcons name="add-photo-alternate" size={36} color={Colors.textHint} />
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+// ─── Styles ──────────────────────────────────────────────────
 
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgScreen },
@@ -677,6 +795,15 @@ const s = StyleSheet.create({
   },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: Space[2] },
   headerBtn: { padding: Space[1] },
+  notifBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.full,
+    backgroundColor: Colors.bgCard,
+    ...Shadow.sm,
+  },
   avatar: {
     width: 32, height: 32, borderRadius: Radius.full,
     backgroundColor: Colors.primary,
@@ -815,24 +942,6 @@ const s = StyleSheet.create({
     borderRadius: Radius.sm,
     backgroundColor: Colors.border,
   },
-  workoutSquare: {
-    width: 130, height: 130,
-    borderRadius: Radius.sm,
-    backgroundColor: Colors.bgScreen,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Space[2],
-    gap: 4,
-    justifyContent: 'center',
-  },
-  workoutDate: {
-    fontSize: FontSize.xs,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textSecondary,
-    marginBottom: 2,
-  },
-  workoutStatRow: { flexDirection: 'row', alignItems: 'center' },
-  workoutStat: { fontSize: FontSize.xs, color: Colors.textSecondary },
   postActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -875,6 +984,73 @@ const s = StyleSheet.create({
     color: Colors.textPrimary,
   },
   modalBody: { padding: Layout.screenPaddingH, gap: Space[3] },
+  postSubmitText: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.bold,
+    color: Colors.primary,
+  },
+  postSubmitTextDisabled: { color: Colors.textHint },
+
+  // ── 投稿作成 Modal ─────────────────────────────────────────
+  createBody: {
+    flexGrow: 1,
+    padding: Layout.screenPaddingH,
+    gap: Space[3],
+  },
+  createTypeRow: { flexDirection: 'row', gap: Space[2] },
+  createTitleInput: {
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bgCard,
+    paddingHorizontal: Space[3],
+    height: Layout.inputHeight,
+    fontSize: FontSize.base,
+    color: Colors.textPrimary,
+  },
+  createBodyInput: {
+    flex: 1,
+    minHeight: 100,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bgCard,
+    paddingHorizontal: Space[3],
+    paddingVertical: Space[3],
+    fontSize: FontSize.base,
+    color: Colors.textPrimary,
+  },
+  createSectionLabel: {
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textSecondary,
+    marginBottom: Space[2],
+  },
+  createImageRow: { flexDirection: 'row', gap: Space[3] },
+  createImagePreview: {
+    width: 110, height: 110,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.border,
+  },
+  createImageRemoveBtn: {
+    position: 'absolute',
+    top: 6, right: 6,
+    width: 24, height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  createImageAddBtn: {
+    width: 110, height: 110,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: 'dashed',
+    backgroundColor: Colors.bgCard,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   // ── ユーザー検索 Modal ─────────────────────────────────────
   searchBox: {
@@ -910,6 +1086,25 @@ const s = StyleSheet.create({
     backgroundColor: Colors.bgScreen,
     alignItems: 'center', justifyContent: 'center',
   },
+
+  // ── マイQRコード（ユーザー検索 Modal内） ───────────────────
+  qrContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Space[4],
+    paddingHorizontal: Space[5],
+  },
+  qrCodeBox: {
+    backgroundColor: '#FFFFFF',
+    padding: Space[4],
+    borderRadius: Radius.md,
+  },
+  qrIdText: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.medium,
+    color: Colors.textPrimary,
+  },
   inviteCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -940,11 +1135,30 @@ const s = StyleSheet.create({
     borderBottomColor: Colors.divider,
   },
   detailBody: { padding: Layout.screenPaddingH, paddingBottom: Space[10] },
+  detailImageSection: { marginBottom: Space[3] },
   detailImagePlaceholder: {
     width: '100%', height: 220,
     borderRadius: Radius.md,
     backgroundColor: Colors.border,
-    marginBottom: Space[3],
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailImageLabel: {
+    fontSize: FontSize.lg,
+    fontWeight: FontWeight.bold,
+    color: Colors.textSecondary,
+  },
+  detailThumbRow: {
+    flexDirection: 'row',
+    gap: Space[2],
+    marginTop: Space[2],
+  },
+  detailThumb: {
+    width: 64, height: 64,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   detailTitle: {
     fontSize: FontSize.lg,
@@ -961,74 +1175,6 @@ const s = StyleSheet.create({
     marginBottom: Space[4],
   },
   editedTag: { fontSize: FontSize.xs, color: Colors.textHint },
-
-  // ── ワークアウトサマリーカード (詳細) ──────────────────────
-  summaryCard: {
-    backgroundColor: Colors.bgScreen,
-    borderRadius: Radius.md,
-    padding: Layout.cardPadding,
-    marginBottom: Space[3],
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: Space[2],
-  },
-  summaryDateTitle: {
-    fontSize: FontSize.base,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-    marginBottom: Space[2],
-  },
-  summaryRow: { flexDirection: 'row', gap: Space[2] },
-  summaryCell: {
-    width: CELL_W,
-    backgroundColor: Colors.bgCard,
-    borderRadius: Radius.sm,
-    padding: Space[3],
-    gap: 4,
-  },
-  summaryCellValue: {
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
-  },
-  summaryCellLabel: { fontSize: FontSize.xs, color: Colors.textSecondary },
-
-  // ── 種目リスト (詳細) ──────────────────────────────────────
-  exCard: {
-    backgroundColor: Colors.bgScreen,
-    borderRadius: Radius.sm,
-    padding: Space[3],
-    marginBottom: Space[2],
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  exRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
-  exName: {
-    flex: 2,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-  },
-  exNameSpacer: { flex: 2 },
-  exSetNum: {
-    width: 24,
-    fontSize: FontSize.sm,
-    color: Colors.textHint,
-    textAlign: 'center',
-  },
-  exWeight: {
-    width: 48,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    textAlign: 'right',
-  },
-  exReps: {
-    width: 40,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.medium,
-    color: Colors.textPrimary,
-    textAlign: 'right',
-  },
 
   // ── いいね・ブックマーク (詳細) ────────────────────────────
   detailActions: {
