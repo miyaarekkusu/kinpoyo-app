@@ -197,16 +197,16 @@ kinpoyo/
 | 完了アニメーション     | `(auth)/success.tsx`               | ✅ 実装済み（モック） | チェックマークのスケール+フェードアニメーション（reanimated）→自動でログインへ遷移                                                                                                        |
 | ホーム                 | `(tabs)/index.tsx`                 | ✅ 実装済み           | ヒーローバナー・スクロール週カレンダー・統計グリッド・体重・プログラムカード（→遷移接続済）                                                                                               |
 | カレンダー             | `(screens)/calendar.tsx`           | ✅ 実装済み           | 月表示・色フィルターモーダル・筋トレ登録（→workout-register）・修正ボタン・筋トレ一覧                                                                                                     |
-| 筋トレ登録             | `(screens)/workout-register.tsx`   | ✅ 実装済み           | 種目追加モーダル（Push/Pull/Leg・部位別フィルター、24種目）・セット数/レップ数/重量(kg) 3カラムテーブル・×でキャンセル                                                                    |
+| 筋トレ登録             | `(screens)/workout-register.tsx`   | ✅ 実装済み           | 種目追加モーダル（pageSheet表示、Push/Pull/Leg・部位別フィルター、24種目）・セット数/レップ数/重量(kg) 3カラムテーブル・×でキャンセル                                                                    |
 | プログラム一覧         | `(screens)/program/index.tsx`      | ✅ 実装済み           | BIG3強化・ボディウェイトの2プログラムカード                                                                                                                                               |
 | BIG3プログラム詳細     | `(screens)/program/big3.tsx`       | ✅ 実装済み           | ヒーロー・概要グリッド・週スケジュール・3種目・開始ボタン                                                                                                                                 |
 | ボディウェイト詳細     | `(screens)/program/bodyweight.tsx` | ✅ 実装済み           | ヒーロー・概要グリッド・週スケジュール・6種目・開始ボタン                                                                                                                                 |
 | 筋肥大とは             | `(screens)/program/hypertrophy.tsx` | ✅ 実装済み          | ホーム「トレーニング知識」カードから遷移。筋肥大の三大原則（トレーニング・栄養・休養）の解説                                                                                              |
 | プログラム組み方       | `(screens)/program/program-design.tsx` | ✅ 実装済み       | ホーム「トレーニング知識」カードから遷移。分割法・適切なボリューム設定の解説                                                                                                              |
 | RPEとは                | `(screens)/program/rpe.tsx`        | ✅ 実装済み           | ホーム「トレーニング知識」カードから遷移。自覚的運動強度（RPE）を用いた強度管理の解説                                                                                                     |
-| コミュニティー         | `(tabs)/community.tsx`             | ✅ 実装済み           | 4タブ(フォロー中・フィード・Q&A・お知らせ)・フォロー中空状態・ユーザーID検索モーダル・投稿カード一覧・投稿詳細モーダル(ワークアウトサマリー・種目リスト・いいね・コメント送信)・FABボタン |
+| コミュニティー         | `(tabs)/community.tsx`             | ✅ 実装済み           | 4タブ(フォロー中・フィード・Q&A・お知らせ)・フォロー中空状態・ユーザーID検索モーダル（My ID CardにQRコード表示ボタン追加、モーダル内で検索画面⇄マイQRコード画面を切替表示）・ヘッダー右上のアバターから/profileへ遷移・投稿カード一覧・投稿詳細モーダル(画像・いいね・コメント送信)・FABボタン（投稿作成モーダル：フィード/Q&A選択・タイトル/本文入力・画像添付（モックプレースホルダー、最大5枚）） |
 | 筋トレ開始             | `(tabs)/workout.tsx`               | ✅ 実装済み           | 今日の登録メニュー一覧・種目数/セット数サマリー・開始ボタン（登録あり時のみ）・未登録時はカレンダーへ誘導                                                                                 |
-| 記録                   | `(tabs)/records.tsx`               | ✅ 実装済み           | 週/月/年グラフ（折れ線・react-native-gifted-charts）・種目別最大重量・筋トレ履歴（期間+部位絞り込み・モーダル展開）                                                                       |
+| 記録                   | `(tabs)/records.tsx`               | ✅ 実装済み           | 週/月/年グラフ（折れ線・react-native-gifted-charts）・AIトレーナーカード（モック・TrainerAvatar+期間別コメント）・種目別最大重量・筋トレ履歴（期間+部位絞り込み・モーダル展開）        |
 | プロフィール           | `(tabs)/profile.tsx`               | ✅ 実装済み           | ユーザーカード・実績4グリッド・BIG3(1RM)・身体情報・設定リスト                                                                                                                            |
 | 性別選択               | `(onboarding)/gender.tsx`          | ✅ 実装済み（モック） | 男性/女性カード選択・「その他／回答しない」ピル・選択時のみ次へ活性化（人物画像なし）                                                                                                     |
 | 身長設定               | `(onboarding)/height.tsx`          | ✅ 実装済み（モック） | cm/ft単位切替・上下スクロールの定規ピッカー（スナップ）・中央インジケーター・大きい数値表示                                                                                              |
@@ -253,6 +253,7 @@ kinpoyo/
 ### 記録タブの構成（実装済み）
 
 - グラフ期間セレクター（週/月/年）
+- AIトレーナーカード（モック）: TrainerAvatar + 週/月/年ごとのレビューコメント（ボリューム推移から簡易判定）。Claude API連携は今後実装予定
 - サマリーカード: 筋トレ回数・ボリューム(kg)
 - ボリューム推移折れ線グラフ（areaChart + curved）
 - 種目別最大重量グラフ（種目チップで切替・yAxisOffsetでズームイン）
@@ -327,6 +328,7 @@ kinpoyo/
 - react-native-gifted-charts（折れ線グラフ・棒グラフ）
 - react-native-linear-gradient（gifted-charts の依存）
 - react-native-svg（Expo SDK に同梱・gifted-charts が使用）
+- react-native-qrcode-svg（QRコード表示）
 
 ---
 
@@ -370,3 +372,21 @@ kinpoyo/
 | 2026-06-09 | login.tsx：ログインボタンを /gender（オンボーディング）→ signIn() 直接呼び出しに変更。オンボーディングは signup.tsx からのみ開始するよう修正 |
 | 2026-06-09 | ホーム画面（index.tsx）：体重カード・体重入力モーダル・関連ステート・未使用インポート（KeyboardAvoidingView/Modal/TextInput/Platform）・未使用スタイルを削除 |
 | 2026-06-11 | ホーム画面に「💡トレーニング知識」セクション追加（プログラムカードの下）：「筋肥大とは」「プログラム組み方」「RPEとは」の3カードから各詳細画面へ遷移。新規画面 `(screens)/program/hypertrophy.tsx`・`program-design.tsx`・`rpe.tsx` を追加（解説コンテンツのみ・ナビゲーションのみ） |
+| 2026-06-12 | 記録タブ（records.tsx）にAIトレーナーカードを仮実装：期間セレクター(週/月/年)の下に追加。TrainerAvatar + 期間別レビューコメント（aiComment関数、ボリューム推移の増減で簡易判定）。Claude API連携による本実装は今後対応 |
+| 2026-06-12 | 「AIアドバイザー」表記をすべて「AIトレーナー」に統一（records.tsx・AGENTS.md）。weight.tsx・weight-goal.tsx のBMI/目標カード内TrainerAvatarを28→56pxに拡大し、gender.tsx等の説明カードのアバターサイズと統一 |
+| 2026-06-12 | 筋トレ登録（workout-register.tsx）：種目選択モーダルの種目リストScrollViewに `flex: 1` を追加。フィルターチップ（全て・部位別すべて等）で表示件数が多い場合にリスト下部が画面外で切れてスクロールできなかった不具合を修正 |
+| 2026-06-12 | 通知モーダルを新規実装：`components/notifications-modal.tsx`（`NotificationsModal`、calendar.tsx筋トレ修正モーダルと同じfade・中央・Radius.xlスタイル、モック通知5件）。ホーム・コミュニティーの通知ベルボタン押下で表示。コミュニティーの通知ボタンをホームの円形`iconBtn`スタイル（36×36・bgCard・Shadow.sm）に統一（`s.notifBtn`） |
+| 2026-06-12 | オンボーディング（gender/height/weight/weight-goal/year/train-goal）の説明カードをrecords.tsxのAIトレーナーカードと同じ見出し構成に統一：TrainerAvatarの横に「AIトレーナー」タイトルを表示し、その下に説明文/コメントを表示するレイアウトに変更（OnboardingHeaderのdescCard）。weight.tsx・weight-goal.tsxは「AIトレーナー」タイトル＋サブタイトル（weight.tsxは"現在のBMI"、weight-goal.tsxはgoalMessageのheading）を表示（bmiCard、goalCard） |
+| 2026-06-12 | コミュニティー（community.tsx）：投稿から「筋トレサマリー」「種目リスト」を削除し、画像＋本文（タイトル/テキスト）のみのシンプルな構成に変更（投稿登録画面を作りやすくするため）。FeedItem型からworkoutSummary/exercises/ExerciseRowを削除、フィードカードは画像枚数(imageCount)があれば画像のみ横スクロール表示、投稿詳細モーダルからサマリーカード・種目テーブルを削除。いいね・コメント機能はそのまま維持 |
+| 2026-06-12 | コミュニティー：投稿詳細モーダルの画像表示を複数枚対応（main画像＋2枚目以降をサムネイル横スクロール、タップでmain切替）に変更。フィードに画像なし投稿(f3)を1件追加。投稿詳細ヘッダー右上の不要なinfoアイコンを削除 |
+| 2026-06-12 | コミュニティー：FABボタン（鉛筆アイコン）から投稿作成モーダル（`PostCreateScreen`、pageSheet）を開けるように実装。フィード/Q&Aを選択してタイトル・本文を入力、画像添付（モックプレースホルダー、最大5枚・追加/削除可）。投稿するとfeedData/qaDataの先頭に追加され該当タブに切り替わる。画像表示条件をpost.type==='feed'限定から!!post.imageCountに一般化（Q&A投稿でも画像表示可） |
+| 2026-06-12 | コミュニティー：投稿作成画面（PostCreateScreen）のレイアウトを調整し余白を解消。本文入力欄をflex:1で残りスペースいっぱいに拡大、画像添付プレースホルダーを80x80→110x110に拡大（追加ボタンのアイコンも28→36に拡大、削除ボタンも20x20→24x24に拡大） |
+| 2026-06-12 | コミュニティー：投稿作成画面の不具合修正。①画像添付プレースホルダーの削除（×）ボタンが横スクロール領域でクリップされて見切れる問題を、ボタン位置を画像の外側(top:-8,right:-8)から内側(top:6,right:6)に変更して解消。②入力欄フォーカス時にキーボードが出ると本文欄(flex:1)が圧縮され画像添付が不自然な位置に来る問題を、コンテンツ全体をScrollView化（contentContainerStyleでflexGrow:1、本文欄はflex:1+minHeight:100）し、キーボード表示時はフォーム全体がスクロールしてフォーカス中の入力欄が自動的に見える位置に収まるよう変更 |
+| 2026-06-12 | 筋トレ登録（workout-register.tsx）：種目選択モーダルをコミュニティーのモーダルと統一し、全画面表示からpageSheet表示（`presentationStyle="pageSheet"`）に変更。Modal内の手動`useSafeAreaInsets`によるpaddingTop/paddingBottom指定を`SafeAreaView edges={['top','bottom']}`に置き換え |
+| 2026-06-12 | 筋トレ登録：種目選択モーダルのヘッダーの「種目を選ぶ」タイトルが画面端に寄って詰まって見えるため、`marginLeft: Space[2]`を追加し少し右にずらして余白を確保 |
+| 2026-06-12 | カレンダー→筋トレ登録の日付連携：calendar.tsxの「筋トレ登録」ボタンでrouter.pushする際に選択中の日付（year/month/date）をパラメータとして渡すように変更。workout-register.tsxは`useLocalSearchParams`でこれを受け取り、指定があればその日付を、なければ本日の日付をdateLabelに表示 |
+| 2026-06-12 | 筋トレ登録：日付カードの「変更」ボタン（未実装のスタブ）を削除。日付はカレンダーから渡された値を表示するのみとし、changeBtn/changeBtnTextスタイルも削除 |
+| 2026-06-12 | 筋トレ登録：①日付カードの「変更」ボタンを復活させ、押すとカレンダー画面に戻る（router.back()）。②ヘッダーの「完了」ボタンを押すと筋トレ開始画面（/workout）に遷移するよう変更。③「筋トレを保存する」ボタンを押すと中央ダイアログ（centeredOverlay/centeredDialog）で「筋トレを保存しました」のお知らせモーダルを表示し、OKでカレンダーに戻る |
+| 2026-06-12 | コミュニティー：ユーザー検索モーダルのMy ID Cardに「マイQRコード」表示ボタン（MaterialIcons qr-code-2）を追加。押すと中央ダイアログ（centeredOverlay/centeredDialog、workout-register.tsxの保存完了モーダルと同様のfade表示）でreact-native-qrcode-svgによるQRコード（user_kinpoyo、200px）・ユーザーID・閉じるボタンを表示。依存パッケージにreact-native-qrcode-svgを追加 |
+| 2026-06-12 | コミュニティー：①ヘッダー右上のアバターをTouchableOpacity化し、押すと`/profile`へ遷移するように修正。②マイQRコード表示で別の`<Modal>`を二重表示すると画面全体のボタンが反応しなくなる不具合を修正：QRコード用の独立Modal（centeredOverlay/centeredDialog）を廃止し、ユーザー検索モーダル内でヘッダータイトル・本文を「ユーザー検索」⇄「マイQRコード」に切り替える方式に変更（戻るボタンでQR画面→検索画面→モーダルを閉じる、の順に戻る）。centeredOverlay/centeredDialog/qrTitle/qrCloseBtn系スタイルを削除しqrContainerを追加 |
+| 2026-06-12 | icon-symbol.tsx（共通コンポーネント）の型エラー修正：`MAPPING`に対する誤った`as IconMapping`キャスト（`Record<SFSymbol, MaterialIconName>`で全SF Symbol名を要求してしまい不整合だった）を削除し`as const`に変更、`IconSymbolName`をMAPPINGの実際のキーから導出するように修正。存在しないSF Symbol名だった`'search'`キーを正しい`'magnifyingglass'`に変更し、community.tsx側の`<IconSymbol name="search">`も`name="magnifyingglass"`に更新。`npx tsc --noEmit`のエラーが0件になった |

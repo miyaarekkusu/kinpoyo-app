@@ -34,7 +34,12 @@ export function OnboardingHeader({ step, totalSteps, title, description }: Onboa
 
       {description && (
         <View style={styles.descCard}>
-          <TrainerAvatar size={56} />
+          <View style={styles.descHeaderRow}>
+            <TrainerAvatar size={56} />
+            <View style={styles.descHeaderTextWrap}>
+              <Text style={styles.descTitle}>AIトレーナー</Text>
+            </View>
+          </View>
           <Text style={styles.descText}>{description}</Text>
         </View>
       )}
@@ -81,16 +86,24 @@ const styles = StyleSheet.create({
     marginBottom: Space[6],
   },
   descCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Space[4],
     backgroundColor: Colors.primarySubtle,
     borderRadius: Radius.lg,
     padding: Space[4],
     marginBottom: Space[8],
   },
+  descHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space[3],
+    marginBottom: Space[3],
+  },
+  descHeaderTextWrap: { flex: 1 },
+  descTitle: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+  },
   descText: {
-    flex: 1,
     fontSize: FontSize.sm,
     color: Colors.textSecondary,
     lineHeight: 20,
