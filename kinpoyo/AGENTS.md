@@ -205,7 +205,7 @@ kinpoyo/
 | 筋肥大とは             | `(screens)/program/hypertrophy.tsx` | ✅ 実装済み          | ホーム「トレーニング知識」カードから遷移。筋肥大の三大原則（トレーニング・栄養・休養）の解説                                                                                              |
 | プログラム組み方       | `(screens)/program/program-design.tsx` | ✅ 実装済み       | ホーム「トレーニング知識」カードから遷移。分割法・適切なボリューム設定の解説                                                                                                              |
 | RPEとは                | `(screens)/program/rpe.tsx`        | ✅ 実装済み           | ホーム「トレーニング知識」カードから遷移。自覚的運動強度（RPE）を用いた強度管理の解説                                                                                                     |
-| コミュニティー         | `(tabs)/community.tsx`             | ✅ 実装済み           | 4タブ(フォロー中・フィード・Q&A・お知らせ)・フォロー中空状態・ユーザーID検索モーダル（My ID CardにQRコード表示ボタン追加、モーダル内で検索画面⇄マイQRコード画面を切替表示）・ヘッダー右上のアバターから/profileへ遷移・投稿カード一覧・投稿詳細モーダル(画像・いいね・コメント送信)・FABボタン（投稿作成モーダル：フィード/Q&A選択・タイトル/本文入力・画像添付（モックプレースホルダー、最大5枚）） |
+| コミュニティー         | `(tabs)/community.tsx`             | ✅ 実装済み           | 4タブ(フォロー中・フィード・Q&A・お知らせ)・フォロー中空状態・ユーザーID検索モーダル（My ID CardにQRコード表示ボタン追加、モーダル内で検索画面⇄マイQRコード画面を切替表示）・ヘッダー右上のアバターから/profileへ遷移・投稿カード一覧（自分の投稿は文字表記「編集」「削除」ボタン表示）・投稿詳細モーダル(画像・いいね・コメント送信・自分の投稿は文字表記「編集」「削除」ボタン表示)・FABボタン（投稿作成・編集モーダル：フィード/Q&A選択・タイトル/本文入力・画像添付（expo-image-picker、最大5枚）） |
 | 筋トレ開始             | `(tabs)/workout.tsx`               | ✅ 実装済み           | 今日の登録メニュー一覧・種目数/セット数サマリー・開始ボタン（登録あり時のみ）・未登録時はカレンダーへ誘導                                                                                 |
 | 記録                   | `(tabs)/records.tsx`               | ✅ 実装済み           | 週/月/年グラフ（折れ線・react-native-gifted-charts）・AIトレーナーカード（モック・TrainerAvatar+期間別コメント）・種目別最大重量・筋トレ履歴（期間+部位絞り込み・モーダル展開）        |
 | プロフィール           | `(tabs)/profile.tsx`               | ✅ 実装済み           | ユーザーカード・実績4グリッド・BIG3(1RM)・身体情報・設定リスト                                                                                                                            |
@@ -330,6 +330,7 @@ kinpoyo/
 - react-native-linear-gradient（gifted-charts の依存）
 - react-native-svg（Expo SDK に同梱・gifted-charts が使用）
 - react-native-qrcode-svg（QRコード表示）
+- expo-image-picker（投稿作成画面の画像添付：端末の写真ライブラリから選択）
 
 ---
 
@@ -392,3 +393,8 @@ kinpoyo/
 | 2026-06-12 | コミュニティー：ユーザー検索モーダルのMy ID Cardに「マイQRコード」表示ボタン（MaterialIcons qr-code-2）を追加。押すと中央ダイアログ（centeredOverlay/centeredDialog、workout-register.tsxの保存完了モーダルと同様のfade表示）でreact-native-qrcode-svgによるQRコード（user_kinpoyo、200px）・ユーザーID・閉じるボタンを表示。依存パッケージにreact-native-qrcode-svgを追加 |
 | 2026-06-12 | コミュニティー：①ヘッダー右上のアバターをTouchableOpacity化し、押すと`/profile`へ遷移するように修正。②マイQRコード表示で別の`<Modal>`を二重表示すると画面全体のボタンが反応しなくなる不具合を修正：QRコード用の独立Modal（centeredOverlay/centeredDialog）を廃止し、ユーザー検索モーダル内でヘッダータイトル・本文を「ユーザー検索」⇄「マイQRコード」に切り替える方式に変更（戻るボタンでQR画面→検索画面→モーダルを閉じる、の順に戻る）。centeredOverlay/centeredDialog/qrTitle/qrCloseBtn系スタイルを削除しqrContainerを追加 |
 | 2026-06-12 | icon-symbol.tsx（共通コンポーネント）の型エラー修正：`MAPPING`に対する誤った`as IconMapping`キャスト（`Record<SFSymbol, MaterialIconName>`で全SF Symbol名を要求してしまい不整合だった）を削除し`as const`に変更、`IconSymbolName`をMAPPINGの実際のキーから導出するように修正。存在しないSF Symbol名だった`'search'`キーを正しい`'magnifyingglass'`に変更し、community.tsx側の`<IconSymbol name="search">`も`name="magnifyingglass"`に更新。`npx tsc --noEmit`のエラーが0件になった |
+| 2026-06-12 | コミュニティー：投稿作成画面（PostCreateScreen）①ヘッダー右上の「投稿」ボタンに`marginRight`を追加し、画面端から少し左にずらして表示。②画像添付をモックプレースホルダーから`expo-image-picker`による実機の写真ライブラリ選択に変更（最大5枚・複数選択・権限リクエスト・選択画像をプレビュー表示・×ボタンで削除）。依存パッケージに`expo-image-picker`を追加し、app.jsonのpluginsに写真権限の説明文（日本語）を設定 |
+| 2026-06-12 | コミュニティー：投稿した画像が一覧・詳細に表示されない不具合を修正。FeedItem型に`images?: string[]`を追加し、PostCreateScreenの`onSubmit`を画像枚数(number)ではなく選択した画像URI配列(string[])を渡すように変更。FeedTabのフィード画像・PostDetailScreenのmain画像/サムネイルで、`images`があれば`expo-image`で実画像を表示、なければ既存のモック用グレープレースホルダーを表示するように分岐（既存モック投稿の表示は変更なし） |
+| 2026-06-12 | コミュニティー：自分の投稿（`user === 'あなた'`）を編集・削除できるように対応。投稿詳細モーダルのヘッダー右上に編集（鉛筆）・削除（ゴミ箱）アイコンを追加。編集はPostCreateScreenを再利用し、タイトル・本文・画像を初期値として開き「投稿を編集」「更新」表記に切替（投稿先タイプ選択は編集時非表示・変更不可）。削除はネストしたModalを避けるため、PostDetailScreen内に画面内オーバーレイ（dialogOverlay/dialogBox、Radius.xl）で「投稿を削除しますか？」確認ダイアログを表示し、削除確定でfeedData/qaDataから該当投稿を除去して詳細モーダルを閉じる。CommunityScreenに`editingPost`・`postModalKey`状態を追加し、投稿作成・編集モーダルを1つに統合（`key`で都度マウントし直し、編集→新規作成時に前回入力が残らないようにする） |
+| 2026-06-12 | コミュニティー：編集・削除ボタンをアイコンから文字表記「編集」「削除」に変更し、投稿一覧（FeedTab）でも自分の投稿に表示されるように対応。投稿カードのアクション行を左（編集・削除テキストボタン、自分の投稿のみ）と右（いいね・コメント）に分割（postActionsLeft/postActionsRight、postActionsをjustifyContent: 'space-between'に変更）。削除確認ダイアログを`DeleteConfirmDialog`コンポーネントとして共通化し、投稿詳細モーダルでは画面内オーバーレイ、投稿一覧では新規追加した`deletingPost`状態によるtransparent Modal（ネストしたModal問題を避けるため、一覧画面では他のModalが開いていない時のみ表示される）として再利用 |
+| 2026-06-12 | コミュニティー：投稿検索機能を実装。ヘッダーの検索アイコン（虫眼鏡）押下で検索バー（テキスト入力＋クリアボタン）の表示/非表示を切替（押下中はアイコンが×に変化）。フィード・Q&A・お知らせの各タブで、入力文字列をタイトル・本文・投稿者名に対して大文字小文字を区別しない部分一致でフィルタリング（`filterByQuery`、リアルタイム反映）。該当なしの場合はFeedTabに検索結果なしの空状態（search-offアイコン＋メッセージ）を表示 |

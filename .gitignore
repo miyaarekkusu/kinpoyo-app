@@ -1,1 +1,6 @@
 screenshots/
+
+# Accidentally created at repo root (actual frontend lives in kinpoyo/frontend/)
+/node_modules/
+/.expo/
+/expo-env.d.ts
