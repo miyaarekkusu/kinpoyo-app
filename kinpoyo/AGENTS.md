@@ -157,6 +157,7 @@ kinpoyo/
 │   │   │       ├── hypertrophy.tsx     # 筋肥大とは ✅  (route: /program/hypertrophy)
 │   │   │       ├── program-design.tsx  # プログラム組み方 ✅  (route: /program/program-design)
 │   │   │       └── rpe.tsx             # RPEとは ✅  (route: /program/rpe)
+│   │   │       └── custom_program.tsx  # カスタムプログラム画面 ✅
 │   │   └── (tabs)/                   # タブナビゲーショングループ
 │   │       ├── _layout.tsx           # タブナビゲーション（5タブ）
 │   │       ├── index.tsx             # ホーム画面 ✅
@@ -372,6 +373,7 @@ kinpoyo/
 | 2026-06-09 | login.tsx：ログインボタンを /gender（オンボーディング）→ signIn() 直接呼び出しに変更。オンボーディングは signup.tsx からのみ開始するよう修正 |
 | 2026-06-09 | ホーム画面（index.tsx）：体重カード・体重入力モーダル・関連ステート・未使用インポート（KeyboardAvoidingView/Modal/TextInput/Platform）・未使用スタイルを削除 |
 | 2026-06-11 | ホーム画面に「💡トレーニング知識」セクション追加（プログラムカードの下）：「筋肥大とは」「プログラム組み方」「RPEとは」の3カードから各詳細画面へ遷移。新規画面 `(screens)/program/hypertrophy.tsx`・`program-design.tsx`・`rpe.tsx` を追加（解説コンテンツのみ・ナビゲーションのみ） |
+| 2026-06-12 | カスタムプログラム画面（custom_program.tsx）の画面表示不具合および型エラーを修正。Expo Routerのネイティブヘッダーを非表示（headerShown: false）にし、theme.tsに準拠した独自ヘッダーへ統合。合わせて、解説画面3ファイル（hypertrophy.tsx、rpe.tsx、program-design.tsx）からも黒いヘッダー帯を排除し、統一感のある戻るボタン付きヘッダーへ修正。 |
 | 2026-06-12 | 記録タブ（records.tsx）にAIトレーナーカードを仮実装：期間セレクター(週/月/年)の下に追加。TrainerAvatar + 期間別レビューコメント（aiComment関数、ボリューム推移の増減で簡易判定）。Claude API連携による本実装は今後対応 |
 | 2026-06-12 | 「AIアドバイザー」表記をすべて「AIトレーナー」に統一（records.tsx・AGENTS.md）。weight.tsx・weight-goal.tsx のBMI/目標カード内TrainerAvatarを28→56pxに拡大し、gender.tsx等の説明カードのアバターサイズと統一 |
 | 2026-06-12 | 筋トレ登録（workout-register.tsx）：種目選択モーダルの種目リストScrollViewに `flex: 1` を追加。フィルターチップ（全て・部位別すべて等）で表示件数が多い場合にリスト下部が画面外で切れてスクロールできなかった不具合を修正 |
