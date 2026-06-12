@@ -349,7 +349,10 @@ export default function CalendarScreen() {
       <View style={styles.bottomPanel}>
         <View style={styles.actionRow}>
           <TouchableOpacity style={styles.registerBtn} activeOpacity={0.85}
-            onPress={() => router.push('/workout-register')}>
+            onPress={() => router.push({
+              pathname: '/workout-register',
+              params: { year: String(year), month: String(month), date: String(selectedDate) },
+            })}>
             <Text style={styles.registerBtnText}>筋トレ登録</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.editBtn} activeOpacity={0.85} onPress={openEditModal}>

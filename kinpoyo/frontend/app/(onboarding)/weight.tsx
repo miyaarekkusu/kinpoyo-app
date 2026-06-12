@@ -121,7 +121,10 @@ export default function WeightScreen() {
           <View style={styles.bmiCard}>
             <View style={styles.bmiHeaderRow}>
               <TrainerAvatar size={56} />
-              <Text style={styles.bmiHeaderText}>現在のBMI</Text>
+              <View style={styles.bmiHeaderTextWrap}>
+                <Text style={styles.bmiHeaderTitle}>AIトレーナー</Text>
+                <Text style={styles.bmiHeaderSubtitle}>現在のBMI</Text>
+              </View>
             </View>
             <View style={styles.bmiRow}>
               <Text style={styles.bmiValue}>{bmi}</Text>
@@ -248,12 +251,18 @@ const styles = StyleSheet.create({
   bmiHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Space[2],
+    gap: Space[3],
   },
-  bmiHeaderText: {
+  bmiHeaderTextWrap: { flex: 1 },
+  bmiHeaderTitle: {
     fontSize: FontSize.base,
     fontWeight: FontWeight.bold,
     color: Colors.textPrimary,
+  },
+  bmiHeaderSubtitle: {
+    fontSize: FontSize.xs,
+    color: Colors.textHint,
+    marginTop: 1,
   },
   bmiRow: {
     flexDirection: 'row',
