@@ -1,120 +1,137 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors, FontSize, FontWeight, Space } from '@/constants/theme';
+import { router, Stack } from 'expo-router';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { Colors, FontSize, FontWeight, Layout, Space } from '@/constants/theme';
 
 export default function RpeScreen() {
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        {/* メイン解説 */}
-        <Text style={styles.title}>RPEとは</Text>
-        <Text style={styles.paragraph}>
-          RPEとは「そのセットがどれくらいキツかったか」を1〜10の数字で表した自己評価の基準です。
-          正式名称は Rate of Perceived Exertion（自覚的運動強度）と言います。
-        </Text>
+    <>
+      {/* ネイティブの黒いヘッダー帯を非表示にする設定 */}
+      <Stack.Screen options={{ headerShown: false }} />
 
-        {/* RPE法 10段階評価リスト */}
-        <Text style={styles.sectionTitle}>📋 RPE法 10段階評価リスト</Text>
-        <View style={styles.table}>
-          <View style={styles.tableRowHeader}>
-            <Text style={[styles.tableHeaderCell, { width: '25%' }]}>RPEレベル</Text>
-            <Text style={[styles.tableHeaderCell, { width: '30%' }]}>疲労度・感覚</Text>
-            <Text style={[styles.tableHeaderCell, { width: '45%' }]}>具体的な目安</Text>
-          </View>
-
-          <View style={styles.tableRow}>
-            <Text style={[styles.rpeNum, { width: '25%', color: '#EF4444' }]}>10</Text>
-            <Text style={[styles.tableCellBold, { width: '30%' }]}>限界値・極限</Text>
-            <Text style={[styles.tableCell, { width: '45%' }]}>1回も追加できない。全力を出し切った状態。</Text>
-          </View>
-          <View style={styles.tableRow}>
-            <Text style={[styles.rpeNum, { width: '25%', color: '#F97316' }]}>9</Text>
-            <Text style={[styles.tableCellBold, { width: '30%' }]}>非常に強い</Text>
-            <Text style={[styles.tableCell, { width: '45%' }]}>あと1回なら挙げられたかもしれないが、確実ではない。</Text>
-          </View>
-          <View style={styles.tableRow}>
-            <Text style={[styles.rpeNum, { width: '25%', color: '#F59E0B' }]}>8</Text>
-            <Text style={[styles.tableCellBold, { width: '30%' }]}>強い</Text>
-            <Text style={[styles.tableCell, { width: '45%' }]}>あと2回は確実に挙げられた。</Text>
-          </View>
-          <View style={styles.tableRow}>
-            <Text style={[styles.rpeNum, { width: '25%', color: '#10B981' }]}>7</Text>
-            <Text style={[styles.tableCellBold, { width: '30%' }]}>やや強い</Text>
-            <Text style={[styles.tableCell, { width: '45%' }]}>あと3回は確実に挙げられた。フォームを維持できる。</Text>
-          </View>
-          <View style={styles.tableRow}>
-            <Text style={[styles.rpeNum, { width: '25%', color: '#3B82F6' }]}>6</Text>
-            <Text style={[styles.tableCellBold, { width: '30%' }]}>中等度</Text>
-            <Text style={[styles.tableCell, { width: '45%' }]}>あと4〜5回は挙がる。重さは感じるが余力はある。</Text>
-          </View>
-          <View style={styles.tableRow}>
-            <Text style={[styles.rpeNum, { width: '25%', color: '#6366F1' }]}>5</Text>
-            <Text style={[styles.tableCellBold, { width: '30%' }]}>やや楽</Text>
-            <Text style={[styles.tableCell, { width: '45%' }]}>トレーニングとして機能するが、まだ余裕がある。</Text>
-          </View>
-          <View style={styles.tableRow}>
-            <Text style={[styles.rpeNum, { width: '25%', color: '#8B5CF6' }]}>4</Text>
-            <Text style={[styles.tableCellBold, { width: '30%' }]}>楽</Text>
-            <Text style={[styles.tableCell, { width: '45%' }]}>ウォーミングアップや回復レベル。</Text>
-          </View>
-          <View style={styles.tableRow}>
-            <Text style={[styles.rpeNum, { width: '25%', color: '#A855F7' }]}>3</Text>
-            <Text style={[styles.tableCellBold, { width: '30%' }]}>非常に楽</Text>
-            <Text style={[styles.tableCell, { width: '45%' }]}>ほとんど疲労を感じない。軽い運動。</Text>
-          </View>
-          <View style={styles.tableRow}>
-            <Text style={[styles.rpeNum, { width: '25%', color: '#EC4899' }]}>2</Text>
-            <Text style={[styles.tableCellBold, { width: '30%' }]}>きわめて楽</Text>
-            <Text style={[styles.tableCell, { width: '45%' }]}>日常生活活動程度。</Text>
-          </View>
-          <View style={styles.tableRow}>
-            <Text style={[styles.rpeNum, { width: '25%', color: '#6B7280' }]}>1</Text>
-            <Text style={[styles.tableCellBold, { width: '30%' }]}>安静時</Text>
-            <Text style={[styles.tableCell, { width: '45%' }]}>座っている。寝ている状態。</Text>
-          </View>
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        {/* ── Header ─────────────────────────── */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} hitSlop={8} style={styles.headerBack}>
+            <IconSymbol name="chevron.left" size={24} color={Colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>RPEとは</Text>
+          <View style={styles.headerSpacer} />
         </View>
 
-        {/* なぜBig3を伸ばすのにRPEが必要なのか？ */}
-        <Text style={styles.sectionTitle}>・なぜBig3を伸ばすのにRPEが必要なのか？</Text>
-        <Text style={styles.paragraph}>
-          これまでは「1発最大で挙がる重量（1RM）」の75%や80%といった「%1RM」でメニューを組むのが主流でした。しかし、これには大きな弱点があります。それは「人間の調子は毎日変わる」ということです。{'\n'}
-          睡眠不足、仕事のストレス、前日の疲れなどで、先週は軽く挙がった100kgが、今日は鉄の塊のように重く感じることってありますよね。{'\n'}
-          RPEを使うと、その日の体調に合わせた最適な負荷（オートレギュレーション＝自己調節）が可能になります。
-        </Text>
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          <Text style={styles.title}>RPEとは</Text>
+          <Text style={styles.paragraph}>
+            RPEとは「そのセットがどれくらいキツかったか」を1〜10の数字で表した自己評価の基準です。
+            正式名称は Rate of Perceived Exertion（自覚的運動強度）と言います。
+          </Text>
 
-        {/* ケガを防ぎ、神経系の疲労を管理できる */}
-        <Text style={styles.sectionTitle}>・ケガを防ぎ、神経系の疲労を管理できる</Text>
-        <Text style={styles.paragraph}>
-          Big3、特にスクワットやデッドリフトは全身の神経系を激しく消耗します。体調が悪い日に無理やり固定された高重量（%1RM）で潰れるまでやってしまうと、ケガのリスクが跳ね上がります。「今日は調子が悪いから、RPE8（あと2回残る軽さ）になるように重量を少し落とそう」と判断を可能にするのがRPEです。
-        </Text>
+          {/* RPE法 10段階評価リスト */}
+          <Text style={styles.sectionTitle}>📋 RPE法 10段階評価リスト</Text>
+          <View style={styles.table}>
+            <View style={styles.tableRowHeader}>
+              <Text style={[styles.tableHeaderCell, { width: '25%' }]}>RPEレベル</Text>
+              <Text style={[styles.tableHeaderCell, { width: '30%' }]}>疲労度・感覚</Text>
+              <Text style={[styles.tableHeaderCell, { width: '45%' }]}>具体的な目安</Text>
+            </View>
 
-        {/* 毎セット限界（RPE10）まで追い込まないため */}
-        <Text style={styles.sectionTitle}>・毎セット限界（RPE10）まで追い込まないため</Text>
-        <Text style={styles.paragraph}>
-          「限界までやらないと伸びないのでは？」と思いがちですが、Big3の重量を伸ばすには「潰れるまでやらない（RPE7〜9で止める）」のが鉄則です。余力を残してセットを終えることで、フォームが崩れるのを防ぎ、質の高い練習（ボリューム）をたくさん積み重ねることができます。結果として、その方が早く強くなります。
-        </Text>
+            <View style={styles.tableRow}>
+              <Text style={[styles.rpeNum, { width: '25%' }]}>10</Text>
+              <Text style={[styles.tableCellBold, { width: '30%' }]}>最大強度</Text>
+              <Text style={[styles.tableCell, { width: '45%' }]}>あと1回も挙がらない（限界）</Text>
+            </View>
 
-        {/* RPE法と筋肥大 */}
-        <Text style={styles.sectionTitle}>・RPE法と筋肥大</Text>
-        <Text style={styles.paragraph}>
-          RPE法（余力を残す管理）でも十分に筋肉は大きく（筋肥大）なります。しかし、すべての種目をRPE法で管理してしまうと、筋肥大の効率が落ちてしまう可能性があります。{'\n\n'}
-          Big3は「RPE法」で疲労をコントロールするものであり補助種目まで「RPE法」で管理する必要がないので限界まで追い込んで筋肥大したいのであれば疲労管理を最優先に考えながら実施すること。
-        </Text>
-      </ScrollView>
-    </SafeAreaView>
+            <View style={styles.tableRow}>
+              <Text style={[styles.rpeNum, { width: '25%' }]}>9.5</Text>
+              <Text style={[styles.tableCellBold, { width: '30%' }]}>極めてきつい</Text>
+              <Text style={[styles.tableCell, { width: '45%' }]}>回数は限界だが、重量は少し増やせるかも</Text>
+            </View>
+
+            <View style={styles.tableRow}>
+              <Text style={[styles.rpeNum, { width: '25%' }]}>9</Text>
+              <Text style={[styles.tableCellBold, { width: '30%' }]}>かなりきつい</Text>
+              <Text style={[styles.tableCell, { width: '45%' }]}>あと「1回」だけなら確実に挙げられた</Text>
+            </View>
+
+            <View style={styles.tableRow}>
+              <Text style={[styles.rpeNum, { width: '25%' }]}>8.5</Text>
+              <Text style={[styles.tableCellBold, { width: '30%' }]}>強い強度</Text>
+              <Text style={[styles.tableCell, { width: '45%' }]}>あと1〜2回は挙げられた感覚</Text>
+            </View>
+
+            <View style={styles.tableRow}>
+              <Text style={[styles.rpeNum, { width: '25%' }]}>8</Text>
+              <Text style={[styles.tableCellBold, { width: '30%' }]}>強い強度</Text>
+              <Text style={[styles.tableCell, { width: '45%' }]}>あと「2回」なら確実に挙げられた</Text>
+            </View>
+
+            <View style={styles.tableRow}>
+              <Text style={[styles.rpeNum, { width: '25%' }]}>7.5</Text>
+              <Text style={[styles.tableCellBold, { width: '30%' }]}>中高強度</Text>
+              <Text style={[styles.tableCell, { width: '45%' }]}>あと2〜3回は挙げられた感覚</Text>
+            </View>
+
+            <View style={styles.tableRow}>
+              <Text style={[styles.rpeNum, { width: '25%' }]}>7</Text>
+              <Text style={[styles.tableCellBold, { width: '30%' }]}>適度なきつさ</Text>
+              <Text style={[styles.tableCell, { width: '45%' }]}>あと「3回」なら確実に挙げられた（スピードを維持できる限界）</Text>
+            </View>
+
+            <View style={styles.tableRow}>
+              <Text style={[styles.rpeNum, { width: '25%' }]}>5〜6</Text>
+              <Text style={[styles.tableCellBold, { width: '30%' }]}>軽い・中等度</Text>
+              <Text style={[styles.tableCell, { width: '45%' }]}>あと4〜6回は余裕がある（ウォーミングアップ等）</Text>
+            </View>
+
+            <View style={[styles.tableRow, { borderBottomWidth: 0 }]}>
+              <Text style={[styles.rpeNum, { width: '25%' }]}>1〜4</Text>
+              <Text style={[styles.tableCellBold, { width: '30%' }]}>非常に軽い</Text>
+              <Text style={[styles.tableCell, { width: '45%' }]}>ほとんど努力が不要な軽さ</Text>
+            </View>
+          </View>
+
+          {/* なぜRPEが重要なのか */}
+          <Text style={styles.sectionTitle}>💡 なぜRPEが重要なのか？</Text>
+          <Text style={styles.paragraph}>
+            人間の体調は毎日変わります。睡眠不足の日や仕事で疲れている日に、「いつも100kgだから今日も100kg」と無理に挙げてしまうと、疲労が溜まりすぎて怪我をしたり、筋肉が逆に減ってしまう原因になります。
+          </Text>
+          <Text style={styles.paragraph}>
+            RPEを使うことで、「今日は体調が悪いから、RPE 8（あと2回できる余裕）になるように少し重量を落とそう」といった、その日の体調に合わせた最適なトレーニング（自動調整）が可能になります。
+          </Text>
+        </ScrollView>
+      </SafeAreaView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: Colors.bgScreen,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 52,
+    paddingHorizontal: Layout.screenPaddingH,
+    backgroundColor: Colors.bgCard,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
+  },
+  headerBack: { width: 40 },
+  headerTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+  },
+  headerSpacer: { width: 40 },
   scroll: {
     paddingHorizontal: Space[4],
     paddingVertical: Space[5],
-    backgroundColor: '#FFFFFF',
   },
   title: {
     fontSize: FontSize['2xl'],
@@ -139,7 +156,7 @@ const styles = StyleSheet.create({
   table: {
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: 8, // 👈 エラー回避のため直接数値を指定
+    borderRadius: 8,
     overflow: 'hidden',
     marginTop: Space[2],
     marginBottom: Space[4],
@@ -170,19 +187,18 @@ const styles = StyleSheet.create({
   rpeNum: {
     fontSize: FontSize.base,
     fontWeight: FontWeight.bold,
+    color: Colors.primaryDark,
     textAlign: 'center',
   },
   tableCellBold: {
     fontSize: FontSize.xs,
-    fontWeight: FontWeight.semibold,
+    fontWeight: FontWeight.bold,
     color: Colors.textPrimary,
-    textAlign: 'center',
-    paddingHorizontal: 2,
+    paddingHorizontal: 4,
   },
   tableCell: {
     fontSize: FontSize.xs,
     color: Colors.textSecondary,
-    lineHeight: FontSize.xs * 1.4,
-    paddingHorizontal: 2,
+    lineHeight: 16,
   },
 });

@@ -157,6 +157,7 @@ kinpoyo/
 │   │   │       ├── hypertrophy.tsx     # 筋肥大とは ✅  (route: /program/hypertrophy)
 │   │   │       ├── program-design.tsx  # プログラム組み方 ✅  (route: /program/program-design)
 │   │   │       └── rpe.tsx             # RPEとは ✅  (route: /program/rpe)
+│   │   │       └── custom_program.tsx  # カスタムプログラム画面 ✅
 │   │   └── (tabs)/                   # タブナビゲーショングループ
 │   │       ├── _layout.tsx           # タブナビゲーション（5タブ）
 │   │       ├── index.tsx             # ホーム画面 ✅
@@ -370,3 +371,4 @@ kinpoyo/
 | 2026-06-09 | login.tsx：ログインボタンを /gender（オンボーディング）→ signIn() 直接呼び出しに変更。オンボーディングは signup.tsx からのみ開始するよう修正 |
 | 2026-06-09 | ホーム画面（index.tsx）：体重カード・体重入力モーダル・関連ステート・未使用インポート（KeyboardAvoidingView/Modal/TextInput/Platform）・未使用スタイルを削除 |
 | 2026-06-11 | ホーム画面に「💡トレーニング知識」セクション追加（プログラムカードの下）：「筋肥大とは」「プログラム組み方」「RPEとは」の3カードから各詳細画面へ遷移。新規画面 `(screens)/program/hypertrophy.tsx`・`program-design.tsx`・`rpe.tsx` を追加（解説コンテンツのみ・ナビゲーションのみ） |
+| 2026-06-12 | カスタムプログラム画面（custom_program.tsx）の画面表示不具合および型エラーを修正。Expo Routerのネイティブヘッダーを非表示（headerShown: false）にし、theme.tsに準拠した独自ヘッダーへ統合。合わせて、解説画面3ファイル（hypertrophy.tsx、rpe.tsx、program-design.tsx）からも黒いヘッダー帯を排除し、統一感のある戻るボタン付きヘッダーへ修正。 |

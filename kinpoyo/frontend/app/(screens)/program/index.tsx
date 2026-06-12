@@ -108,7 +108,11 @@ export default function ProgramIchiranScreen() {
           ))}
 
           {/* ── カスタム作成 ─────────────────── */}
-          <TouchableOpacity style={styles.customBtn} activeOpacity={0.7}>
+          <TouchableOpacity 
+            style={styles.customBtn} 
+            activeOpacity={0.7}
+            onPress={() => router.push('/program/custom_program')}
+          >
             <IconSymbol name="plus" size={18} color={Colors.primaryDark} />
             <Text style={styles.customBtnText}>カスタムプログラムを作成</Text>
           </TouchableOpacity>
@@ -124,8 +128,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.bgScreen,
   },
-
-  // ── Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -144,8 +146,6 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
   },
   headerSpacer: { width: 40 },
-
-  // ── Scroll
   scroll: {
     paddingHorizontal: Layout.screenPaddingH,
     paddingTop: Space[5],
@@ -157,8 +157,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: Space[5],
   },
-
-  // ── Program card
   card: {
     backgroundColor: Colors.bgCard,
     borderRadius: Radius.xl,
@@ -223,8 +221,6 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontWeight: FontWeight.medium,
   },
-
-  // ── Custom button
   customBtn: {
     flexDirection: 'row',
     alignItems: 'center',
