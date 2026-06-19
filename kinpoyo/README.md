@@ -236,6 +236,7 @@ git branch -a                       # ブランチ一覧（リモート含む）
 kinpoyo/
 ├── AGENTS.md              # AIエージェント向けガイド（必ず読むこと）
 ├── README.md              # このファイル
+├── docker-compose.yml     # PostgreSQL 16 Docker設定
 ├── frontend/              # React Native (Expo)
 │   ├── app/
 │   │   ├── (auth)/        # 認証フロー画面
@@ -246,14 +247,24 @@ kinpoyo/
 │   ├── constants/         # デザイントークン (theme.ts)
 │   └── package.json
 └── backend-core/          # FastAPI バックエンド
-    ├── app/
-    │   ├── models/        # SQLAlchemy モデル
-    │   ├── routers/       # API ルーター
-    │   ├── schemas/       # Pydantic スキーマ
-    │   ├── crud/          # DB 操作
-    │   └── core/          # 設定・認証
-    ├── alembic/           # マイグレーション
     ├── main.py
     ├── requirements.txt
-    └── DATABASE.md        # DB 設計書
+    ├── DATABASE.md        # DB 設計書
+    ├── scripts/
+    │   └── seed_masters.py  # マスターデータ投入
+    └── app/
+        ├── database.py    # Engine・セッション設定
+        ├── models/        # SQLAlchemy モデル（機能別ファイル分割）
+        │   ├── base.py    # DeclarativeBase・TimestampMixin
+        │   ├── master.py  # マスター10テーブル
+        │   ├── user.py    # User・UserProfile
+        │   ├── body.py    # BodyGoal
+        │   ├── exercise.py# Exercise・ExerciseSecondaryMuscle
+        │   ├── workout.py # WorkoutSession・SessionExercise・SessionSet
+        │   ├── program.py # Program・ProgramExercise・UserProgram
+        │   └── community.py # Post・PostLike・PostComment・Follow
+        ├── routers/       # API ルーター
+        ├── schemas/       # Pydantic スキーマ
+        ├── crud/          # DB 操作
+        └── core/          # 設定・認証（security.py / deps.py）
 ```

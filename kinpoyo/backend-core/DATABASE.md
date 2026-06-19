@@ -1093,7 +1093,7 @@ INDEX: exercises(movement_category_id)
 
 ```
 backend-core/
-├── docker-compose.yml        # PostgreSQL Docker設定
+├── docker-compose.yml        # PostgreSQL Docker設定（kinpoyo/ 直下に配置）
 ├── .env                      # 環境変数（Git管理しない）
 ├── main.py                   # エントリーポイント
 ├── requirements.txt
@@ -1109,15 +1109,14 @@ backend-core/
     │   │                     #   MovementCategory, EquipmentType,
     │   │                     #   MeasurementUnit, GoalType, ProgramCategory,
     │   │                     #   UserProgramStatus, PostType
-    │   └── models.py         # それ以外の全モデル
-    │                         #   exercise_secondary_muscles (Table オブジェクト),
-    │                         #   User, UserProfile, BodyGoal,
-    │                         #   Exercise,
-    │                         #   WorkoutSession, SessionExercise, SessionSet,
-    │                         #   PoseRecord（AI処理・変更禁止）,
-    │                         #   AiReview（AI処理・変更禁止）,
-    │                         #   Program, ProgramExercise, UserProgram,
-    │                         #   Post, PostLike, PostComment, Follow
+    │   ├── user.py           # User, UserProfile  (BE-A担当)
+    │   ├── body.py           # BodyGoal           (BE-A担当)
+    │   ├── exercise.py       # exercise_secondary_muscles (Table), Exercise  (BE-B担当)
+    │   ├── workout.py        # WorkoutSession, SessionExercise, SessionSet  (BE-B担当)
+    │   │                     #   PoseRecord（AI処理・変更禁止）,
+    │   │                     #   AiReview（AI処理・変更禁止）
+    │   ├── program.py        # Program, ProgramExercise, UserProgram  (BE-B担当)
+    │   └── community.py      # Post, PostLike, PostComment, Follow  (BE-B担当)
     ├── schemas/              # Pydantic スキーマ（リクエスト・レスポンス定義）
     │   ├── master.py
     │   ├── user.py
@@ -1140,13 +1139,13 @@ backend-core/
     │   └── community.py
     └── core/
         ├── config.py         # 環境変数管理（DATABASE_URL等）
-        ├── security.py       # JWT・パスワードハッシュ
+        ├── security.py       # JWT・パスワードハッシュ（python-jose / passlib）
         └── deps.py           # 依存性注入（get_db, get_current_user）
 ```
 
 > **モデルファイルの分割方針**
-> `models.py` が500行を超えて見づらくなった場合に機能ごとのファイルへ分割する。
-> 最初から細かく分けるとインポート管理が複雑になるため、まずは1ファイルにまとめる。
+> 機能ドメインごとにファイルを分割する（`user.py` / `body.py` / `exercise.py` / `workout.py` / `program.py` / `community.py`）。
+> `workout.py` に `PoseRecord` と `AiReview` も含めるが、これらは**AI処理テーブルのため変更禁止**。
 
 ### 6.2 命名規則
 
