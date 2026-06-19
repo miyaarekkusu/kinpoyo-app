@@ -328,16 +328,6 @@ export default function CommunityScreen() {
         </View>
       )}
 
-      {/* Info Banner */}
-      <TouchableOpacity style={s.infoBanner} activeOpacity={0.8}>
-        <MaterialIcons name="info-outline" size={18} color={Colors.warning} style={{ marginTop: 2 }} />
-        <View style={s.infoBannerBody}>
-          <Text style={s.infoBannerTitle}>コミュニティ機能を利用するにはIDを登録してください</Text>
-          <Text style={s.infoBannerSub}>IDを登録して、友達追加やQ&Aなどを利用しましょう</Text>
-        </View>
-        <MaterialIcons name="chevron-right" size={18} color={Colors.textHint} />
-      </TouchableOpacity>
-
       {/* Tab Bar */}
       <View style={s.tabBar}>
         {tabs.map(tab => (
@@ -1073,31 +1063,6 @@ const s = StyleSheet.create({
     fontSize: FontSize.base,
     color: Colors.textSecondary,
     textAlign: 'center',
-  },
-
-  // ── Info Banner ───────────────────────────────────────────
-  infoBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Space[2],
-    marginHorizontal: Layout.screenPaddingH,
-    marginBottom: Space[3],
-    padding: Space[3],
-    borderRadius: Radius.md,
-    backgroundColor: Colors.warningSubtle,
-    borderWidth: 1,
-    borderColor: Colors.warning,
-  },
-  infoBannerBody: { flex: 1 },
-  infoBannerTitle: {
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-  },
-  infoBannerSub: {
-    fontSize: FontSize.xs,
-    color: Colors.textSecondary,
-    marginTop: 2,
   },
 
   // ── Tab Bar ───────────────────────────────────────────────

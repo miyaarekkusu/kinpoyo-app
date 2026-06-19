@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -38,36 +37,6 @@ const BODY_ITEMS = [
   { emoji: '📊', label: '体脂肪率', unit: '%' },
 ];
 
-type RowItem = {
-  icon: string;
-  label: string;
-  chevron?: boolean;
-};
-
-const RECORD_ROWS: RowItem[] = [
-  { icon: 'calendar',    label: 'カレンダー',           chevron: true },
-  { icon: 'chat.bubble', label: 'マイメモ',              chevron: true },
-  { icon: 'xmark',       label: 'エクササイズについて',  chevron: true },
-];
-
-const SETTING_ROWS: RowItem[] = [
-  { icon: 'bell.fill',   label: '通知設定',              chevron: true },
-  { icon: 'gear',        label: 'プライバシー設定',       chevron: true },
-  { icon: 'search',      label: 'ヘルプ・お問い合わせ',  chevron: true },
-];
-
-function SectionRow({ icon, label }: { icon: string; label: string }) {
-  return (
-    <TouchableOpacity style={styles.sectionRow} activeOpacity={0.7}>
-      <View style={styles.sectionRowIcon}>
-        <IconSymbol name={icon as any} size={18} color={Colors.primaryDark} />
-      </View>
-      <Text style={styles.sectionRowLabel}>{label}</Text>
-      <IconSymbol name="chevron.right" size={18} color={Colors.textHint} />
-    </TouchableOpacity>
-  );
-}
-
 export default function ProfileScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -91,10 +60,6 @@ export default function ProfileScreen() {
           </View>
           <View style={styles.userInfo}>
             <Text style={styles.userName}>ゲスト</Text>
-            <TouchableOpacity style={styles.idPrompt} activeOpacity={0.7}>
-              <Text style={styles.idPromptText}>IDを登録してアカウントを保護しましょう</Text>
-              <IconSymbol name="chevron.right" size={14} color={Colors.textLink} />
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -146,28 +111,6 @@ export default function ProfileScreen() {
             ))}
           </View>
         </TouchableOpacity>
-
-        {/* ── Training Records ─────────────────── */}
-        <Text style={styles.sectionTitle}>トレーニング記録</Text>
-        <View style={styles.rowGroup}>
-          {RECORD_ROWS.map((r, i) => (
-            <React.Fragment key={r.label}>
-              <SectionRow icon={r.icon} label={r.label} />
-              {i < RECORD_ROWS.length - 1 && <View style={styles.rowDivider} />}
-            </React.Fragment>
-          ))}
-        </View>
-
-        {/* ── Settings ─────────────────────────── */}
-        <Text style={styles.sectionTitle}>設定</Text>
-        <View style={styles.rowGroup}>
-          {SETTING_ROWS.map((r, i) => (
-            <React.Fragment key={r.label}>
-              <SectionRow icon={r.icon} label={r.label} />
-              {i < SETTING_ROWS.length - 1 && <View style={styles.rowDivider} />}
-            </React.Fragment>
-          ))}
-        </View>
 
         <View style={{ height: Space[10] }} />
       </ScrollView>
@@ -252,17 +195,6 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.bold,
     color: Colors.textPrimary,
   },
-  idPrompt: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  idPromptText: {
-    fontSize: FontSize.xs,
-    color: Colors.textLink,
-    flex: 1,
-  },
-
   // ── Section titles
   sectionTitle: {
     fontSize: FontSize.base,
@@ -402,40 +334,5 @@ const styles = StyleSheet.create({
   bodyLabel: {
     fontSize: FontSize.xs,
     color: Colors.textHint,
-  },
-
-  // ── Row groups
-  rowGroup: {
-    backgroundColor: Colors.bgCard,
-    borderRadius: Radius.lg,
-    marginBottom: Space[5],
-    overflow: 'hidden',
-    ...Shadow.sm,
-  },
-  sectionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Space[4],
-    paddingVertical: Space[4],
-    gap: Space[3],
-  },
-  sectionRowIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: Colors.primarySubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sectionRowLabel: {
-    flex: 1,
-    fontSize: FontSize.base,
-    fontWeight: FontWeight.medium,
-    color: Colors.textPrimary,
-  },
-  rowDivider: {
-    height: 1,
-    backgroundColor: Colors.divider,
-    marginLeft: Space[4] + 32 + Space[3],
   },
 });
