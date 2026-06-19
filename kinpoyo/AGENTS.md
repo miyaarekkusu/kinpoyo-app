@@ -1,4 +1,4 @@
-# AGENTS.md — kinpoyo プロジェクト
+﻿# AGENTS.md — kinpoyo プロジェクト
 
 > このファイルはAIエージェント（Claude Code など）向けのプロジェクトガイドです。
 > **作業を開始する前に必ずこのファイルを最初に読むこと。**
@@ -156,8 +156,9 @@ kinpoyo/
 │   │   │       ├── bodyweight.tsx      # ボディウェイト詳細 ✅  (route: /program/bodyweight)
 │   │   │       ├── hypertrophy.tsx     # 筋肥大とは ✅  (route: /program/hypertrophy)
 │   │   │       ├── program-design.tsx  # プログラム組み方 ✅  (route: /program/program-design)
-│   │   │       └── rpe.tsx             # RPEとは ✅  (route: /program/rpe)
-│   │   │       └── custom_program.tsx  # カスタムプログラム画面 ✅
+│   │   │       ├── rpe.tsx             # RPEとは ✅  (route: /program/rpe)
+│   │   │       ├── custom_program.tsx  # カスタムプログラム画面 ✅
+│   │   │       └── even_program.tsx    # プログラム画面 ✅
 │   │   └── (tabs)/                   # タブナビゲーショングループ
 │   │       ├── _layout.tsx           # タブナビゲーション（5タブ）
 │   │       ├── index.tsx             # ホーム画面 ✅
@@ -208,7 +209,7 @@ kinpoyo/
 | コミュニティー         | `(tabs)/community.tsx`             | ✅ 実装済み           | 4タブ(フォロー中・フィード・Q&A・お知らせ)・フォロー中空状態・ユーザーID検索モーダル（My ID CardにQRコード表示ボタン追加、モーダル内で検索画面⇄マイQRコード画面を切替表示）・ヘッダー右上のアバターから/profileへ遷移・投稿カード一覧（自分の投稿は文字表記「編集」「削除」ボタン表示）・投稿詳細モーダル(画像・いいね・コメント送信・自分の投稿は文字表記「編集」「削除」ボタン表示)・FABボタン（投稿作成・編集モーダル：フィード/Q&A選択・タイトル/本文入力・画像添付（expo-image-picker、最大5枚）） |
 | 筋トレ開始             | `(tabs)/workout.tsx`               | ✅ 実装済み           | 今日の登録メニュー一覧・種目数/セット数サマリー・開始ボタン（登録あり時のみ）・未登録時はカレンダーへ誘導                                                                                 |
 | 記録                   | `(tabs)/records.tsx`               | ✅ 実装済み           | 週/月/年グラフ（折れ線・react-native-gifted-charts）・AIトレーナーカード（モック・TrainerAvatar+期間別コメント）・種目別最大重量・筋トレ履歴（期間+部位絞り込み・モーダル展開）        |
-| プロフィール           | `(tabs)/profile.tsx`               | ✅ 実装済み           | ユーザーカード・実績4グリッド・BIG3(1RM)・身体情報・設定リスト                                                                                                                            |
+| プロフィール           | `(tabs)/profile.tsx`               | ✅ 実装済み           | ユーザーカード・実績4グリッド・BIG3(1RM)・身体情報                                                                                                                                        |
 | 性別選択               | `(onboarding)/gender.tsx`          | ✅ 実装済み（モック） | 男性/女性カード選択・「その他／回答しない」ピル・選択時のみ次へ活性化（人物画像なし）                                                                                                     |
 | 身長設定               | `(onboarding)/height.tsx`          | ✅ 実装済み（モック） | cm/ft単位切替・上下スクロールの定規ピッカー（スナップ）・中央インジケーター・大きい数値表示                                                                                              |
 | 体重設定               | `(onboarding)/weight.tsx`          | ✅ 実装済み（モック） | kg/lbs単位切替・左右スクロールの定規ピッカー（スナップ）・BMIカード（TrainerAvatar+コメント）                                                                                             |
@@ -285,15 +286,33 @@ kinpoyo/
 
 - Python: 3.14.0 (`C:\Python314\python.exe`)
 - 仮想環境: `backend-core\venv\`
-- 初回セットアップ:
-  ```
-  cd backend-core
-  python -m venv venv
-  venv\Scripts\activate
-  pip install -r requirements.txt
-  ```
-- 起動コマンド: `cd backend-core && venv\Scripts\activate && uvicorn main:app --reload`
+- DB: PostgreSQL 16（**Docker で起動**）
+- FastAPI: venv で直接起動（Docker不使用）
+
+**初回セットアップ:**
+```bash
+# 1. DB起動（Docker）
+docker compose up -d db
+
+# 2. FastAPI セットアップ
+cd backend-core
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+
+# 3. マイグレーション適用
+alembic upgrade head
+```
+
+**通常の起動コマンド:**
+```bash
+docker compose up -d db                              # DB起動
+cd backend-core && venv\Scripts\activate && uvicorn main:app --reload  # API起動
+```
+
 - APIドキュメント: http://localhost:8000/docs
+- DB接続: `postgresql://kinpoyo:kinpoyo@localhost:5432/kinpoyo`
+- `docker-compose.yml` はリポジトリルート（`kinpoyo/`）に配置
 
 ---
 
@@ -345,7 +364,8 @@ kinpoyo/
 | 2026-05-31 | AGENTS.md更新：プロジェクト概要・機能一覧・機能フロー・技術スタック・AIエージェント厳守事項を追記                                                                                                                                                                                                                                                                                                                                              |
 | 2026-06-01 | デザイントークン作成：styles/theme.css・styles/components.css・constants/theme.ts（白×明るいグリーン配色）                                                                                                                                                                                                                                                                                                                                     |
 | 2026-06-01 | AGENTS.md更新：コミュニティー機能を機能一覧に追加                                                                                                                                                                                                                                                                                                                                                                                              |
-| 2026-06-01 | Docker廃止：docker-compose.yml・backend-core/Dockerfile を削除。ローカル仮想環境（venv）で直接起動する構成に統一                                                                                                                                                                                                                                                                                                                               |
+| 2026-06-01 | Docker廃止：docker-compose.yml・backend-core/Dockerfile を削除。ローカル仮想環境（venv）で直接起動する構成に統一 |
+| 2026-06-19 | Docker再導入（DB限定）：PostgreSQL 16のみ docker-compose で起動する構成に変更。FastAPIはvenvのまま。docker-compose.ymlをkinpoyo/直下に配置                                                                                                                                                                                                                                                                                                                               |
 | 2026-06-02 | ホーム画面実装：週間カレンダー・今日のトレーニング・体重・プログラムカード。5タブナビ（ホーム・コミュニティー・筋トレ開始・記録・プロフィール）。食事管理・ルーティン・ライブラリー・インターバルタイマーは除外                                                                                                                                                                                                                                |
 | 2026-06-02 | explore.tsx削除。ホーム週カレンダーをスワイプ対応（8週先まで）・ボタン名を「ワークアウト登録」に変更・ヘッダーにカレンダーアイコン追加。calendar.tsx新規作成（月表示・色フィルター・前後月ナビ・筋トレ記録/修正ボタン）                                                                                                                                                                                                                        |
 | 2026-06-02 | 全画面mockup実装（サブエージェント2並列）。ホーム：ヒーローバナー・炎ストリーク・統計グリッド追加。コミュニティー：4タブ・投稿カード・FAB。記録：期間セレクター・AI週間レポート・曜日サークル・筋肉疲労度バー。プロフィール：ユーザーカード・実績4グリッド・BIG3・身体情報・設定。icon-symbol.tsx拡充                                                                                                                                          |
@@ -398,3 +418,5 @@ kinpoyo/
 | 2026-06-12 | コミュニティー：自分の投稿（`user === 'あなた'`）を編集・削除できるように対応。投稿詳細モーダルのヘッダー右上に編集（鉛筆）・削除（ゴミ箱）アイコンを追加。編集はPostCreateScreenを再利用し、タイトル・本文・画像を初期値として開き「投稿を編集」「更新」表記に切替（投稿先タイプ選択は編集時非表示・変更不可）。削除はネストしたModalを避けるため、PostDetailScreen内に画面内オーバーレイ（dialogOverlay/dialogBox、Radius.xl）で「投稿を削除しますか？」確認ダイアログを表示し、削除確定でfeedData/qaDataから該当投稿を除去して詳細モーダルを閉じる。CommunityScreenに`editingPost`・`postModalKey`状態を追加し、投稿作成・編集モーダルを1つに統合（`key`で都度マウントし直し、編集→新規作成時に前回入力が残らないようにする） |
 | 2026-06-12 | コミュニティー：編集・削除ボタンをアイコンから文字表記「編集」「削除」に変更し、投稿一覧（FeedTab）でも自分の投稿に表示されるように対応。投稿カードのアクション行を左（編集・削除テキストボタン、自分の投稿のみ）と右（いいね・コメント）に分割（postActionsLeft/postActionsRight、postActionsをjustifyContent: 'space-between'に変更）。削除確認ダイアログを`DeleteConfirmDialog`コンポーネントとして共通化し、投稿詳細モーダルでは画面内オーバーレイ、投稿一覧では新規追加した`deletingPost`状態によるtransparent Modal（ネストしたModal問題を避けるため、一覧画面では他のModalが開いていない時のみ表示される）として再利用 |
 | 2026-06-12 | コミュニティー：投稿検索機能を実装。ヘッダーの検索アイコン（虫眼鏡）押下で検索バー（テキスト入力＋クリアボタン）の表示/非表示を切替（押下中はアイコンが×に変化）。フィード・Q&A・お知らせの各タブで、入力文字列をタイトル・本文・投稿者名に対して大文字小文字を区別しない部分一致でフィルタリング（`filterByQuery`、リアルタイム反映）。該当なしの場合はFeedTabに検索結果なしの空状態（search-offアイコン＋メッセージ）を表示 |
+| 2026-06-13 | プロフィール・コミュニティーから「IDを登録してください」系のプロンプトを削除。profile.tsx：ユーザーカードの「IDを登録してアカウントを保護しましょう」リンク（idPrompt/idPromptTextスタイル含む）を削除。community.tsx：検索バー下の「コミュニティ機能を利用するにはIDを登録してください」インフォバナー（infoBanner系スタイル含む）を削除 |
+| 2026-06-13 | プロフィール画面：下部の「トレーニング記録」（カレンダー・マイメモ・エクササイズについて）・「設定」（通知設定・プライバシー設定・ヘルプ・お問い合わせ）リストを削除し、ユーザーカード・実績・BIG3・身体情報のみの構成に変更。未使用となったRECORD_ROWS/SETTING_ROWS/SectionRow/RowItem型・rowGroup系スタイル・未使用のReactインポートを削除 |
