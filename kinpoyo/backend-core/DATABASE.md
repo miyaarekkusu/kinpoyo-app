@@ -245,7 +245,7 @@ uvicorn main:app --reload
 
 ---
 
-### 2.1 genders — 性別マスター
+### 3.1 genders — 性別マスター
 
 ```sql
 CREATE TABLE genders (
@@ -264,7 +264,7 @@ CREATE TABLE genders (
 
 ---
 
-### 2.2 difficulty_levels — 難易度マスター
+### 3.2 difficulty_levels — 難易度マスター
 
 `user_profiles.experience_level` と `programs.difficulty` を統合管理。
 
@@ -285,7 +285,7 @@ CREATE TABLE difficulty_levels (
 
 ---
 
-### 2.3 muscle_groups — 筋肉部位マスター
+### 3.3 muscle_groups — 筋肉部位マスター
 
 フロントエンドの色分けチップ（`color_hex`）と対応させる。
 
@@ -314,7 +314,7 @@ CREATE TABLE muscle_groups (
 
 ---
 
-### 2.4 movement_categories — 運動分類マスター (PPL)
+### 3.4 movement_categories — 運動分類マスター (PPL)
 
 ```sql
 CREATE TABLE movement_categories (
@@ -333,7 +333,7 @@ CREATE TABLE movement_categories (
 
 ---
 
-### 2.5 equipment_types — 器具タイプマスター
+### 3.5 equipment_types — 器具タイプマスター
 
 ```sql
 CREATE TABLE equipment_types (
@@ -356,7 +356,7 @@ CREATE TABLE equipment_types (
 
 ---
 
-### 2.6 measurement_units — 計測単位マスター
+### 3.6 measurement_units — 計測単位マスター
 
 ```sql
 CREATE TABLE measurement_units (
@@ -378,7 +378,7 @@ CREATE TABLE measurement_units (
 
 ---
 
-### 2.7 goal_types — 目標種別マスター
+### 3.7 goal_types — 目標種別マスター
 
 ```sql
 CREATE TABLE goal_types (
@@ -398,7 +398,7 @@ CREATE TABLE goal_types (
 
 ---
 
-### 2.8 program_categories — プログラムカテゴリーマスター
+### 3.8 program_categories — プログラムカテゴリーマスター
 
 ```sql
 CREATE TABLE program_categories (
@@ -418,7 +418,7 @@ CREATE TABLE program_categories (
 
 ---
 
-### 2.9 user_program_statuses — ユーザープログラム参加状態マスター
+### 3.9 user_program_statuses — ユーザープログラム参加状態マスター
 
 ```sql
 CREATE TABLE user_program_statuses (
@@ -438,7 +438,7 @@ CREATE TABLE user_program_statuses (
 
 ---
 
-### 2.10 post_types — 投稿種別マスター
+### 3.10 post_types — 投稿種別マスター
 
 ```sql
 CREATE TABLE post_types (
@@ -458,7 +458,7 @@ CREATE TABLE post_types (
 
 ## 4. テーブル定義
 
-### 3.1 users — ユーザーアカウント
+### 4.1 users — ユーザーアカウント
 
 認証情報を管理するコアテーブル。パスワードは bcrypt ハッシュで保存。
 
@@ -491,7 +491,7 @@ CREATE UNIQUE INDEX uq_users_username ON users(username);
 
 ---
 
-### 3.2 user_profiles — 身体データ・プロフィール
+### 4.2 user_profiles — 身体データ・プロフィール
 
 ユーザーの最新の身体情報。1ユーザー1レコード。
 
@@ -537,7 +537,7 @@ CREATE UNIQUE INDEX uq_user_profiles_user_id ON user_profiles(user_id);
 
 ---
 
-### 3.3 body_goals — 体重・体脂肪率の目標
+### 4.3 body_goals — 体重・体脂肪率の目標
 
 ユーザーが設定する目標値。複数の目標を時系列で持てる。
 
@@ -578,7 +578,7 @@ CREATE INDEX idx_body_goals_user_type    ON body_goals(user_id, goal_type_id);
 
 ---
 
-### 3.4 exercises — 種目マスター
+### 4.4 exercises — 種目マスター
 
 アプリ共通の種目定義。管理者が登録・ユーザーが参照する。
 
@@ -627,9 +627,11 @@ CREATE INDEX idx_exercises_equipment_type_id        ON exercises(equipment_type_
 
 ---
 
-### 3.5 exercise_secondary_muscles — 種目の補助筋（ジャンクションテーブル）
+### 4.5 exercise_secondary_muscles — 種目の補助筋（ジャンクションテーブル）
 
 `exercises.secondary_muscles` (VARCHAR カンマ区切り) を正規化したテーブル。
+
+> **実装注意**: SQLAlchemy で `relationship(secondary=...)` を使うため、マップドクラスではなく `Table` オブジェクトとして定義すること（セクション [6.4](#64-マスターモデルの実装例) 参照）。
 
 ```sql
 CREATE TABLE exercise_secondary_muscles (
@@ -650,7 +652,7 @@ CREATE INDEX idx_esm_muscle_group_id ON exercise_secondary_muscles(muscle_group_
 
 ---
 
-### 3.6 workout_sessions — ワークアウトセッション
+### 4.6 workout_sessions — ワークアウトセッション
 
 1回のトレーニングセッションを表す。
 
@@ -690,7 +692,7 @@ CREATE INDEX idx_workout_sessions_user_date     ON workout_sessions(user_id, sch
 
 ---
 
-### 3.7 session_exercises — セッション内の種目
+### 4.7 session_exercises — セッション内の種目
 
 セッションに含まれる種目のリスト。順序を保持する。
 
@@ -723,7 +725,7 @@ CREATE INDEX idx_session_exercises_exercise_id ON session_exercises(exercise_id)
 
 ---
 
-### 3.8 session_sets — セット記録
+### 4.8 session_sets — セット記録
 
 各種目のセットごとの記録。RPE (Rate of Perceived Exertion) も保存。
 
@@ -761,7 +763,7 @@ CREATE INDEX idx_session_sets_session_exercise_id ON session_sets(session_exerci
 
 ---
 
-### 3.9 pose_records — MediaPipe ポーズデータ
+### 4.9 pose_records — MediaPipe ポーズデータ
 
 > **AI処理テーブル — 変更禁止**
 
@@ -792,7 +794,7 @@ CREATE INDEX idx_pose_records_recorded_at    ON pose_records(recorded_at);
 
 ---
 
-### 3.10 ai_reviews — Claude API フォームレビュー
+### 4.10 ai_reviews — Claude API フォームレビュー
 
 > **AI処理テーブル — 変更禁止**
 
@@ -800,7 +802,7 @@ CREATE INDEX idx_pose_records_recorded_at    ON pose_records(recorded_at);
 CREATE TABLE ai_reviews (
     id                   SERIAL       PRIMARY KEY,
     session_exercise_id  INTEGER      NOT NULL UNIQUE REFERENCES session_exercises(id) ON DELETE CASCADE,
-    model_version        VARCHAR(50)  NOT NULL DEFAULT 'claude-sonnet-4-5',
+    model_version        VARCHAR(50)  NOT NULL DEFAULT 'claude-sonnet-4-6',
     prompt_tokens        INTEGER,
     completion_tokens    INTEGER,
     overall_score        SMALLINT,
@@ -831,7 +833,7 @@ CREATE INDEX idx_ai_reviews_generated_at ON ai_reviews(generated_at);
 
 ---
 
-### 3.11 programs — プログラムマスター
+### 4.11 programs — プログラムマスター
 
 > **変更点**: `category` (VARCHAR) → `category_id` (FK to `program_categories`)、`difficulty` (VARCHAR) → `difficulty_level_id` (FK to `difficulty_levels`)
 
@@ -873,7 +875,7 @@ CREATE INDEX idx_programs_difficulty_level_id ON programs(difficulty_level_id);
 
 ---
 
-### 3.12 program_exercises — プログラム内の種目
+### 4.12 program_exercises — プログラム内の種目
 
 ```sql
 CREATE TABLE program_exercises (
@@ -896,7 +898,7 @@ CREATE INDEX idx_program_exercises_week_day   ON program_exercises(program_id, w
 
 ---
 
-### 3.13 user_programs — ユーザーのプログラム参加状態
+### 4.13 user_programs — ユーザーのプログラム参加状態
 
 > **変更点**: `status` (VARCHAR) → `status_id` (FK to `user_program_statuses`)
 
@@ -935,7 +937,7 @@ CREATE UNIQUE INDEX uq_user_programs_user_program ON user_programs(user_id, prog
 
 ---
 
-### 3.14 posts — コミュニティー投稿
+### 4.14 posts — コミュニティー投稿
 
 > **変更点**: `post_type` (VARCHAR) → `post_type_id` (FK to `post_types`)
 
@@ -977,7 +979,7 @@ CREATE INDEX idx_posts_post_type_id ON posts(post_type_id, created_at DESC);
 
 ---
 
-### 3.15 post_likes — いいね
+### 4.15 post_likes — いいね
 
 ```sql
 CREATE TABLE post_likes (
@@ -994,7 +996,7 @@ CREATE INDEX idx_post_likes_user_id         ON post_likes(user_id);
 
 ---
 
-### 3.16 post_comments — コメント
+### 4.16 post_comments — コメント
 
 自己参照による返信（ネスト）に対応。
 
@@ -1017,7 +1019,7 @@ CREATE INDEX idx_post_comments_parent_id ON post_comments(parent_id);
 
 ---
 
-### 3.17 follows — フォロー関係
+### 4.17 follows — フォロー関係
 
 ```sql
 CREATE TABLE follows (
@@ -1038,7 +1040,7 @@ CREATE INDEX idx_follows_followee_id ON follows(followee_id);
 
 ## 5. インデックス設計方針
 
-### 4.1 基本方針
+### 5.1 基本方針
 
 | 優先度 | 対象                              | 理由                                       |
 |-------|-----------------------------------|--------------------------------------------|
@@ -1049,7 +1051,7 @@ CREATE INDEX idx_follows_followee_id ON follows(followee_id);
 | 中    | `user_id + 時系列` 複合インデックス | ユーザー別データ取得の高速化                  |
 | 低    | JSONB カラム (GIN)                 | ポーズデータの属性検索が必要になった時に追加  |
 
-### 4.2 クエリ別インデックス設計
+### 5.2 クエリ別インデックス設計
 
 ```
 -- ユーザーのワークアウト履歴（日/月/年別）
@@ -1072,7 +1074,7 @@ INDEX: exercises(primary_muscle_id)
 INDEX: exercises(movement_category_id)
 ```
 
-### 4.3 非正規化キャッシュの方針
+### 5.3 非正規化キャッシュの方針
 
 パフォーマンス上の理由から以下カラムにカウントを非正規化して保持する。
 更新はアプリケーション層（またはDBトリガー）で行う。
@@ -1087,7 +1089,7 @@ INDEX: exercises(movement_category_id)
 
 ## 6. SQLAlchemy Model 命名規則と方針
 
-### 5.1 ファイル構成
+### 6.1 ファイル構成
 
 ```
 backend-core/
@@ -1108,8 +1110,9 @@ backend-core/
     │   │                     #   MeasurementUnit, GoalType, ProgramCategory,
     │   │                     #   UserProgramStatus, PostType
     │   └── models.py         # それ以外の全モデル
+    │                         #   exercise_secondary_muscles (Table オブジェクト),
     │                         #   User, UserProfile, BodyGoal,
-    │                         #   Exercise, ExerciseSecondaryMuscle,
+    │                         #   Exercise,
     │                         #   WorkoutSession, SessionExercise, SessionSet,
     │                         #   PoseRecord（AI処理・変更禁止）,
     │                         #   AiReview（AI処理・変更禁止）,
@@ -1145,7 +1148,7 @@ backend-core/
 > `models.py` が500行を超えて見づらくなった場合に機能ごとのファイルへ分割する。
 > 最初から細かく分けるとインポート管理が複雑になるため、まずは1ファイルにまとめる。
 
-### 5.2 命名規則
+### 6.2 命名規則
 
 | 対象             | 規則                            | 例                              |
 |-----------------|----------------------------------|---------------------------------|
@@ -1155,7 +1158,7 @@ backend-core/
 | リレーション属性  | snake_case・意味のある名前        | `exercise.primary_muscle`, `post.post_type` |
 | バックリファレンス| `back_populates` を使用          | `backref` は避ける              |
 
-### 5.3 共通ベースクラス
+### 6.3 共通ベースクラス
 
 ```python
 # app/models/base.py
@@ -1180,7 +1183,24 @@ class TimestampMixin:
     )
 ```
 
-### 5.4 マスターモデルの実装例
+### 6.4 マスターモデルの実装例
+
+`exercise_secondary_muscles` は追加カラムのない純粋なジャンクションテーブルなので、
+`relationship(secondary=...)` で使うために **マップドクラスではなく `Table` オブジェクト**として定義する。
+
+```python
+# app/models/models.py
+from sqlalchemy import Table, Column, Integer, SmallInteger, ForeignKey
+from app.models.base import Base
+
+# Many-to-Many 中間テーブル（マップドクラスではなく Table オブジェクト）
+exercise_secondary_muscles = Table(
+    "exercise_secondary_muscles",
+    Base.metadata,
+    Column("exercise_id", Integer, ForeignKey("exercises.id", ondelete="CASCADE"), primary_key=True),
+    Column("muscle_group_id", SmallInteger, ForeignKey("muscle_groups.id"), primary_key=True),
+)
+```
 
 ```python
 # app/models/master.py
@@ -1200,12 +1220,13 @@ class MuscleGroup(Base):
         back_populates="primary_muscle"
     )
     secondary_exercises: Mapped[list["Exercise"]] = relationship(
-        secondary="exercise_secondary_muscles",
+        secondary=exercise_secondary_muscles,   # Table オブジェクトを渡す
         back_populates="secondary_muscles",
+        viewonly=True,
     )
 ```
 
-### 5.5 Mapped アノテーション方針
+### 6.5 Mapped アノテーション方針
 
 SQLAlchemy 2.0 の `Mapped[T]` 型ヒントを使用し、`Optional` で nullable を表現する。
 
@@ -1230,7 +1251,7 @@ class UserProfile(Base, TimestampMixin):
 
 ## 7. Alembic マイグレーション方針
 
-### 6.1 初期セットアップ
+### 7.1 初期セットアップ
 
 ```bash
 cd backend-core
@@ -1238,7 +1259,7 @@ alembic init alembic
 # alembic/env.py を編集してBase.metadataとDATABASE_URLを設定
 ```
 
-### 6.2 env.py 設定例
+### 7.2 env.py 設定例
 
 ```python
 # alembic/env.py (抜粋)
@@ -1250,7 +1271,7 @@ config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
 target_metadata = Base.metadata
 ```
 
-### 6.3 マイグレーション実行順序（初回）
+### 7.3 マイグレーション実行順序（初回）
 
 マスターテーブルは他テーブルより先に作成・シードする必要がある。
 
@@ -1273,7 +1294,7 @@ target_metadata = Base.metadata
 16. create_community_tables      # posts, post_likes, post_comments, follows
 ```
 
-### 6.4 マイグレーション運用コマンド
+### 7.4 マイグレーション運用コマンド
 
 | コマンド                                    | 用途                          |
 |--------------------------------------------|-------------------------------|
@@ -1283,7 +1304,7 @@ target_metadata = Base.metadata
 | `alembic history`                           | マイグレーション履歴の確認       |
 | `alembic current`                           | 現在の適用バージョン確認         |
 
-### 6.5 注意事項
+### 7.5 注意事項
 
 - **autogenerate は万能ではない**: CHECK 制約・GINインデックス等は手動記述
 - **本番環境への適用前**: `alembic upgrade head --sql` でSQLを事前確認
