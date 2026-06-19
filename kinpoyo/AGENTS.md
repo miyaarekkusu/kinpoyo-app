@@ -156,9 +156,9 @@ kinpoyo/
 │   │   │       ├── bodyweight.tsx      # ボディウェイト詳細 ✅  (route: /program/bodyweight)
 │   │   │       ├── hypertrophy.tsx     # 筋肥大とは ✅  (route: /program/hypertrophy)
 │   │   │       ├── program-design.tsx  # プログラム組み方 ✅  (route: /program/program-design)
-│   │   │       ├── rpe.tsx             # RPEとは ✅  (route: /program/rpe)
-│   │   │       ├── custom_program.tsx  # カスタムプログラム画面 ✅
-│   │   │       └── even_program.tsx    # プログラム画面 ✅
+│   │   │       └── rpe.tsx             # RPEとは ✅  (route: /program/rpe)
+│   │   │       └── custom_program.tsx  # カスタムプログラム画面 ✅
+│   │   │       └── even_program.tsx  # プログラム画面 ✅
 │   │   └── (tabs)/                   # タブナビゲーショングループ
 │   │       ├── _layout.tsx           # タブナビゲーション（5タブ）
 │   │       ├── index.tsx             # ホーム画面 ✅
