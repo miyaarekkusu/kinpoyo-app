@@ -72,6 +72,19 @@ export default function HomeScreen() {
   const [showNotifModal, setShowNotifModal] = useState(false);
   const flatListRef = useRef<FlatList<DayInfo[]>>(null);
 
+  // 📝 カスタムプログラムのモック状態（nullに切り替えると元の「トレーニングなし」の表示に戻せます）
+  const [registeredProgram, setRegisteredProgram] = useState<{
+    title: string;
+    exercises: { name: string; setsCount: number; maxWeight: string; targetRpe: string }[];
+  } | null>({
+    title: 'PPL (Push)',
+    exercises: [
+      { name: 'ベンチプレス', setsCount: 3, maxWeight: '60', targetRpe: '8' },
+      { name: 'インクラインベンチプレス', setsCount: 3, maxWeight: '50', targetRpe: '8' },
+      { name: 'ダンベルベンチプレス', setsCount: 3, maxWeight: '24', targetRpe: '8' },
+    ]
+  });
+
   const currentWeek = weeks[weekIndex];
   const firstDay = currentWeek[0];
   const monthLabel = `${firstDay.year}年${firstDay.month + 1}月`;
@@ -124,6 +137,21 @@ export default function HomeScreen() {
 
   const selDate = new Date(selectedDateStr);
   const selLabel = `${selDate.getMonth() + 1}月${selDate.getDate()}日（${WEEKDAYS[selDate.getDay()]}）`;
+
+  // カードをタップした際に program_choice.tsx にシリアライズして移動するロジック
+  const handleEditProgram = () => {
+    if (!registeredProgram) return;
+
+    const chosenNames = registeredProgram.exercises.map(ex => ex.name);
+
+    router.push({
+      pathname: '/(screens)/program/program_choice' as any,
+      params: {
+        title: registeredProgram.title,
+        exercises: JSON.stringify(chosenNames)
+      }
+    });
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -199,13 +227,44 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* ── Selected Day / Empty State ───────── */}
-        <View style={styles.emptyCard}>
-          <Text style={styles.selDateLabel}>{selLabel}</Text>
-          <Text style={styles.emptyIcon}>🏋️</Text>
-          <Text style={styles.emptyTitle}>トレーニングなし</Text>
-          <Text style={styles.emptySubtitle}>ワークアウトを登録してみましょう</Text>
-        </View>
+        {/* ── Selected Day / Program State ───────── */}
+        {registeredProgram ? (
+          /* 💡 プログラムが登録されている場合は、トレーニングリストをカード形式で表示 */
+          <TouchableOpacity 
+            style={styles.programCard} 
+            onPress={handleEditProgram}
+            activeOpacity={0.8}
+          >
+            <View style={styles.cardHeader}>
+              <View style={styles.tagBadge}>
+                <Text style={styles.tagBadgeText}>{registeredProgram.title}</Text>
+              </View>
+              <View style={styles.editLink}>
+                <Text style={styles.editLinkText}>詳細設定へ</Text>
+                <IconSymbol name="chevron.right" size={14} color={Colors.primaryDark} />
+              </View>
+            </View>
+
+            <Text style={styles.programCardTitle}>本日のトレーニングメニュー</Text>
+
+            {registeredProgram.exercises.map((ex, idx) => (
+              <View key={idx} style={styles.exerciseRow}>
+                <Text style={styles.exerciseName} numberOfLines={1}>• {ex.name}</Text>
+                <Text style={styles.exerciseDetails}>
+                  {ex.setsCount}set / {ex.maxWeight}kg / RPE {ex.targetRpe}
+                </Text>
+              </View>
+            ))}
+          </TouchableOpacity>
+        ) : (
+          /* 🍏 登録がない場合は従来の「トレーニングなし」空状態を表示 */
+          <View style={styles.emptyCard}>
+            <Text style={styles.selDateLabel}>{selLabel}</Text>
+            <Text style={styles.emptyIcon}>🏋️</Text>
+            <Text style={styles.emptyTitle}>トレーニングなし</Text>
+            <Text style={styles.emptySubtitle}>ワークアウトを登録してみましょう</Text>
+          </View>
+        )}
 
         {/* ── Stats Row ────────────────────────── */}
         <View style={styles.statsRow}>
@@ -324,8 +383,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.bgScreen,
   },
-
-  // ── Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -371,64 +428,10 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.bgCard,
     ...Shadow.sm,
   },
-
-  // ── Scroll
   scroll: {
     paddingHorizontal: H_PAD,
     paddingTop: Space[2],
   },
-
-  // ── Hero Banner
-  heroBanner: {
-    backgroundColor: Colors.primaryDark,
-    borderRadius: Radius.xl,
-    paddingHorizontal: Space[5],
-    paddingVertical: Space[5],
-    marginBottom: Space[4],
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    ...Shadow.md,
-    shadowColor: Colors.primaryDark,
-  },
-  heroContent: {
-    flex: 1,
-  },
-  heroTitle: {
-    fontSize: FontSize['2xl'],
-    fontWeight: FontWeight.bold,
-    color: Colors.textOnPrimary,
-    marginBottom: Space[1],
-    lineHeight: FontSize['2xl'] * 1.25,
-  },
-  heroDate: {
-    fontSize: FontSize.sm,
-    color: Colors.primaryLight,
-    fontWeight: FontWeight.medium,
-  },
-  weeklyBadge: {
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderRadius: Radius.md,
-    paddingHorizontal: Space[4],
-    paddingVertical: Space[3],
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
-    marginLeft: Space[4],
-  },
-  weeklyBadgeLabel: {
-    fontSize: FontSize.xs,
-    color: Colors.primaryLight,
-    fontWeight: FontWeight.medium,
-    marginBottom: 2,
-  },
-  weeklyBadgeCount: {
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.bold,
-    color: Colors.textOnPrimary,
-  },
-
-  // ── Calendar Card
   calendarCard: {
     backgroundColor: Colors.bgCard,
     borderRadius: Radius.lg,
@@ -461,8 +464,6 @@ const styles = StyleSheet.create({
   },
   sunText: { color: '#EF4444' },
   satText: { color: '#3B82F6' },
-
-  // ── Week Page
   weekPage: {
     width: CARD_W,
     flexDirection: 'row',
@@ -508,8 +509,6 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: 'transparent',
   },
-
-  // ── Page Dots
   pageDots: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -526,8 +525,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     width: 14,
   },
-
-  // ── Empty State
   emptyCard: {
     backgroundColor: Colors.bgCard,
     borderRadius: Radius.lg,
@@ -562,8 +559,6 @@ const styles = StyleSheet.create({
     fontSize: FontSize.sm,
     color: Colors.textHint,
   },
-
-  // ── Stats Row
   statsRow: {
     flexDirection: 'row',
     gap: Space[3],
@@ -604,8 +599,6 @@ const styles = StyleSheet.create({
     color: Colors.textHint,
     textAlign: 'center',
   },
-
-  // ── Cards
   card: {
     backgroundColor: Colors.bgCard,
     borderRadius: Radius.lg,
@@ -648,8 +641,6 @@ const styles = StyleSheet.create({
     fontSize: FontSize.sm,
     color: Colors.textHint,
   },
-
-  // ── Knowledge Section
   knowledgeSection: {
     marginTop: Space[4],
   },
@@ -670,5 +661,71 @@ const styles = StyleSheet.create({
     paddingTop: Layout.cardPadding,
     paddingBottom: Layout.cardPadding - Space[2],
     ...Shadow.sm,
+  },
+
+  // ── 💡 登録済みプログラムカードのスタイル
+  programCard: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.lg,
+    padding: Space[4],
+    marginBottom: Space[4],
+    borderWidth: 1.5,
+    borderColor: Colors.primaryBorder,
+    ...Shadow.sm,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Space[2],
+  },
+  tagBadge: {
+    backgroundColor: Colors.primarySubtle,
+    // 👈 型エラーを完全に防ぐため、Space配列ではなく直値の整数 10 に変更
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: Radius.full,
+  },
+  tagBadgeText: {
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.bold,
+    color: Colors.primaryDark,
+  },
+  editLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  editLinkText: {
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.semibold,
+    color: Colors.primaryDark,
+  },
+  programCardTitle: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+    marginBottom: Space[3],
+  },
+  exerciseRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    // 👈 型エラーを完全に防ぐため、小数(1.5)ではなく整数である Space[2] に変更
+    paddingVertical: Space[2],
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
+  },
+  exerciseName: {
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textPrimary,
+    flex: 1,
+    paddingRight: Space[2],
+  },
+  exerciseDetails: {
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.bold,
+    color: Colors.textSecondary,
   },
 });
