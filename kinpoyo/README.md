@@ -130,7 +130,7 @@ venv\Scripts\activate          # Windows
 pip install -r requirements.txt
 
 # 3. .env 作成
-echo DATABASE_URL=postgresql://kinpoyo:kinpoyo@localhost:5432/kinpoyo > .env
+echo DATABASE_URL=postgresql+psycopg://kinpoyo:kinpoyo@localhost:5432/kinpoyo > .env
 
 # 4. マイグレーション適用
 alembic upgrade head

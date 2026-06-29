@@ -50,7 +50,7 @@ volumes:
 ### .env（backend-core/.env）
 
 ```env
-DATABASE_URL=postgresql://kinpoyo:kinpoyo@localhost:5432/kinpoyo
+DATABASE_URL=postgresql+psycopg://kinpoyo:kinpoyo@localhost:5432/kinpoyo
 ```
 
 > `.env` は Git 管理しない（`.gitignore` に追加すること）
@@ -103,7 +103,7 @@ venv\Scripts\activate
 pip install -r requirements.txt
 
 # 4. .env 作成
-echo DATABASE_URL=postgresql://kinpoyo:kinpoyo@localhost:5432/kinpoyo > .env
+echo DATABASE_URL=postgresql+psycopg://kinpoyo:kinpoyo@localhost:5432/kinpoyo > .env
 
 # 5. マイグレーション適用
 alembic upgrade head
@@ -137,10 +137,10 @@ uvicorn main:app --reload
 │(目標種別マスター) │  │(プログラムカテゴリ)   │  │(投稿種別マスター)│
 └──────────────────┘  └─────────────────────┘  └──────────────────┘
 
-┌────────────────────────┐
-│  user_program_statuses │
-│(プログラム参加状態マスター)|
-└────────────────────────┘
+┌────────────────────────┐  ┌───────────────────────────┐
+│  user_program_statuses │  │ workout_session_statuses  │
+│(プログラム参加状態マスター)|  │(セッション状態マスター)      │
+└────────────────────────┘  └───────────────────────────┘
 ```
 
 ### 認証・ユーザー領域
@@ -186,6 +186,10 @@ uvicorn main:app --reload
 │  (exercise_id, muscle_group_id)│
 └─────────────────────────────┘
 
+┌───────────────────────────┐
+│ workout_session_statuses  │ (FK)
+└────────────┬──────────────┘
+             ▼
 ┌──────────────┐  1     N  ┌──────────────────┐  1     N  ┌─────────────┐
 │  exercises   │◄──────────│ session_exercises │──────────►│ session_sets│
 └──────────────┘           └──────────┬───────┘           └──────┬──────┘
@@ -242,6 +246,22 @@ uvicorn main:app --reload
 
 マスターテーブルは**アプリ起動時にシードデータとして投入**し、基本的に変更しない。
 `id` は SMALLINT（値の種類が少ないため）、`sort_order` で表示順を制御する。
+
+**マスターテーブル一覧（計11テーブル）:**
+
+| # | テーブル名 | 用途 | 参照先 |
+|---|-----------|------|-------|
+| 3.1  | `genders`                    | 性別                     | `user_profiles.gender_id` |
+| 3.2  | `difficulty_levels`          | 難易度・経験レベル          | `user_profiles.experience_level_id`, `programs.difficulty_level_id` |
+| 3.3  | `muscle_groups`              | 筋肉部位                   | `exercises.primary_muscle_id`, `exercise_secondary_muscles.muscle_group_id` |
+| 3.4  | `movement_categories`        | PPL分類                   | `exercises.movement_category_id` |
+| 3.5  | `equipment_types`            | 使用器具                   | `exercises.equipment_type_id` |
+| 3.6  | `measurement_units`          | 計測単位                   | `body_goals.unit_id`, `goal_types.default_unit_id` |
+| 3.7  | `goal_types`                 | 目標種別                   | `body_goals.goal_type_id` |
+| 3.8  | `program_categories`         | プログラムカテゴリ           | `programs.category_id` |
+| 3.9  | `user_program_statuses`      | プログラム参加状態           | `user_programs.status_id` |
+| 3.10 | `post_types`                 | 投稿種別（フィード/Q&A）     | `posts.post_type_id` |
+| 3.11 | `workout_session_statuses`   | セッション状態              | `workout_sessions.status_id` |
 
 ---
 
@@ -456,6 +476,30 @@ CREATE TABLE post_types (
 
 ---
 
+### 3.11 workout_session_statuses — ワークアウトセッション状態マスター
+
+`workout_sessions.status_id` で参照。セッションのライフサイクル（事前登録 → 実施中 → 完了）を明示的に管理する。
+
+> **追加理由**: 従来は `started_at` / `ended_at` のNULL有無でセッション状態を暗黙的に判定していたが、キャンセル状態を表現できず `user_programs` の `user_program_statuses` 管理と整合しなかったため追加。
+
+```sql
+CREATE TABLE workout_session_statuses (
+    id         SMALLINT    PRIMARY KEY,
+    code       VARCHAR(20) NOT NULL UNIQUE,  -- 'scheduled' | 'in_progress' | 'completed' | 'cancelled'
+    name_ja    VARCHAR(30) NOT NULL,
+    sort_order SMALLINT    NOT NULL DEFAULT 0
+);
+```
+
+| id | code        | name_ja    | sort_order |
+|----|-------------|------------|------------|
+| 1  | scheduled   | 予定済み   | 1          |
+| 2  | in_progress | 実施中     | 2          |
+| 3  | completed   | 完了       | 3          |
+| 4  | cancelled   | キャンセル  | 4          |
+
+---
+
 ## 4. テーブル定義
 
 ### 4.1 users — ユーザーアカウント
@@ -658,37 +702,49 @@ CREATE INDEX idx_esm_muscle_group_id ON exercise_secondary_muscles(muscle_group_
 
 ```sql
 CREATE TABLE workout_sessions (
-    id           SERIAL        PRIMARY KEY,
-    user_id      INTEGER       NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title        VARCHAR(100),
-    memo         TEXT,
+    id             SERIAL        PRIMARY KEY,
+    user_id        INTEGER       NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status_id      SMALLINT      NOT NULL REFERENCES workout_session_statuses(id) DEFAULT 1,
+    title          VARCHAR(100),
+    memo           TEXT,
     scheduled_date DATE,                        -- カレンダー登録日（事前登録時に使用）
-    started_at   TIMESTAMPTZ,
-    ended_at     TIMESTAMPTZ,
-    duration_sec INTEGER,
-    total_volume NUMERIC(10,2),
-    created_at   TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    started_at     TIMESTAMPTZ,
+    ended_at       TIMESTAMPTZ,
+    duration_sec   INTEGER,
+    total_volume   NUMERIC(10,2),
+    created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_workout_sessions_user_id       ON workout_sessions(user_id);
 CREATE INDEX idx_workout_sessions_user_started  ON workout_sessions(user_id, started_at DESC);
 CREATE INDEX idx_workout_sessions_user_date     ON workout_sessions(user_id, scheduled_date);
+CREATE INDEX idx_workout_sessions_status_id     ON workout_sessions(status_id);
 ```
 
-| カラム名       | 型            | 制約                   | 説明                              |
-|--------------|---------------|------------------------|-----------------------------------|
-| id           | SERIAL        | PK                     | 自動採番                           |
-| user_id      | INTEGER       | FK(users), NOT NULL    | ユーザー参照                        |
-| title        | VARCHAR(100)  |                        | セッションタイトル（任意）            |
-| memo         | TEXT          |                        | 自由メモ                            |
-| scheduled_date| DATE         |                        | カレンダー登録日（事前登録の場合に設定）|
-| started_at   | TIMESTAMPTZ   |                        | セッション開始日時（開始時に設定）      |
-| ended_at     | TIMESTAMPTZ   |                        | セッション終了日時                    |
-| duration_sec | INTEGER       |                        | セッション時間（秒）                  |
-| total_volume | NUMERIC(10,2) |                        | 総ボリューム (kg×reps合計)            |
-| created_at   | TIMESTAMPTZ   | NOT NULL               | 作成日時                            |
-| updated_at   | TIMESTAMPTZ   | NOT NULL               | 更新日時                            |
+| カラム名       | 型            | 制約                                  | 説明                              |
+|--------------|---------------|---------------------------------------|-----------------------------------|
+| id           | SERIAL        | PK                                    | 自動採番                           |
+| user_id      | INTEGER       | FK(users), NOT NULL                   | ユーザー参照                        |
+| status_id    | SMALLINT      | FK(workout_session_statuses), DEFAULT 1 | セッション状態（マスター参照）      |
+| title        | VARCHAR(100)  |                                       | セッションタイトル（任意）            |
+| memo         | TEXT          |                                       | 自由メモ                            |
+| scheduled_date| DATE         |                                       | カレンダー登録日（事前登録の場合に設定）|
+| started_at   | TIMESTAMPTZ   |                                       | セッション開始日時（開始時に設定）      |
+| ended_at     | TIMESTAMPTZ   |                                       | セッション終了日時                    |
+| duration_sec | INTEGER       |                                       | セッション時間（秒）                  |
+| total_volume | NUMERIC(10,2) |                                       | 総ボリューム (kg×reps合計)            |
+| created_at   | TIMESTAMPTZ   | NOT NULL                              | 作成日時                            |
+| updated_at   | TIMESTAMPTZ   | NOT NULL                              | 更新日時                            |
+
+**状態遷移ルール:**
+
+| 操作                        | status_id 変化                 |
+|----------------------------|-------------------------------|
+| カレンダー事前登録（POST /workouts）| 1 (scheduled)            |
+| 開始（POST /workouts/{id}/start）  | 2 (in_progress)          |
+| 終了（POST /workouts/{id}/end）    | 3 (completed)             |
+| 削除前キャンセル               | 4 (cancelled)              |
 
 ---
 
@@ -1104,11 +1160,12 @@ backend-core/
     ├── models/
     │   ├── __init__.py       # 全Modelをまとめてエクスポート
     │   ├── base.py           # DeclarativeBase + TimestampMixin
-    │   ├── master.py         # マスター10テーブル
+    │   ├── master.py         # マスター11テーブル
     │   │                     #   Gender, DifficultyLevel, MuscleGroup,
     │   │                     #   MovementCategory, EquipmentType,
     │   │                     #   MeasurementUnit, GoalType, ProgramCategory,
-    │   │                     #   UserProgramStatus, PostType
+    │   │                     #   UserProgramStatus, PostType,
+    │   │                     #   WorkoutSessionStatus
     │   ├── user.py           # User, UserProfile  (BE-A担当)
     │   ├── body.py           # BodyGoal           (BE-A担当)
     │   ├── exercise.py       # exercise_secondary_muscles (Table), Exercise  (BE-B担当)
@@ -1275,7 +1332,7 @@ target_metadata = Base.metadata
 マスターテーブルは他テーブルより先に作成・シードする必要がある。
 
 ```
-1. create_master_tables          # マスター10テーブル作成
+1. create_master_tables          # マスター11テーブル作成（workout_session_statusesを含む）
 2. seed_master_data              # マスターデータ投入
 3. create_users_table
 4. create_user_profiles_table
@@ -1318,19 +1375,20 @@ target_metadata = Base.metadata
 ### マスター参照
 
 ```
-genders              ←  user_profiles.gender_id
-difficulty_levels    ←  user_profiles.experience_level_id
-difficulty_levels    ←  programs.difficulty_level_id
-muscle_groups        ←  exercises.primary_muscle_id
-muscle_groups        ←  exercise_secondary_muscles.muscle_group_id
-movement_categories  ←  exercises.movement_category_id
-equipment_types      ←  exercises.equipment_type_id
-goal_types           ←  body_goals.goal_type_id
-measurement_units    ←  body_goals.unit_id
-measurement_units    ←  goal_types.default_unit_id
-program_categories   ←  programs.category_id
-user_program_statuses←  user_programs.status_id
-post_types           ←  posts.post_type_id
+genders                    ←  user_profiles.gender_id
+difficulty_levels          ←  user_profiles.experience_level_id
+difficulty_levels          ←  programs.difficulty_level_id
+muscle_groups              ←  exercises.primary_muscle_id
+muscle_groups              ←  exercise_secondary_muscles.muscle_group_id
+movement_categories        ←  exercises.movement_category_id
+equipment_types            ←  exercises.equipment_type_id
+goal_types                 ←  body_goals.goal_type_id
+measurement_units          ←  body_goals.unit_id
+measurement_units          ←  goal_types.default_unit_id
+program_categories         ←  programs.category_id
+user_program_statuses      ←  user_programs.status_id
+post_types                 ←  posts.post_type_id
+workout_session_statuses   ←  workout_sessions.status_id
 ```
 
 ### エンティティ間
