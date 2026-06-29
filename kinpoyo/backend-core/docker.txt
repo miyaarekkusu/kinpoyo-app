@@ -1,0 +1,308 @@
+================================================================
+kinpoyo — Docker セットアップ説明書（チームメンバー向け）
+================================================================
+
+【前提条件】
+  - Docker Desktop がインストール済みであること
+  - Windows の場合は WSL2 が有効化されていること
+  - docker-compose.yml は kinpoyo/ ディレクトリ直下に配置済み
+
+================================================================
+1. Docker とは？
+================================================================
+
+Docker は「コンテナ」という技術を使って、アプリケーションを
+どの環境でも同じように動かすためのツールです。
+
+  ┌─────────────────────────────────────┐
+  │  イメージ（image）                   │
+  │  └── アプリ + OS + 設定を1つに固めたもの│
+  │       例: postgres:16               │
+  └─────────────────────────────────────┘
+          ↓ 起動すると
+  ┌─────────────────────────────────────┐
+  │  コンテナ（container）               │
+  │  └── イメージを実際に動かした状態      │
+  │       例: kinpoyo_db               │
+  └─────────────────────────────────────┘
+
+kinpoyo では PostgreSQL（データベース）だけを Docker で動かします。
+FastAPI（バックエンドAPI）は Python の仮想環境（venv）で直接起動します。
+
+================================================================
+2. docker-compose.yml の内容説明
+================================================================
+
+  services:
+    db:
+      image: postgres:16          ← Docker Hub から取得するイメージ名:バージョン
+      container_name: kinpoyo_db  ← コンテナの名前（自分でつけた識別名）
+      restart: unless-stopped     ← PC再起動後も自動起動（手動でstopした場合は起動しない）
+      environment:
+        POSTGRES_DB: kinpoyo      ← 作成するDBの名前
+        POSTGRES_USER: kinpoyo    ← DBのユーザー名
+        POSTGRES_PASSWORD: kinpoyo← DBのパスワード
+      ports:
+        - "5432:5432"             ← ホスト:コンテナのポートマッピング
+                                    ← 外から localhost:5432 でDBに接続できる
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+                                  ← データを永続化（コンテナ削除してもデータは残る）
+
+  volumes:
+    postgres_data:                ← Docker管理の名前付きボリューム
+
+================================================================
+3. よく使うコマンド一覧
+================================================================
+
+【毎日の作業で使うコマンド】
+
+  # DB を起動（バックグラウンドで動かす）
+  docker compose up -d db
+      -d = detach（バックグラウンド実行）
+      db = docker-compose.yml の services 名
+
+  # DB が起動しているか確認
+  docker compose ps
+  docker ps
+
+  # DB のログを確認（エラーが起きたとき）
+  docker compose logs db
+  docker compose logs -f db      ← -f でリアルタイム表示（Ctrl+C で終了）
+
+  # DB を停止（コンテナは残す）
+  docker compose stop db
+
+  # DB を停止してコンテナも削除
+  docker compose down
+
+【注意: データごと削除する場合】
+  ⚠️ 以下のコマンドはDBのデータが全部消えます。慎重に実行してください！
+
+  # コンテナ + ボリューム（データ）も削除
+  docker compose down -v
+
+================================================================
+4. DB に直接接続して確認する方法
+================================================================
+
+  # psql でDBに入る（SQLを直接実行できる）
+  docker exec -it kinpoyo_db psql -U kinpoyo -d kinpoyo
+
+  【psql 内で使えるコマンド】
+
+  # 終了
+  \q
+
+  # テーブル一覧を確認
+  \dt
+
+  # テーブルの定義（カラム・型・制約）を確認
+  \d テーブル名
+  例: \d users
+  例: \d exercises
+
+  # インデックス一覧を確認
+  \di
+
+  # テーブルの中身を確認
+  SELECT * FROM genders;
+  SELECT * FROM exercises;
+  SELECT * FROM users;
+
+  # レコード数を確認
+  SELECT COUNT(*) FROM exercises;
+
+  # 全テーブルのレコード数を一覧で確認
+  SELECT schemaname, relname, n_live_tup
+  FROM pg_stat_user_tables
+  ORDER BY relname;
+
+  # マイグレーション適用済みバージョンを確認（alembic_version テーブル）
+  SELECT * FROM alembic_version;
+
+================================================================
+5. よくあるエラーと対処法
+================================================================
+
+エラー: "Cannot connect to the Docker daemon"
+対処: Docker Desktop を起動してから再試行
+     タスクバーの Docker アイコンを確認する
+
+エラー: "port is already allocated" (5432ポートが使用中)
+対処: 既にPostgreSQLがインストールされていてポート競合している
+     解決策1: 既存のPostgreSQLサービスを停止する
+     解決策2: docker-compose.yml のポートを "5433:5432" に変更し
+             .env の DATABASE_URL も localhost:5433 に変更
+
+エラー: "connection refused" (FastAPIからDBに繋がらない)
+対処: DB が起動しているか確認 → docker compose ps
+     起動していなければ → docker compose up -d db
+
+================================================================
+6. 初回セットアップ手順（チームメンバーが初めてやる場合）
+================================================================
+
+  STEP 1: リポジトリをクローン
+    git clone <リポジトリURL>
+    cd kinpoyo
+
+  STEP 2: DB を起動
+    docker compose up -d db
+    docker compose ps          ← "running" になっていることを確認
+
+  STEP 3: Python 仮想環境を作成
+    cd backend-core
+    python -m venv venv
+    venv\Scripts\activate      ← Windows の場合
+
+  STEP 4: パッケージをインストール
+    pip install -r requirements.txt
+
+  STEP 5: .env ファイルを作成
+    .env.example をコピーして .env を作成する
+    cp .env.example .env       ← または手動でファイルを作成
+
+  STEP 6: マイグレーションを実行（テーブルを作成）
+    alembic upgrade head
+
+  STEP 7: シードデータを投入（マスターデータ + 種目データ）
+    python scripts/seed_masters.py
+
+  STEP 8: FastAPI を起動
+    uvicorn main:app --reload
+
+  STEP 9: 動作確認
+    ブラウザで http://localhost:8000/docs を開く
+    → Swagger UI が表示されれば成功！
+
+================================================================
+7. 毎日の起動手順（2回目以降）
+================================================================
+
+  # ターミナル1: DB起動
+  cd kinpoyo
+  docker compose up -d db
+
+  # ターミナル2: FastAPI起動
+  cd kinpoyo/backend-core
+  venv\Scripts\activate
+  uvicorn main:app --reload
+
+================================================================
+8. Alembic マイグレーションとは？
+================================================================
+
+SQLAlchemy のモデル（Pythonクラス）をもとに、DBにテーブルを
+作成・変更・削除するための仕組みです。
+
+  # 現在の適用済みバージョン確認
+  alembic current
+
+  # マイグレーション履歴確認
+  alembic history
+
+  # 最新版まで適用
+  alembic upgrade head
+
+  # モデルを変更したときに新しいマイグレーションを自動生成
+  alembic revision --autogenerate -m "変更の説明"
+
+  # 1つ前のバージョンに戻す（ロールバック）
+  alembic downgrade -1
+
+  ⚠️ alembic upgrade head は DB起動後に実行すること
+  ⚠️ 生成されたマイグレーションファイルは必ず中身を確認してからコミット
+
+================================================================
+9. テーブルを新規追加・修正したいとき（手順）
+================================================================
+
+【STEP 1: Python モデルを編集する】
+
+  app/models/ の中の該当ファイルを編集する。
+
+  ■ 新しいテーブルを追加する場合
+    → 対応するモデルファイルに新しいクラスを追加する
+    例: app/models/user.py に新しいテーブルを追加
+
+    class PasswordResetToken(Base):
+        __tablename__ = "password_reset_tokens"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+        token: Mapped[str] = mapped_column(String(255), nullable=False)
+        expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    → app/models/__init__.py に追加したクラスを import する
+    from app.models.user import User, UserProfile, PasswordResetToken
+
+  ■ 既存テーブルにカラムを追加する場合
+    → 該当モデルクラスに新しい mapped_column を追記するだけ
+    例: users テーブルに last_login_at カラムを追加
+
+    class User(Base, TimestampMixin):
+        ...
+        last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+  ■ 既存のカラムを削除する場合
+    → モデルから該当 mapped_column の行を削除するだけ
+
+【STEP 2: マイグレーションファイルを自動生成する】
+
+  # backend-core ディレクトリで実行（DB が起動している必要あり）
+  cd kinpoyo/backend-core
+  venv\Scripts\activate
+  alembic revision --autogenerate -m "変更の説明"
+
+  例:
+  alembic revision --autogenerate -m "add password_reset_tokens table"
+  alembic revision --autogenerate -m "add last_login_at to users"
+
+  → alembic/versions/ に新しい .py ファイルが自動生成される
+
+【STEP 3: 生成されたファイルを必ず確認する】
+
+  生成ファイルを開いて upgrade() と downgrade() の中身を確認する。
+  autogenerate は完璧ではないので、以下は手動修正が必要な場合がある：
+    - CHECK 制約
+    - DESC 付きのインデックス
+    - GIN インデックス（JSONB 検索用）
+    - サーバーデフォルト値
+
+【STEP 4: マイグレーションを適用する】
+
+  alembic upgrade head
+
+  適用後に確認：
+  alembic current        ← 最新バージョンになっているか確認
+  docker exec -it kinpoyo_db psql -U kinpoyo -d kinpoyo
+  \dt                    ← 新しいテーブルが追加されているか確認
+  \d テーブル名          ← カラムが追加されているか確認
+
+【STEP 5: コミットする】
+
+  git add app/models/該当ファイル.py
+  git add alembic/versions/新しいファイル.py
+  git commit -m "feat: テーブル追加の説明"
+
+  ⚠️ マイグレーションファイルは必ずコミットすること
+     チームメンバーが alembic upgrade head を実行できるようにするため
+
+----------------------------------------------------------------
+【よくある操作パターン】
+
+  ■ やり直したいとき（適用を1つ前に戻す）
+    alembic downgrade -1
+    → モデルファイルを修正
+    → 生成ファイルを削除（またはそのまま上書き）
+    → alembic revision --autogenerate -m "説明" で再生成
+    → alembic upgrade head で再適用
+
+  ■ 開発中にDBを完全リセットしたいとき（⚠️ データが消える）
+    docker compose down -v        ← データごと削除
+    docker compose up -d db       ← DB再起動（空の状態）
+    alembic upgrade head          ← テーブル再作成
+    python scripts/seed_masters.py← マスターデータ再投入
+
+================================================================

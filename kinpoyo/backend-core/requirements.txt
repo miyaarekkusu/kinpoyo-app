@@ -1,5 +1,5 @@
 # ── Web Framework ──────────────────────────────────────────
-fastapi==0.136.3
+fastapi==0.137.2
 uvicorn[standard]==0.48.0
 python-multipart==0.0.20      # ファイルアップロード・フォームデータ
 
@@ -10,6 +10,7 @@ pydantic-settings==2.9.1
 # ── データベース ───────────────────────────────────────────
 sqlalchemy==2.0.41
 alembic==1.16.1               # マイグレーション管理
+psycopg[binary]==3.3.4        # PostgreSQL ドライバ（Python 3.14対応 psycopg3）
 
 # ── 認証 ──────────────────────────────────────────────────
 python-jose[cryptography]==3.5.0   # JWTトークン

@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: kinpoyo_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kinpoyo
+      POSTGRES_USER: kinpoyo
+      POSTGRES_PASSWORD: kinpoyo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
