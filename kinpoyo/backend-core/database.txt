@@ -1,0 +1,343 @@
+================================================================
+kinpoyo — SQLAlchemy の仕組みと考え方（チームメンバー向け）
+================================================================
+
+【対象】Pythonは書けるがSQLAlchemyを初めて使うチームメンバー
+【目的】「なぜこう書くのか」を理解してモデルを読み書きできるようにする
+
+================================================================
+1. SQLAlchemy とは？
+================================================================
+
+SQLAlchemy は Python から DB を操作するための ORM（Object-Relational Mapper）です。
+
+ORM とは：SQL のテーブル ↔ Python のクラス（オブジェクト）を対応させる仕組み。
+
+    【普通のSQL】                   【SQLAlchemy（ORM）】
+    SELECT * FROM users;    →    session.query(User).all()
+    INSERT INTO users ...   →    session.add(User(...))
+    UPDATE users SET ...    →    user.username = "new_name"
+    DELETE FROM users ...   →    session.delete(user)
+
+メリット:
+  - SQL を直接書かなくてよい（Pythonだけで書ける）
+  - テーブル定義が Python クラスとして管理できる
+  - DB の種類（PostgreSQL, SQLite等）を後から変えやすい
+
+kinpoyo では SQLAlchemy 2.0（最新版） を使っています。
+
+================================================================
+2. 基本の3要素
+================================================================
+
+2-1. Engine（エンジン）
+  → DB への接続を管理する。1アプリに1つ。
+
+  from sqlalchemy import create_engine
+  engine = create_engine("postgresql+psycopg://kinpoyo:kinpoyo@localhost:5432/kinpoyo")
+                          ↑プロトコル         ↑ユーザー:パスワード↑ホスト:ポート↑DB名
+
+2-2. Session（セッション）
+  → DB との「会話」の単位。INSERT/UPDATE/DELETE はセッション経由で行い、
+    最後に commit() して確定させる。
+
+  from sqlalchemy.orm import Session
+  with Session(engine) as session:
+      user = User(username="alex", email="alex@example.com")
+      session.add(user)    ← まだDB には反映されていない
+      session.commit()     ← ここで初めてDBに書き込まれる
+
+2-3. Model（モデル）
+  → テーブルを表す Python クラス。Base を継承して定義する。
+
+  class User(Base):
+      __tablename__ = "users"          ← DB のテーブル名
+      id: Mapped[int] = mapped_column(primary_key=True)
+      username: Mapped[str] = mapped_column(String(50))
+
+================================================================
+3. モデルの書き方（SQLAlchemy 2.0 スタイル）
+================================================================
+
+kinpoyo では SQLAlchemy 2.0 の「型付きMapped」スタイルを使います。
+
+3-1. 基本構造
+
+  from sqlalchemy.orm import Mapped, mapped_column
+  from sqlalchemy import String, Boolean, Integer
+  from app.models.base import Base, TimestampMixin
+
+  class User(Base, TimestampMixin):
+      __tablename__ = "users"
+
+      id: Mapped[int] = mapped_column(primary_key=True)
+      username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+      email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+      is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+  ↑ Mapped[int]  → カラムの型が int（NOT NULL）
+  ↑ Mapped[str]  → カラムの型が str（NOT NULL）
+  ↑ Mapped[Optional[str]] → NULL を許容する
+
+3-2. nullable の決め方
+
+  # NULL 不可（必須）→ Mapped[型]
+  name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+  # NULL 可（任意）→ Mapped[Optional[型]]
+  from typing import Optional
+  bio: Mapped[Optional[str]] = mapped_column(Text)
+
+3-3. 外部キー（FK）の定義
+
+  from sqlalchemy import ForeignKey
+  from sqlalchemy import SmallInteger, Integer
+
+  # ユーザーID（users テーブルの id を参照）
+  user_id: Mapped[int] = mapped_column(
+      Integer,
+      ForeignKey("users.id", ondelete="CASCADE"),  ← ユーザー削除時に一緒に削除
+      nullable=False
+  )
+
+  # マスターテーブル参照（gender_id → genders.id）
+  gender_id: Mapped[Optional[int]] = mapped_column(
+      SmallInteger,
+      ForeignKey("genders.id")
+  )
+
+================================================================
+4. TimestampMixin（共通の created_at / updated_at）
+================================================================
+
+全テーブルに created_at と updated_at を持たせるための共通クラスです。
+Base と一緒に継承するだけで自動的に付きます。
+
+  # app/models/base.py に定義済み
+  class TimestampMixin:
+      created_at: Mapped[datetime] = mapped_column(
+          DateTime(timezone=True),
+          default=lambda: datetime.now(timezone.utc),  ← 作成時に自動設定
+          nullable=False,
+      )
+      updated_at: Mapped[datetime] = mapped_column(
+          DateTime(timezone=True),
+          default=lambda: datetime.now(timezone.utc),
+          onupdate=lambda: datetime.now(timezone.utc),  ← 更新時に自動更新
+          nullable=False,
+      )
+
+  # 使い方: 2つを継承するだけ
+  class WorkoutSession(Base, TimestampMixin):
+      __tablename__ = "workout_sessions"
+      ...
+
+================================================================
+5. リレーション（テーブル間の関連）
+================================================================
+
+5-1. 1対1（One-to-One）
+  例: users ↔ user_profiles
+
+  # User 側
+  profile: Mapped[Optional["UserProfile"]] = relationship(
+      back_populates="user",
+      uselist=False,      ← リストではなく1件のオブジェクトを返す
+  )
+
+  # UserProfile 側
+  user: Mapped["User"] = relationship(back_populates="profile")
+
+  # 使い方
+  user = session.get(User, 1)
+  print(user.profile.display_name)  ← 自動的に関連データを取得
+
+5-2. 1対多（One-to-Many）
+  例: users → workout_sessions（1人のユーザーが複数のセッションを持つ）
+
+  # User 側（1）
+  workout_sessions: Mapped[list["WorkoutSession"]] = relationship(
+      back_populates="user",
+      cascade="all, delete-orphan"  ← ユーザー削除時にセッションも削除
+  )
+
+  # WorkoutSession 側（多）
+  user: Mapped["User"] = relationship(back_populates="workout_sessions")
+
+  # 使い方
+  user = session.get(User, 1)
+  for session_item in user.workout_sessions:
+      print(session_item.title)
+
+5-3. 多対多（Many-to-Many）
+  例: exercises ↔ muscle_groups（1種目が複数の筋肉部位を持つ）
+
+  中間テーブル（ジャンクションテーブル）が必要。
+  追加カラムがない場合は Table オブジェクトで定義する。
+
+  # app/models/exercise.py
+  from sqlalchemy import Table, Column, Integer, SmallInteger, ForeignKey
+  from app.models.base import Base
+
+  exercise_secondary_muscles = Table(
+      "exercise_secondary_muscles",
+      Base.metadata,
+      Column("exercise_id", Integer, ForeignKey("exercises.id"), primary_key=True),
+      Column("muscle_group_id", SmallInteger, ForeignKey("muscle_groups.id"), primary_key=True),
+  )
+
+  class Exercise(Base):
+      ...
+      secondary_muscles: Mapped[list["MuscleGroup"]] = relationship(
+          secondary=exercise_secondary_muscles,  ← 中間テーブルを指定
+      )
+
+5-4. 自己参照（Self-Referential）
+  例: post_comments → post_comments（返信機能）
+
+  class PostComment(Base):
+      parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("post_comments.id"))
+      parent: Mapped[Optional["PostComment"]] = relationship(
+          remote_side="PostComment.id",   ← 自分自身の id を参照
+          back_populates="replies"
+      )
+      replies: Mapped[list["PostComment"]] = relationship(back_populates="parent")
+
+================================================================
+6. Session の使い方（CRUD操作）
+================================================================
+
+6-1. SELECT（取得）
+
+  # 1件取得（主キーで検索）
+  user = session.get(User, 1)
+
+  # 条件で検索
+  from sqlalchemy import select
+  stmt = select(User).where(User.email == "alex@example.com")
+  user = session.execute(stmt).scalar_one_or_none()
+
+  # 複数件取得
+  stmt = select(WorkoutSession).where(WorkoutSession.user_id == 1)
+  sessions = session.execute(stmt).scalars().all()
+
+6-2. INSERT（作成）
+
+  new_user = User(
+      username="alex",
+      email="alex@example.com",
+      password_hash="hashed_password",
+  )
+  session.add(new_user)
+  session.commit()
+  session.refresh(new_user)  ← DBで生成された id を取得する
+  print(new_user.id)         ← 自動採番された id
+
+6-3. UPDATE（更新）
+
+  user = session.get(User, 1)
+  user.username = "new_alex"
+  session.commit()  ← 変更を検出して自動でUPDATE文を発行
+
+6-4. DELETE（削除）
+
+  user = session.get(User, 1)
+  session.delete(user)
+  session.commit()
+
+================================================================
+7. FastAPI での使い方（依存性注入）
+================================================================
+
+FastAPI では get_db() という関数でセッションを「依存性注入」する。
+各APIエンドポイントがリクエストごとに新しいセッションを受け取り、
+レスポンスを返した後に自動でセッションを閉じる。
+
+  # app/database.py
+  def get_db():
+      db = SessionLocal()
+      try:
+          yield db        ← ここでAPIハンドラーにセッションを渡す
+      finally:
+          db.close()      ← レスポンス後に必ずクローズ
+
+  # APIルーターでの使い方
+  from fastapi import Depends
+  from sqlalchemy.orm import Session
+  from app.database import get_db
+
+  @router.get("/users/{user_id}")
+  def get_user(user_id: int, db: Session = Depends(get_db)):
+      user = db.get(User, user_id)
+      if user is None:
+          raise HTTPException(status_code=404)
+      return user
+
+================================================================
+8. Alembic（マイグレーション）との関係
+================================================================
+
+モデル（Pythonクラス）を変更しただけでは DB は変わりません。
+Alembic でマイグレーションを実行して初めて DB に反映されます。
+
+  【開発の流れ】
+
+  1. app/models/xxx.py でモデルを変更・追加する
+
+  2. マイグレーションファイルを自動生成する
+     alembic revision --autogenerate -m "変更の説明"
+     → alembic/versions/ にファイルが生成される
+
+  3. 生成されたファイルを確認する（重要！）
+     → autogenerate が意図しない変更を含む場合があるので必ず目視確認
+
+  4. DBに適用する
+     alembic upgrade head
+
+  ⚠️ モデルを変更したのにマイグレーションを実行しないと、
+     実際のDBと定義がズレてエラーが起きます。
+
+================================================================
+9. kinpoyo のモデル構成（どこに何がある？）
+================================================================
+
+  app/models/
+  ├── base.py        → Base（全モデルの親）+ TimestampMixin（共通タイムスタンプ）
+  ├── master.py      → マスター11テーブル（シードデータで固定値を投入）
+  │                    Gender, DifficultyLevel, MuscleGroup, MovementCategory,
+  │                    EquipmentType, MeasurementUnit, GoalType, ProgramCategory,
+  │                    UserProgramStatus, PostType, WorkoutSessionStatus
+  ├── user.py        → User, UserProfile
+  ├── body.py        → BodyGoal（体重目標）
+  ├── exercise.py    → exercise_secondary_muscles（中間Table）, Exercise
+  ├── workout.py     → WorkoutSession, SessionExercise, SessionSet
+  │                    PoseRecord（AI用・変更禁止）, AiReview（AI用・変更禁止）
+  ├── program.py     → Program, ProgramExercise, UserProgram
+  ├── community.py   → Post, PostLike, PostComment, Follow
+  └── __init__.py    → 全モデルをまとめてエクスポート（Alembic用）
+
+================================================================
+10. よくある間違いと注意点
+================================================================
+
+❌ session.commit() を忘れる
+   → session.add() / session.delete() しても commit しないと DB に反映されない
+
+❌ session.refresh() を忘れる
+   → session.add() + commit() 後に自動採番の id を使うには refresh が必要
+
+❌ N+1問題（パフォーマンス）
+   → relationship で関連データをループ内で取得すると1件ごとにSQLが走る
+   → selectinload や joinedload オプションで事前に一括取得する
+   例: session.execute(select(User).options(selectinload(User.workout_sessions)))
+
+❌ Alembic なしでモデルを変更する
+   → モデルを変更したら必ず alembic revision --autogenerate を実行すること
+
+❌ 循環インポート（circular import）
+   → モデルファイルで TYPE_CHECKING を使って回避している
+   例: from typing import TYPE_CHECKING
+       if TYPE_CHECKING:
+           from app.models.user import User
+
+================================================================

@@ -4,3 +4,10 @@ screenshots/
 /node_modules/
 /.expo/
 /expo-env.d.ts
+
+# Backend
+kinpoyo/backend-core/.env
+kinpoyo/backend-core/venv/
+kinpoyo/backend-core/__pycache__/
+kinpoyo/backend-core/**/__pycache__/
+kinpoyo/backend-core/**/*.pyc
