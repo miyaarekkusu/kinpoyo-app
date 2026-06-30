@@ -78,9 +78,8 @@ const TRICEPS_EXERCISES = [
 
 const ARM_EXERCISES = [...BICEPS_EXERCISES, ...TRICEPS_EXERCISES];
 
-// 画像ベースの脚種目 ＋ ご要望のハックスクワット
 const LEG_EXERCISES = [
-  'ハックスクワット', // 👈 追加
+  'ハックスクワット',
   'バックスクワット',
   'フロントスクワット',
   'バーベルブルガリアンスプリットスクワット',
@@ -96,18 +95,19 @@ const EXERCISE_DATA: Record<string, string[]> = {
   '肩': SHOULDER_EXERCISES,
   '背中': BACK_EXERCISES,
   '腕': ARM_EXERCISES,
-  '脚': LEG_EXERCISES, // 👈 追加
+  '脚': LEG_EXERCISES,
   'Push': [...CHEST_EXERCISES, ...SHOULDER_EXERCISES, ...TRICEPS_EXERCISES],
   'Pull': [...BACK_EXERCISES, ...BICEPS_EXERCISES],
-  'Leg': LEG_EXERCISES, // 👈 追加
+  'Leg': LEG_EXERCISES,
   '上半身': [...CHEST_EXERCISES, ...SHOULDER_EXERCISES, ...BACK_EXERCISES, ...ARM_EXERCISES],
-  '下半身': LEG_EXERCISES // 👈 追加
+  '下半身': LEG_EXERCISES
 };
 
 export default function EvenProgramScreen() {
   const router = useRouter();
   const { title } = useLocalSearchParams<{ title: string }>();
 
+  // 分割法（title）に応じて表示する部位のリストを動的に決定
   const getTargetParts = () => {
     if (!title) return ['胸', '肩', '背中', '脚', '腕'];
     if (title.toUpperCase().includes('PPL')) {
@@ -121,14 +121,18 @@ export default function EvenProgramScreen() {
 
   const parts = getTargetParts();
   const [selectedPart, setSelectedPart] = useState<string>(parts[0]);
+  
+  // 選択された種目をID（"部位-種目名" をキーとするオブジェクト）で管理
   const [selectedExercises, setSelectedExercises] = useState<Record<string, boolean>>({});
 
+  // 選択部位の安全な初期補正
   useEffect(() => {
     if (!parts.includes(selectedPart)) {
       setSelectedPart(parts[0]);
     }
   }, [title, parts, selectedPart]);
 
+  // 種目のチェック選択を切り替える
   const toggleExercise = (part: string, exerciseName: string) => {
     const key = `${part}-${exerciseName}`;
     setSelectedExercises(prev => ({
@@ -137,9 +141,26 @@ export default function EvenProgramScreen() {
     }));
   };
 
+  // 選択決定ボタンを押したときの処理
   const handleDecision = () => {
-    const chosen = Object.keys(selectedExercises).filter(key => selectedExercises[key]);
-    console.log('選択決定された種目一覧:', chosen);
+    // チェックが入っている種目の「種目名のみ」を抽出
+    const chosen = Object.keys(selectedExercises)
+      .filter(key => selectedExercises[key])
+      .map(key => key.split('-')[1]);
+
+    if (chosen.length === 0) {
+      alert('種目を1つ以上選択してください。');
+      return;
+    }
+
+    // 👈 厳密なフルパスの型エラーを回避するため、同階層の相対パス指定（stringキャスト）に修正
+    router.push({
+      pathname: './program_choice' as any,
+      params: { 
+        title: title, 
+        exercises: JSON.stringify(chosen) 
+      }
+    });
   };
 
   const currentExercises = EXERCISE_DATA[selectedPart] || [];
