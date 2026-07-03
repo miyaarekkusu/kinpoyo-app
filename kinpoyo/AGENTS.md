@@ -179,9 +179,9 @@ kinpoyo/
 │   │   │        └── custom_program.tsx  # カスタムプログラム画面 ✅
 │   │   │        └── even_program.tsx  # プログラム画面 ✅
 │   │   │        └── program_choice.tsx #重量設定画面　✅
-│   │   │        └── training_start.tsx #トレーニング開始画面
-│   │   └── (tabs)/                   # タブナビゲーショングループ
-│   │       ├── _layout.tsx           # タブナビゲーション（5タブ）
+│   │   │        └── training_start.tsx #トレーニング開始画面 ✅
+│   │   └── (tabs)/                   # タブナビゲーショングループ ✅
+│   │       ├── _layout.tsx           # タブナビゲーション（5タブ）✅
 │   │       ├── index.tsx             # ホーム画面 ✅
 │   │       ├── community.tsx         # コミュニティー ✅
 │   │       ├── workout.tsx           # 筋トレ開始（準備中）

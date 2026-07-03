@@ -1,8 +1,10 @@
+import React, { useState, useMemo } from 'react';
 import {
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,26 +20,26 @@ import {
   Space,
 } from '@/constants/theme';
 
-const STATS = [
-  { icon: 'timer' as const,       value: '0',  unit: '時間', label: 'トレーニング時間', color: Colors.info },
-  { icon: 'arrow.up.right' as const, value: '0', unit: 'kg',  label: '総ボリューム',    color: Colors.primaryDark },
-  { icon: 'dumbbell.fill' as const,  value: '0', unit: '回',  label: '合計ワークアウト', color: '#8B5CF6' },
-  { icon: 'flame.fill' as const,     value: '0', unit: '週',  label: '週間ストリーク',  color: '#F97316' },
-];
-
-const BIG3 = [
-  { label: 'SQUAT',     value: '─' },
-  { label: 'BENCH',     value: '─' },
-  { label: 'DEADLIFT',  value: '─' },
-];
-
-const BODY_ITEMS = [
-  { emoji: '⚖️', label: '体重',    unit: 'kg' },
-  { emoji: '💪', label: '筋肉量',  unit: 'kg' },
-  { emoji: '📊', label: '体脂肪率', unit: '%' },
-];
-
 export default function ProfileScreen() {
+  // 🏋️ BIG3の入力値状態管理 (初期値は空文字)
+  const [squat, setSquat] = useState('');
+  const [bench, setBench] = useState('');
+  const [deadlift, setDeadlift] = useState('');
+
+  // ⚖️ 身体情報の入力値状態管理 (初期値は空文字)
+  const [weight, setWeight] = useState('');
+  const [muscleMass, setMuscleMass] = useState('');
+  const [bodyFat, setBodyFat] = useState('');
+
+  // 💡 【自動計算ロジック】BIG3の値を数値にパースして合計値を算出
+  const big3Total = useMemo(() => {
+    const s = parseFloat(squat) || 0;
+    const b = parseFloat(bench) || 0;
+    const d = parseFloat(deadlift) || 0;
+    const total = s + b + d;
+    return total > 0 ? `${total} kg` : '─';
+  }, [squat, bench, deadlift]);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* ── Header ─────────────────────────────── */}
@@ -63,54 +65,109 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* ── Stats Grid ───────────────────────── */}
-        <Text style={styles.sectionTitle}>実績</Text>
-        <View style={styles.statsGrid}>
-          {STATS.map((s, i) => (
-            <View key={i} style={styles.statCard}>
-              <View style={[styles.statIconCircle, { backgroundColor: s.color + '18' }]}>
-                <IconSymbol name={s.icon} size={20} color={s.color} />
-              </View>
-              <Text style={styles.statValue}>
-                {s.value}
-                <Text style={styles.statUnit}>{s.unit}</Text>
-              </Text>
-              <Text style={styles.statLabel}>{s.label}</Text>
-            </View>
-          ))}
-        </View>
-
         {/* ── BIG3 ─────────────────────────────── */}
         <Text style={styles.sectionTitle}>BIG3の合計 (1RM)</Text>
         <View style={styles.big3Total}>
           <Text style={styles.big3TotalLabel}>TOTAL</Text>
-          <Text style={styles.big3TotalValue}>─</Text>
+          {/* 💡 入力に応じてリアルタイムにリアルな合計値が表示されます */}
+          <Text style={styles.big3TotalValue}>{big3Total}</Text>
         </View>
+        
         <View style={styles.big3Row}>
-          {BIG3.map((b, i) => (
-            <View key={i} style={styles.big3Card}>
-              <Text style={styles.big3Label}>{b.label}</Text>
-              <Text style={styles.big3Value}>{b.value}</Text>
-            </View>
-          ))}
+          {/* SQUAT */}
+          <View style={styles.big3Card}>
+            <Text style={styles.big3Label}>SQUAT</Text>
+            <TextInput
+              style={styles.profileInput}
+              keyboardType="numeric"
+              placeholder="─"
+              placeholderTextColor={Colors.textHint}
+              value={squat}
+              onChangeText={setSquat}
+            />
+            <Text style={styles.inputUnit}>kg</Text>
+          </View>
+
+          {/* BENCH */}
+          <View style={styles.big3Card}>
+            <Text style={styles.big3Label}>BENCH</Text>
+            <TextInput
+              style={styles.profileInput}
+              keyboardType="numeric"
+              placeholder="─"
+              placeholderTextColor={Colors.textHint}
+              value={bench}
+              onChangeText={setBench}
+            />
+            <Text style={styles.inputUnit}>kg</Text>
+          </View>
+
+          {/* DEADLIFT */}
+          <View style={styles.big3Card}>
+            <Text style={styles.big3Label}>DEADLIFT</Text>
+            <TextInput
+              style={styles.profileInput}
+              keyboardType="numeric"
+              placeholder="─"
+              placeholderTextColor={Colors.textHint}
+              value={deadlift}
+              onChangeText={setDeadlift}
+            />
+            <Text style={styles.inputUnit}>kg</Text>
+          </View>
         </View>
 
         {/* ── Body Data ────────────────────────── */}
-        <TouchableOpacity style={styles.bodySection} activeOpacity={0.8}>
+        <View style={styles.bodySection}>
           <View style={styles.bodySectionHeader}>
             <Text style={styles.sectionTitle2}>最近の身体情報</Text>
             <IconSymbol name="chevron.right" size={18} color={Colors.textHint} />
           </View>
+          
           <View style={styles.bodyGrid}>
-            {BODY_ITEMS.map((b, i) => (
-              <View key={i} style={styles.bodyItem}>
-                <Text style={styles.bodyEmoji}>{b.emoji}</Text>
-                <Text style={styles.bodyValue}>──</Text>
-                <Text style={styles.bodyLabel}>{b.label}</Text>
-              </View>
-            ))}
+            {/* 体重 */}
+            <View style={styles.bodyItem}>
+              <Text style={styles.bodyEmoji}>⚖️</Text>
+              <TextInput
+                style={styles.profileBodyInput}
+                keyboardType="numeric"
+                placeholder="──"
+                placeholderTextColor={Colors.textHint}
+                value={weight}
+                onChangeText={setWeight}
+              />
+              <Text style={styles.bodyLabel}>体重 (kg)</Text>
+            </View>
+
+            {/* 筋肉量 */}
+            <View style={styles.bodyItem}>
+              <Text style={styles.bodyEmoji}>💪</Text>
+              <TextInput
+                style={styles.profileBodyInput}
+                keyboardType="numeric"
+                placeholder="──"
+                placeholderTextColor={Colors.textHint}
+                value={muscleMass}
+                onChangeText={setMuscleMass}
+              />
+              <Text style={styles.bodyLabel}>筋肉量 (kg)</Text>
+            </View>
+
+            {/* 体脂肪率 */}
+            <View style={styles.bodyItem}>
+              <Text style={styles.bodyEmoji}>📊</Text>
+              <TextInput
+                style={styles.profileBodyInput}
+                keyboardType="numeric"
+                placeholder="──"
+                placeholderTextColor={Colors.textHint}
+                value={bodyFat}
+                onChangeText={setBodyFat}
+              />
+              <Text style={styles.bodyLabel}>体脂肪率 (%)</Text>
+            </View>
           </View>
-        </TouchableOpacity>
+        </View>
 
         <View style={{ height: Space[10] }} />
       </ScrollView>
@@ -123,7 +180,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.bgScreen,
   },
-
   // ── Header
   header: {
     flexDirection: 'row',
@@ -140,12 +196,10 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.bold,
     color: Colors.textPrimary,
   },
-
   scroll: {
     paddingHorizontal: Layout.screenPaddingH,
     paddingTop: Space[4],
   },
-
   // ── User Card
   userCard: {
     flexDirection: 'row',
@@ -208,47 +262,6 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.bold,
     color: Colors.textPrimary,
   },
-
-  // ── Stats Grid
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Space[3],
-    marginBottom: Space[5],
-  },
-  statCard: {
-    flex: 1,
-    minWidth: '45%',
-    backgroundColor: Colors.bgCard,
-    borderRadius: Radius.lg,
-    padding: Space[4],
-    gap: Space[1],
-    ...Shadow.sm,
-  },
-  statIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Space[1],
-  },
-  statValue: {
-    fontSize: FontSize['2xl'],
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
-    lineHeight: 30,
-  },
-  statUnit: {
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.medium,
-    color: Colors.textSecondary,
-  },
-  statLabel: {
-    fontSize: FontSize.xs,
-    color: Colors.textHint,
-  },
-
   // ── BIG3
   big3Total: {
     flexDirection: 'row',
@@ -270,7 +283,7 @@ const styles = StyleSheet.create({
   big3TotalValue: {
     fontSize: FontSize.md,
     fontWeight: FontWeight.bold,
-    color: Colors.textSecondary,
+    color: Colors.primaryDark,
   },
   big3Row: {
     flexDirection: 'row',
@@ -281,7 +294,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.bgCard,
     borderRadius: Radius.md,
-    padding: Space[3],
+    paddingTop: Space[3],
+    paddingBottom: Space[2],
+    paddingHorizontal: Space[2],
     alignItems: 'center',
     gap: Space[1],
     ...Shadow.sm,
@@ -291,13 +306,27 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.bold,
     color: Colors.textHint,
     letterSpacing: 0.5,
+    marginBottom: 2,
   },
-  big3Value: {
-    fontSize: FontSize.lg,
+  // 💡 新規追加: BIG3用の数値インプットスタイリング
+  profileInput: {
+    width: '100%',
+    height: 36,
+    backgroundColor: Colors.bgScreen,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.sm,
+    textAlign: 'center',
+    fontSize: FontSize.md,
     fontWeight: FontWeight.bold,
     color: Colors.textPrimary,
   },
-
+  inputUnit: {
+    fontSize: FontSize.xs,
+    color: Colors.textSecondary,
+    fontWeight: FontWeight.medium,
+    marginTop: 2,
+  },
   // ── Body Data
   bodySection: {
     backgroundColor: Colors.bgCard,
@@ -321,15 +350,25 @@ const styles = StyleSheet.create({
     gap: Space[1],
     borderRightWidth: 1,
     borderRightColor: Colors.divider,
-    paddingVertical: Space[2],
+    paddingVertical: Space[1],
   },
   bodyEmoji: {
     fontSize: 24,
+    marginBottom: 2,
   },
-  bodyValue: {
-    fontSize: FontSize.md,
+  // 💡 新規追加: 身体情報用のインプットスタイリング
+  profileBodyInput: {
+    width: '75%',
+    height: 36,
+    backgroundColor: Colors.bgScreen,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.sm,
+    textAlign: 'center',
+    fontSize: FontSize.base,
     fontWeight: FontWeight.bold,
     color: Colors.textPrimary,
+    marginBottom: 4,
   },
   bodyLabel: {
     fontSize: FontSize.xs,

@@ -25,7 +25,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────
 
-type TabKey = 'follow' | 'feed' | 'qa' | 'news';
+type TabKey = 'follow' | 'feed' | 'qa';
 
 interface CommentItem {
   id: string;
@@ -38,7 +38,7 @@ interface CommentItem {
 
 interface FeedItem {
   id: string;
-  type: 'feed' | 'qa' | 'news';
+  type: 'feed' | 'qa';
   user: string;
   userInitial: string;
   isAdmin?: boolean;
@@ -143,35 +143,6 @@ const QA_DATA: FeedItem[] = [
   },
 ];
 
-const NEWS_DATA: FeedItem[] = [
-  {
-    id: 'n1',
-    type: 'news',
-    user: 'Admin',
-    userInitial: 'A',
-    isAdmin: true,
-    timeAgo: '2ヶ月前',
-    title: '[お知らせ] 📌 kinpoyoコミュニティ利用規約およびエチケットのご案内',
-    body: 'kinpoyoコミュニティは、すべてのユーザーが自身のワークアウト記録を共有し、互いにモチベーションを高め合う大切な空間です。\n皆様が快適かつ健康的にコミュニケーションを取れるよう、以下のコミュニティ利用ガイドラインを必ずご確認ください。\n\n1. 互いを尊重し、配慮し合う文化を作りましょう。\n自由な意見交換や有益な情報共有はいつでも歓迎します。しかし、他者への誹謗中傷、暴言、嫌悪表現など、不快感を与える投稿やコメントは厳しく禁止されています。\n\n2. 商業目的の宣伝やスパム行為を禁止します。\n個人の商品販売や外部リンクへの誘導など、商業的な目的が明らかな投稿は、コミュニティ本来の目的を損なう恐れがあるため、発見次第直ちに削除させていただきます。\n\n3. 快適なコミュニティ環境を共に守りましょう。\nスパム投稿、性的または不快感を与える画像など、健全なコミュニケーションを阻害するすべての活動はペナルティの対象となります。',
-    likes: 3,
-    commentCount: 0,
-    comments: [],
-  },
-  {
-    id: 'n2',
-    type: 'news',
-    user: 'Admin',
-    userInitial: 'A',
-    isAdmin: true,
-    timeAgo: '8日前',
-    title: '[お知らせ] 🆕 kinpoyo「今日」タブ 新規アップデート',
-    body: '今日一日の運動を一度に確認できる「今日」タブが新しくオープンしました！✨\n\n🕯 新しくなった「今日」タブ、ここが変わりました！\n記録をひと目で確認！「ウィークリー記録表示」',
-    likes: 5,
-    commentCount: 2,
-    comments: [],
-  },
-];
-
 // ─── Main Screen ──────────────────────────────────────────────
 
 export default function CommunityScreen() {
@@ -195,7 +166,6 @@ export default function CommunityScreen() {
     { key: 'follow', label: 'フォロー中' },
     { key: 'feed',   label: 'フィード' },
     { key: 'qa',     label: 'Q&A' },
-    { key: 'news',   label: 'お知らせ' },
   ];
 
   const handleCreatePost = (type: 'feed' | 'qa', title: string, body: string, images: string[]) => {
@@ -277,7 +247,6 @@ export default function CommunityScreen() {
 
   const filteredFeedData = filterByQuery(feedData);
   const filteredQaData = filterByQuery(qaData);
-  const filteredNewsData = filterByQuery(NEWS_DATA);
   const searchEmptyMessage = normalizedQuery ? '一致する投稿が見つかりませんでした' : undefined;
 
   return (
@@ -354,21 +323,16 @@ export default function CommunityScreen() {
         {activeTab === 'qa' && (
           <FeedTab data={filteredQaData} emptyMessage={searchEmptyMessage} onPostPress={setSelectedPost} onEdit={openEditModal} onDelete={setDeletingPost} />
         )}
-        {activeTab === 'news' && (
-          <FeedTab data={filteredNewsData} emptyMessage={searchEmptyMessage} onPostPress={setSelectedPost} onEdit={openEditModal} onDelete={setDeletingPost} />
-        )}
       </View>
 
-      {/* FAB (フォロー中・フィード・Q&A のみ) */}
-      {activeTab !== 'news' && (
-        <TouchableOpacity
-          style={s.fab}
-          activeOpacity={0.85}
-          onPress={openCreateModal}
-        >
-          <MaterialIcons name="edit" size={24} color="#fff" />
-        </TouchableOpacity>
-      )}
+      {/* FAB */}
+      <TouchableOpacity
+        style={s.fab}
+        activeOpacity={0.85}
+        onPress={openCreateModal}
+      >
+        <MaterialIcons name="edit" size={24} color="#fff" />
+      </TouchableOpacity>
 
       {/* ── ユーザー検索 Modal ───────────────────────────────── */}
       <Modal
@@ -410,7 +374,6 @@ export default function CommunityScreen() {
             </View>
           ) : (
             <ScrollView contentContainerStyle={s.modalBody}>
-              {/* Search Input */}
               <View style={s.searchBox}>
                 <TextInput
                   value={followSearch}
@@ -421,7 +384,6 @@ export default function CommunityScreen() {
                 />
               </View>
 
-              {/* My ID Card */}
               <View style={s.userIdCard}>
                 <View style={[s.avatar, { backgroundColor: Colors.error }]}>
                   <Text style={s.avatarText}>K</Text>
@@ -434,7 +396,6 @@ export default function CommunityScreen() {
                   <MaterialIcons name="share" size={20} color={Colors.textSecondary} />
                 </TouchableOpacity>
               </View>
-
             </ScrollView>
           )}
         </SafeAreaView>
@@ -508,7 +469,7 @@ function FollowTab({ onSearchPress }: { onSearchPress: () => void }) {
   );
 }
 
-// ─── フィード / Q&A / お知らせ タブ ──────────────────────────
+// ─── フィード / Q&A タブ ──────────────────────────
 
 function FeedTab({
   data,
@@ -549,7 +510,6 @@ function FeedTab({
         const liked = likedIds.has(item.id);
         return (
           <View key={item.id} style={s.postCard}>
-            {/* ユーザー行＋タイトル・本文: タップで詳細へ */}
             <TouchableOpacity onPress={() => onPostPress(item)} activeOpacity={0.85}>
               <View style={s.postUserRow}>
                 <View style={[s.smallAvatar, item.isAdmin && s.adminAvatar]}>
@@ -562,7 +522,6 @@ function FeedTab({
               <Text style={s.postBody} numberOfLines={3}>{item.body}</Text>
             </TouchableOpacity>
 
-            {/* 画像: 独立した横スクロール */}
             {!!item.imageCount && (
               <ScrollView
                 horizontal
@@ -580,7 +539,6 @@ function FeedTab({
               </ScrollView>
             )}
 
-            {/* アクション行: 自分の投稿は編集・削除、いいねとコメントは右側 */}
             <View style={s.postActions}>
               <View style={s.postActionsLeft}>
                 {item.user === 'あなた' && (
@@ -661,7 +619,6 @@ function PostDetailScreen({
 
   return (
     <View style={s.safe}>
-      {/* ヘッダー: ノッチ分を paddingTop で確保 */}
       <View style={[s.detailHeader, { paddingTop: insets.top }]}>
         <TouchableOpacity onPress={onClose} style={s.iconBtn}>
           <MaterialIcons name="chevron-left" size={28} color={Colors.textPrimary} />
@@ -688,7 +645,6 @@ function PostDetailScreen({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* 画像（複数ある場合はmain画像＋サムネイル一覧） */}
           {!!post.imageCount && (
             <View style={s.detailImageSection}>
               {post.images ? (
@@ -724,12 +680,10 @@ function PostDetailScreen({
             </View>
           )}
 
-          {/* Q&A・お知らせ: タイトル先頭表示 */}
           {post.type !== 'feed' && (
             <Text style={s.detailTitle}>{post.title}</Text>
           )}
 
-          {/* 投稿者行 */}
           <View style={[s.postUserRow, { marginTop: Space[2] }]}>
             <View style={[s.smallAvatar, post.isAdmin && s.adminAvatar]}>
               <Text style={s.smallAvatarText}>{post.userInitial}</Text>
@@ -738,10 +692,8 @@ function PostDetailScreen({
             {post.isAdmin && <Text style={s.editedTag}> · 編集済み</Text>}
           </View>
 
-          {/* 本文 */}
           <Text style={s.detailBodyText}>{post.body}</Text>
 
-          {/* いいね・ブックマーク */}
           <View style={s.detailActions}>
             <TouchableOpacity onPress={() => setLiked(p => !p)} style={s.actionBtn}>
               <MaterialIcons
@@ -761,7 +713,6 @@ function PostDetailScreen({
 
           <View style={s.divider} />
 
-          {/* コメントヘッダー */}
           <View style={s.commentsHeader}>
             <Text style={s.commentsTitle}>コメント {comments.length}件</Text>
             <View style={s.sortRow}>
@@ -775,7 +726,6 @@ function PostDetailScreen({
             </View>
           </View>
 
-          {/* コメント一覧 */}
           {comments.map(c => (
             <View key={c.id} style={[s.commentItem, c.isAuthor && s.commentAuthorBg]}>
               <View style={s.smallAvatar}>
@@ -799,7 +749,6 @@ function PostDetailScreen({
           ))}
         </ScrollView>
 
-        {/* コメント入力バー: ホームインジケーター分を paddingBottom で確保 */}
         <View style={[s.commentInputRow, { paddingBottom: insets.bottom || Space[3] }]}>
           <TextInput
             value={commentText}
@@ -818,7 +767,6 @@ function PostDetailScreen({
         </View>
       </KeyboardAvoidingView>
 
-      {/* 削除確認: ネストしたModalを避け、画面内オーバーレイで表示 */}
       {showDeleteConfirm && (
         <DeleteConfirmDialog
           onCancel={() => setShowDeleteConfirm(false)}
@@ -925,7 +873,6 @@ function PostCreateScreen({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* 投稿先タイプ（編集時は変更不可のため非表示） */}
           {!isEditing && (
             <View style={s.createTypeRow}>
               <TouchableOpacity
@@ -943,7 +890,6 @@ function PostCreateScreen({
             </View>
           )}
 
-          {/* タイトル */}
           <TextInput
             value={title}
             onChangeText={setTitle}
@@ -952,7 +898,6 @@ function PostCreateScreen({
             style={s.createTitleInput}
           />
 
-          {/* 本文: 残りスペースを埋める */}
           <TextInput
             value={body}
             onChangeText={setBody}
@@ -963,7 +908,6 @@ function PostCreateScreen({
             textAlignVertical="top"
           />
 
-          {/* 画像添付 */}
           <View>
             <Text style={s.createSectionLabel}>画像（最大5枚）</Text>
             <ScrollView
@@ -997,7 +941,7 @@ function PostCreateScreen({
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgScreen },
 
-  // ── Header ────────────────────────────────────────────────
+  // ── Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1032,7 +976,7 @@ const s = StyleSheet.create({
     fontWeight: FontWeight.bold,
   },
 
-  // ── Search Bar ────────────────────────────────────────────
+  // ── Search Bar
   searchBarContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1065,7 +1009,7 @@ const s = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // ── Tab Bar ───────────────────────────────────────────────
+  // ── Tab Bar
   tabBar: {
     flexDirection: 'row',
     gap: Space[2],
@@ -1091,7 +1035,7 @@ const s = StyleSheet.create({
   },
   tabLabelActive: { color: Colors.textOnPrimary },
 
-  // ── フォロー中: Empty State ────────────────────────────────
+  // ── フォロー中: Empty State
   emptyState: {
     flex: 1,
     alignItems: 'center',
@@ -1116,7 +1060,7 @@ const s = StyleSheet.create({
     fontSize: FontSize.base,
   },
 
-  // ── Feed List ─────────────────────────────────────────────
+  // ── Feed List
   feedList: { paddingBottom: 80 },
   postCard: {
     backgroundColor: Colors.bgCard,
@@ -1184,7 +1128,7 @@ const s = StyleSheet.create({
   },
   textActionBtnDanger: { color: Colors.error },
 
-  // ── FAB ──────────────────────────────────────────────────
+  // ── FAB
   fab: {
     position: 'absolute',
     bottom: Space[6],
@@ -1196,7 +1140,7 @@ const s = StyleSheet.create({
     ...Shadow.lg,
   },
 
-  // ── Modal共通 ─────────────────────────────────────────────
+  // ── Modal共通
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1225,7 +1169,7 @@ const s = StyleSheet.create({
   postSubmitTextDisabled: { color: Colors.textHint },
   postSubmitBtn: { marginRight: Space[2] },
 
-  // ── 投稿作成 Modal ─────────────────────────────────────────
+  // ── 投稿作成 Modal
   createBody: {
     flexGrow: 1,
     padding: Layout.screenPaddingH,
@@ -1287,7 +1231,7 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // ── ユーザー検索 Modal ─────────────────────────────────────
+  // ── ユーザー検索 Modal
   searchBox: {
     borderRadius: Radius.md,
     borderWidth: 1,
@@ -1322,7 +1266,7 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
 
-  // ── マイQRコード（ユーザー検索 Modal内） ───────────────────
+  // ── マイQRコード（ユーザー検索 Modal内）
   qrContainer: {
     flex: 1,
     alignItems: 'center',
@@ -1361,7 +1305,7 @@ const s = StyleSheet.create({
     color: Colors.info,
   },
 
-  // ── 投稿詳細 Modal ─────────────────────────────────────────
+  // ── 投稿詳細 Modal
   detailHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1377,7 +1321,7 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // ── 削除確認ダイアログ（画面内オーバーレイ） ──────────────────
+  // ── 削除確認ダイアログ
   dialogOverlay: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
@@ -1472,7 +1416,7 @@ const s = StyleSheet.create({
   },
   editedTag: { fontSize: FontSize.xs, color: Colors.textHint },
 
-  // ── いいね・ブックマーク (詳細) ────────────────────────────
+  // ── いいね・ブックマーク (詳細)
   detailActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1484,7 +1428,7 @@ const s = StyleSheet.create({
     marginBottom: Space[3],
   },
 
-  // ── コメント ──────────────────────────────────────────────
+  // ── コメント
   commentsHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1537,7 +1481,7 @@ const s = StyleSheet.create({
     fontWeight: FontWeight.bold,
   },
 
-  // ── コメント入力バー ───────────────────────────────────────
+  // ── コメント入力バー
   commentInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
