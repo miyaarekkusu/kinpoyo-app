@@ -17,3 +17,5 @@ http://localhost:8000/docs
 # 停止
 Ctrl+C            (uvicorn)
 docker compose stop db   (DBはデータ保持したまま停止)
+
+あああああああ
