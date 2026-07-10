@@ -1,0 +1,63 @@
+JWTトークンと「ユーザー別」URLの説明
+
+■ JWTトークンとは
+- ログイン(POST /auth/login)に成功すると発行される文字列（access_token）。
+- 中身は自分では書き換えられないよう暗号署名された「ユーザーを特定する情報」の入れ物。
+  今回の実装では中に入っているのは以下の2つだけ。
+    sub : ログインしたユーザーのメールアドレス
+    exp : 有効期限（.envのACCESS_TOKEN_EXPIRE_MINUTES分後、デフォルト60分）
+- 使い方：以降のリクエストのヘッダーに毎回付けて送る。
+    Authorization: Bearer <access_tokenの中身>
+- サーバー側の処理（app/core/deps.py の get_current_user）
+    1. ヘッダーからトークンを取り出す
+    2. 署名を検証し、改ざん・期限切れなら401を返す
+    3. 中のメールアドレスでDBを検索し、該当するUserを「今リクエストしてきた本人」として扱う
+- つまりJWTトークン＝「ログイン中の身分証」。これを提示しないと「自分の」データにアクセスできない。
+
+■ トークンが必要な（＝ユーザー別の）URL一覧
+以下は Depends(get_current_user) が付いており、Authorizationヘッダーが無いと401になる。
+「自分の」「本人の」という意味を持つURL。
+
+  GET  /auth/me                              …トークンの持ち主自身の情報
+  GET  /users/me/profile                     …自分のプロフィール取得
+  PUT  /users/me/profile                     …自分のプロフィール更新
+  GET  /users/search?q=                      …検索結果に「自分がフォロー中か」を含めるため必要
+  POST /users/{id}/follow                    …「誰が」フォローしたかを記録するため必要
+  DELETE /users/{id}/follow
+
+  POST /workouts                             …「自分の」セッションとして作成
+  GET  /workouts?date=                       …自分のセッションだけを日付検索
+  GET  /workouts/{id}                        …自分のセッションか確認してから返す
+  PUT  /workouts/{id}
+  DELETE /workouts/{id}
+  POST /workouts/{id}/start
+  POST /workouts/{id}/end
+  POST /workouts/{id}/exercises
+  POST /workouts/{id}/exercises/{ex_id}/sets
+
+  GET  /records/summary?period=              …自分の記録だけを集計
+  GET  /records/max-weight?exercise_id=
+  GET  /records/history
+
+  POST /programs/{id}/join                   …「誰が」参加したかを記録
+  PUT  /user-programs/{id}/status            …自分の参加記録か確認してから更新
+
+  POST /posts                                …投稿者を記録
+  GET  /posts?type=&scope=                   …scope=followingの判定に必要
+  PUT  /posts/{id}                           …自分の投稿か確認
+  DELETE /posts/{id}
+  POST /posts/{id}/likes                     …「誰が」いいねしたか記録
+  DELETE /posts/{id}/likes
+  POST /posts/{id}/comments                  …コメント投稿者を記録
+
+■ トークンが不要な（誰でも見られる）URL
+  GET  /                                     …ヘルスチェック
+  POST /auth/register                        …まだログインしていない人向け
+  POST /auth/login                           …同上
+  GET  /programs                             …プログラム一覧は公開情報
+  GET  /posts/{id}/comments                  …コメント一覧は公開情報（閲覧のみ）
+
+■ Swagger UI (/docs) での動かし方
+  1. POST /auth/login を実行し、access_tokenをコピー
+  2. 右上の「Authorize」ボタンにトークン文字列だけを貼り付ける（Bearer は不要）
+  3. 以降、鍵マーク付きのエンドポイントは自動でヘッダーが付いた状態で実行される

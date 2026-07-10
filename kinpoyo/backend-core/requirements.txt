@@ -15,3 +15,4 @@ psycopg[binary]==3.3.4        # PostgreSQL ドライバ（Python 3.14対応 psyc
 # ── 認証 ──────────────────────────────────────────────────
 python-jose[cryptography]==3.5.0   # JWTトークン
 passlib[bcrypt]==1.7.4             # パスワードハッシュ化
+bcrypt==4.0.1                      # passlib1.7.4がbcrypt4.1+のAPI変更に未対応のため固定
