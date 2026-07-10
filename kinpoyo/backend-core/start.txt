@@ -9,7 +9,7 @@ docker compose up -d db
 alembic upgrade head
 
 # 3. APIサーバー起動
-uvicorn main:app --reload
+uvicorn main:app --reload    
 
 # 確認
 http://localhost:8000/docs
