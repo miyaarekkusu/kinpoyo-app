@@ -1,0 +1,21 @@
+kinpoyo backend 起動コマンド（コピペ用メモ）
+詳細・背景はAGENTS.md / DATABASE.mdを参照。
+
+# 1. DB起動（リポジトリルート kinpoyo/ で実行）
+docker compose up -d db
+
+# 2. venv有効化 + マイグレーション適用（backend-core/ で実行）
+.\venv\Scripts\Activate.ps1
+alembic upgrade head
+
+# 3. APIサーバー起動
+uvicorn main:app --reload    
+
+# 確認
+http://localhost:8000/docs
+
+# 停止
+Ctrl+C            (uvicorn)
+docker compose stop db   (DBはデータ保持したまま停止)
+
+あああいあああ
