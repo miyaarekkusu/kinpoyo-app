@@ -376,7 +376,9 @@ def build_template_for_sessions(
         return None, 0.3, 0
     mean, std = _mean_std_vectors(vecs)
     dists = [template_distance(v, mean) for v in vecs]
-    thr = min(0.5, max(max(dists) * 1.3, 0.12))
+    # 形状しきい値も甘めに: 学習サイクルの最大距離×1.5（下限0.16・上限0.6）。
+    # 学習データが少ない/揃いすぎている時にしきい値が過度に厳しくなるのを防ぐ。
+    thr = min(0.6, max(max(dists) * 1.5, 0.16))
     template = {
         "bins": n_bins,
         "mean": [round(x, 4) for x in mean],
@@ -387,14 +389,16 @@ def build_template_for_sessions(
 
 # --- Cycle statistics gates -------------------------------------------------
 
-# 統計ゲートの余裕幅。学習サイクルの実測レンジに対するマージン。
-# 角度: カメラアングルや人による絶対角度のブレを見込む(度)。
-_GATE_ANGLE_MARGIN_DEG = 15.0
-# ROM: 実測の最小×0.6 〜 最大×1.6 まで許容。
+# 統計ゲートの余裕幅。学習サイクルの実測レンジに対するマージン。全体的に甘めにして、
+# カメラアングル・体格差・関節違いによる正当なブレでの棄却を減らす（棄却の主役は形
+# テンプレートに寄せる方針）。
+# 角度: カメラアングルや人による絶対角度のブレを見込む(度)。±25°まで許容。
+_GATE_ANGLE_MARGIN_DEG = 25.0
+# ROM: 実測の最小×0.5 〜 最大×2.0 まで許容（比率ベース）。
 # 注: 周期（所要フレーム数）ゲートは廃止。速さに依存する判定基準であり、テンポの
 # 違うだけの正しいレップを棄却してしまうため。速さ非依存な「形テンプレート」が
 # 走行/ノイズサイクルの棄却を肩代わりする（本物=対称V字 / ノイズ=平底プラトー）。
-_GATE_ROM_SCALE = (0.6, 1.6)
+_GATE_ROM_SCALE = (0.5, 2.0)
 
 
 def _cycle_stat(sub: list[dict]) -> Optional[tuple[float, float, int]]:
