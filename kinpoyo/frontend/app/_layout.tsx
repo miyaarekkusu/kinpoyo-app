@@ -24,7 +24,11 @@ export default function RootLayout() {
 }
 
 function RootNavigator() {
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, isRestoring } = useAuth();
+
+  if (isRestoring) {
+    return null;
+  }
 
   return (
     <Stack>

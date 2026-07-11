@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { Image } from 'expo-image';
 
 import { Radius } from '@/constants/theme';
@@ -15,8 +15,11 @@ export function TrainerAvatar({ size = 56 }: TrainerAvatarProps) {
   const imageRef = useRef<Image>(null);
 
   useEffect(() => {
+    // expo-imageのstopAnimating()はWeb版では内部のネイティブ参照が無く例外になるため、
+    // ネイティブ（iOS/Android）でのみ呼び出す
+    if (Platform.OS === 'web') return;
     const timer = setTimeout(() => {
-      imageRef.current?.stopAnimating();
+      imageRef.current?.stopAnimating?.();
     }, GIF_LOOP_DURATION);
     return () => clearTimeout(timer);
   }, []);

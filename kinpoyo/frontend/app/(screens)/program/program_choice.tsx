@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View, ScrollView, TouchableOpacity, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -13,6 +13,11 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { useAuth } from '@/hooks/use-auth';
+import { ApiError } from '@/services/api';
+import { ProgramExerciseCreate, createProgram, joinProgram } from '@/services/program';
+import { SessionExerciseCreate, cancelWorkout, createWorkout, fetchWorkout } from '@/services/workout';
+import { formatDecimal } from '@/utils/format';
 
 // 1セット分の構造を定義 (重量、レップ数、RPE)
 interface SetRow {
@@ -24,23 +29,89 @@ interface SetRow {
 // 種目ごとの設定構造
 interface ExerciseSetting {
   name: string;
+  exerciseId?: number;
   sets: SetRow[];
 }
 
 export default function ProgramChoiceScreen() {
   const router = useRouter();
-  const { title, exercises } = useLocalSearchParams<{ title: string; exercises: string }>();
+  const { token } = useAuth();
+  const { title, description, mode, exercises, sessionId } = useLocalSearchParams<{
+    title: string;
+    description?: string;
+    mode?: string;
+    exercises?: string;
+    sessionId?: string;
+  }>();
+  const isCustomMode = mode === 'custom';
+  const isEditMode = mode === 'edit';
 
-  // 前の画面から渡された種目リストを復元
-  const initialExercises: string[] = exercises ? JSON.parse(exercises) : [];
+  // 前の画面から渡された種目リストを復元（カスタム作成時は{id,name}[]、それ以外は従来通りstring[]）。
+  // 編集モード（既存の登録済みメニュー編集）は実データを非同期取得するため、ここでは空で開始する
+  const initialExercises: ExerciseSetting[] = (() => {
+    if (isEditMode || !exercises) return [];
+    const parsed = JSON.parse(exercises);
+    if (isCustomMode) {
+      return (parsed as { id: number; name: string }[]).map(e => ({
+        name: e.name,
+        exerciseId: e.id,
+        sets: [{ weight: '60', reps: '10', rpe: '8' }],
+      }));
+    }
+    return (parsed as string[]).map(name => ({
+      name,
+      sets: [{ weight: '60', reps: '10', rpe: '8' }],
+    }));
+  })();
 
   // 種目ごとの重量・セット数・RPEデータを初期化
-  const [exerciseSettings, setExerciseSettings] = useState<ExerciseSetting[]>(
-    initialExercises.map(name => ({
-      name,
-      sets: [{ weight: '60', reps: '10', rpe: '8' }] // 初期値としてRPE 8を設定
-    }))
-  );
+  const [exerciseSettings, setExerciseSettings] = useState<ExerciseSetting[]>(initialExercises);
+
+  // カスタムプログラム作成時のみ使用：プログラム名・保存状態
+  const [programName, setProgramName] = useState(title ? `${title}プログラム` : 'マイプログラム');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // 編集モード：既存セッションの実データを取得
+  const [scheduledDate, setScheduledDate] = useState<string | null>(null);
+  const [isLoadingSession, setIsLoadingSession] = useState(isEditMode);
+  const [loadSessionError, setLoadSessionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isEditMode || !sessionId) return;
+    let cancelled = false;
+    setIsLoadingSession(true);
+    setLoadSessionError(null);
+    fetchWorkout(token, Number(sessionId))
+      .then(session => {
+        if (cancelled) return;
+        setScheduledDate(session.scheduled_date);
+        setExerciseSettings(
+          session.exercises.map(ex => ({
+            name: ex.exercise_name,
+            exerciseId: ex.exercise_id,
+            sets:
+              ex.sets.length > 0
+                ? ex.sets.map(s => ({
+                    weight: formatDecimal(s.weight_kg) ?? '',
+                    reps: s.reps != null ? String(s.reps) : '',
+                    rpe: formatDecimal(s.rpe) ?? '',
+                  }))
+                : [{ weight: '', reps: '', rpe: '' }],
+          }))
+        );
+      })
+      .catch(e => {
+        if (!cancelled) setLoadSessionError(e instanceof ApiError ? e.detail : 'データの取得に失敗しました');
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingSession(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditMode, sessionId]);
 
   // 種目（カード）そのものを削除する
   const removeExercise = (exerciseIndex: number) => {
@@ -91,10 +162,79 @@ export default function ProgramChoiceScreen() {
   };
 
   // プログラムの確定保存とホームへの遷移
-  const handleSave = () => {
-    console.log('保存されるプログラム設定:', exerciseSettings);
-    alert('カスタムプログラムを保存しました！');
-    router.replace('/(tabs)');
+  const handleSave = async () => {
+    if (isEditMode) {
+      if (!sessionId) return;
+      setSubmitError(null);
+      setIsSubmitting(true);
+      try {
+        await cancelWorkout(token, Number(sessionId));
+        if (exerciseSettings.length > 0 && scheduledDate) {
+          const exercisesPayload: SessionExerciseCreate[] = exerciseSettings.map((es, idx) => ({
+            exercise_id: es.exerciseId!,
+            order_index: idx,
+            sets: es.sets.map(s => {
+              const set: { weight_kg?: number; reps?: number; rpe?: number } = {};
+              if (s.weight.trim() !== '') set.weight_kg = Number(s.weight);
+              if (s.reps.trim() !== '') set.reps = Number(s.reps);
+              if (s.rpe.trim() !== '') set.rpe = Number(s.rpe);
+              return set;
+            }),
+          }));
+          await createWorkout(token, { scheduled_date: scheduledDate, exercises: exercisesPayload });
+        }
+        router.back();
+      } catch (e) {
+        setSubmitError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    if (!isCustomMode) {
+      console.log('保存されるプログラム設定:', exerciseSettings);
+      alert('カスタムプログラムを保存しました！');
+      router.replace('/(tabs)');
+      return;
+    }
+
+    if (!programName.trim()) {
+      setSubmitError('プログラム名を入力してください');
+      return;
+    }
+
+    setSubmitError(null);
+    setIsSubmitting(true);
+    try {
+      const exercisesPayload: ProgramExerciseCreate[] = exerciseSettings.map(es => {
+        const firstSet = es.sets[0];
+        const reps = firstSet && firstSet.reps.trim() !== '' ? Number(firstSet.reps) : undefined;
+        const note =
+          firstSet && (firstSet.weight.trim() !== '' || firstSet.rpe.trim() !== '')
+            ? `目安: ${firstSet.weight || '-'}kg, RPE${firstSet.rpe || '-'}`
+            : undefined;
+        return {
+          exercise_id: es.exerciseId!,
+          sets: es.sets.length,
+          reps_min: reps,
+          reps_max: reps,
+          note,
+        };
+      });
+
+      const created = await createProgram(token, {
+        name: programName.trim(),
+        description: description || undefined,
+        exercises: exercisesPayload,
+      });
+      await joinProgram(token, created.id);
+      router.replace('/(tabs)');
+    } catch (e) {
+      setSubmitError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -108,22 +248,50 @@ export default function ProgramChoiceScreen() {
             <IconSymbol name="chevron.left" size={24} color={Colors.primaryDark} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>
-            {title ? `${title}構成` : 'ボリューム設定'}
+            {isEditMode ? '筋トレメニューを編集' : title ? `${title}構成` : 'ボリューム設定'}
           </Text>
           <View style={{ width: 40 }} />
         </View>
 
+        {isLoadingSession ? (
+          <View style={styles.centerBox}>
+            <ActivityIndicator color={Colors.primaryDark} size="large" />
+          </View>
+        ) : loadSessionError ? (
+          <View style={styles.centerBox}>
+            <View style={styles.errorBox}>
+              <Text style={styles.errorBoxText}>{loadSessionError}</Text>
+            </View>
+          </View>
+        ) : (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           {/* ステップ案内エリア */}
           <View style={styles.stepCard}>
-            <View style={styles.stepBadge}>
-              <Text style={styles.stepBadgeText}>STEP 3 / 3</Text>
-            </View>
-            <Text style={styles.sectionTitle}>詳細ボリューム設定</Text>
+            {!isEditMode && (
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepBadgeText}>STEP 3 / 3</Text>
+              </View>
+            )}
+            <Text style={styles.sectionTitle}>
+              {isEditMode ? 'メニューを編集' : '詳細ボリューム設定'}
+            </Text>
             <Text style={styles.sectionDescription}>
               各種目の重量・レップ数に加えて、狙う運動強度（RPE 1〜10）を設定しましょう。
             </Text>
           </View>
+
+          {isCustomMode && (
+            <View style={styles.programNameCard}>
+              <Text style={styles.programNameLabel}>プログラム名</Text>
+              <TextInput
+                style={styles.programNameInput}
+                value={programName}
+                onChangeText={setProgramName}
+                placeholder="プログラム名を入力"
+                placeholderTextColor={Colors.textHint}
+              />
+            </View>
+          )}
 
           {/* 種目ごとの入力カードリスト */}
           {exerciseSettings.length > 0 ? (
@@ -212,22 +380,40 @@ export default function ProgramChoiceScreen() {
             ))
           ) : (
             <View style={styles.emptyCard}>
-              <Text style={styles.emptyText}>選択された種目がありません。前の画面から種目を選んでください。</Text>
+              <Text style={styles.emptyText}>
+                {isEditMode
+                  ? '種目がありません。すべて削除すると、この日のメニューが空になります。'
+                  : '選択された種目がありません。前の画面から種目を選んでください。'}
+              </Text>
             </View>
           )}
         </ScrollView>
+        )}
 
         {/* ボトム固定決定ボタン */}
+        {!isLoadingSession && !loadSessionError && (
         <View style={styles.footer}>
-          <TouchableOpacity 
-            style={[styles.saveButton, exerciseSettings.length === 0 && styles.saveButtonDisabled]} 
-            onPress={handleSave} 
-            disabled={exerciseSettings.length === 0}
+          {submitError && (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorBoxText}>{submitError}</Text>
+            </View>
+          )}
+          <TouchableOpacity
+            style={[styles.saveButton, (!isEditMode && exerciseSettings.length === 0) || isSubmitting ? styles.saveButtonDisabled : undefined]}
+            onPress={handleSave}
+            disabled={(!isEditMode && exerciseSettings.length === 0) || isSubmitting}
             activeOpacity={0.8}
           >
-            <Text style={styles.saveButtonText}>プログラムを確定する</Text>
+            {isSubmitting ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.saveButtonText}>
+                {isEditMode ? 'メニューを更新する' : 'プログラムを確定する'}
+              </Text>
+            )}
           </TouchableOpacity>
         </View>
+        )}
       </SafeAreaView>
     </>
   );
@@ -252,6 +438,41 @@ const styles = StyleSheet.create({
     width: 40,
     justifyContent: 'center',
   },
+  programNameCard: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.md,
+    padding: Space[4],
+    marginBottom: Space[4],
+    borderWidth: 1,
+    borderColor: Colors.border,
+    ...Shadow.sm,
+  },
+  programNameLabel: {
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.bold,
+    color: Colors.textSecondary,
+    marginBottom: Space[2],
+  },
+  programNameInput: {
+    backgroundColor: Colors.bgScreen,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.sm,
+    height: 44,
+    paddingHorizontal: Space[3],
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textPrimary,
+  },
+  errorBox: {
+    borderRadius: Radius.md,
+    backgroundColor: Colors.errorSubtle,
+    paddingVertical: Space[3],
+    paddingHorizontal: Space[4],
+    marginBottom: Space[3],
+  },
+  errorBoxText: { fontSize: FontSize.sm, color: Colors.error },
+  centerBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Space[6] },
   headerTitle: {
     fontSize: FontSize.md,
     fontWeight: FontWeight.bold,

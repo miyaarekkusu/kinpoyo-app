@@ -55,6 +55,7 @@ const MAPPING = {
   'eye.slash': 'visibility-off',
   'envelope': 'email',
   'checkmark': 'check',
+  'rectangle.portrait.and.arrow.right': 'logout',
 } as const;
 
 /**

@@ -19,7 +19,7 @@ const AUTO_NAVIGATE_DELAY = 1600;
 
 export default function SuccessScreen() {
   const { from } = useLocalSearchParams<{ from: string }>();
-  const { signIn } = useAuth();
+  const { completeOnboarding } = useAuth();
 
   const scale = useSharedValue(0);
   const opacity = useSharedValue(0);
@@ -35,13 +35,13 @@ export default function SuccessScreen() {
 
     const timer = setTimeout(() => {
       if (from === 'onboarding') {
-        signIn();
+        completeOnboarding();
       } else {
         router.replace('/login');
       }
     }, AUTO_NAVIGATE_DELAY);
     return () => clearTimeout(timer);
-  }, [checkOpacity, from, opacity, scale, signIn]);
+  }, [checkOpacity, completeOnboarding, from, opacity, scale]);
 
   const circleStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,

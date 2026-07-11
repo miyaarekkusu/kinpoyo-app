@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -10,10 +11,12 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { useAuth } from '@/hooks/use-auth';
+import { ApiError } from '@/services/api';
 import {
   Colors,
   FontSize,
@@ -25,10 +28,26 @@ import {
 } from '@/constants/theme';
 
 export default function SignupScreen() {
+  const { register } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleRegister = async () => {
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      await register(name, email, password);
+      router.push('/gender');
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <>
@@ -90,11 +109,26 @@ export default function SignupScreen() {
                 </View>
               </View>
 
+              {error && (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              )}
+
               <TouchableOpacity
-                style={[styles.primaryBtn, { marginTop: Space[2] }]}
+                style={[
+                  styles.primaryBtn,
+                  { marginTop: Space[2] },
+                  isSubmitting && styles.primaryBtnDisabled,
+                ]}
                 activeOpacity={0.85}
-                onPress={() => router.push('/gender')}>
-                <Text style={styles.primaryBtnText}>新規作成</Text>
+                disabled={isSubmitting}
+                onPress={handleRegister}>
+                {isSubmitting ? (
+                  <ActivityIndicator color={Colors.textOnPrimary} />
+                ) : (
+                  <Text style={styles.primaryBtnText}>新規作成</Text>
+                )}
               </TouchableOpacity>
 
               <View style={styles.dividerRow}>
@@ -176,6 +210,17 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
   },
 
+  errorBox: {
+    borderRadius: Radius.md,
+    backgroundColor: Colors.errorSubtle,
+    paddingVertical: Space[3],
+    paddingHorizontal: Space[4],
+  },
+  errorText: {
+    fontSize: FontSize.sm,
+    color: Colors.error,
+  },
+
   primaryBtn: {
     height: Layout.buttonHeightLg,
     borderRadius: Radius.full,
@@ -183,6 +228,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...Shadow.sm,
+  },
+  primaryBtnDisabled: {
+    opacity: 0.6,
   },
   primaryBtnText: {
     fontSize: FontSize.md,

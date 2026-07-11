@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -10,11 +11,12 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/hooks/use-auth';
+import { ApiError } from '@/services/api';
 import {
   Colors,
   FontSize,
@@ -26,10 +28,24 @@ import {
 } from '@/constants/theme';
 
 export default function LoginScreen() {
-  const { signIn } = useAuth();
+  const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLogin = async () => {
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      await login(email, password);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <>
@@ -86,11 +102,22 @@ export default function LoginScreen() {
                 <Text style={styles.forgotLinkText}>パスワードを忘れた</Text>
               </TouchableOpacity>
 
+              {error && (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              )}
+
               <TouchableOpacity
-                style={styles.primaryBtn}
+                style={[styles.primaryBtn, isSubmitting && styles.primaryBtnDisabled]}
                 activeOpacity={0.85}
-                onPress={signIn}>
-                <Text style={styles.primaryBtnText}>ログイン</Text>
+                disabled={isSubmitting}
+                onPress={handleLogin}>
+                {isSubmitting ? (
+                  <ActivityIndicator color={Colors.textOnPrimary} />
+                ) : (
+                  <Text style={styles.primaryBtnText}>ログイン</Text>
+                )}
               </TouchableOpacity>
 
               <View style={styles.dividerRow}>
@@ -183,6 +210,17 @@ const styles = StyleSheet.create({
     color: Colors.textLink,
   },
 
+  errorBox: {
+    borderRadius: Radius.md,
+    backgroundColor: Colors.errorSubtle,
+    paddingVertical: Space[3],
+    paddingHorizontal: Space[4],
+  },
+  errorText: {
+    fontSize: FontSize.sm,
+    color: Colors.error,
+  },
+
   primaryBtn: {
     height: Layout.buttonHeightLg,
     borderRadius: Radius.full,
@@ -190,6 +228,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...Shadow.sm,
+  },
+  primaryBtnDisabled: {
+    opacity: 0.6,
   },
   primaryBtnText: {
     fontSize: FontSize.md,

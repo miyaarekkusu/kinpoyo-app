@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import auth, community, programs, records, users, workouts
+from app.routers import auth, community, exercises, programs, records, users, workouts
 
 app = FastAPI(title="kinpoyo API", version="0.1.0")
 
@@ -15,6 +15,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(exercises.router)
 app.include_router(workouts.router)
 app.include_router(records.router)
 app.include_router(programs.router)

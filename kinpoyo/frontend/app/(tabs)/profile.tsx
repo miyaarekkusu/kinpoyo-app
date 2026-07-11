@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import {
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,6 +19,7 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { useAuth } from '@/hooks/use-auth';
 
 const STATS = [
   { icon: 'timer' as const,       value: '0',  unit: '時間', label: 'トレーニング時間', color: Colors.info },
@@ -38,6 +41,14 @@ const BODY_ITEMS = [
 ];
 
 export default function ProfileScreen() {
+  const { signOut } = useAuth();
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  const handleLogout = async () => {
+    setShowLogoutConfirm(false);
+    await signOut();
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* ── Header ─────────────────────────────── */}
@@ -112,8 +123,37 @@ export default function ProfileScreen() {
           </View>
         </TouchableOpacity>
 
+        {/* ── ログアウト ───────────────────────── */}
+        <TouchableOpacity
+          style={styles.logoutBtn}
+          activeOpacity={0.75}
+          onPress={() => setShowLogoutConfirm(true)}>
+          <IconSymbol name="rectangle.portrait.and.arrow.right" size={18} color={Colors.error} />
+          <Text style={styles.logoutBtnText}>ログアウト</Text>
+        </TouchableOpacity>
+
         <View style={{ height: Space[10] }} />
       </ScrollView>
+
+      <Modal
+        visible={showLogoutConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLogoutConfirm(false)}>
+        <View style={styles.dialogOverlay}>
+          <View style={styles.dialogBox}>
+            <Text style={styles.dialogTitle}>ログアウトしますか？</Text>
+            <View style={styles.dialogActions}>
+              <TouchableOpacity style={styles.dialogCancelBtn} onPress={() => setShowLogoutConfirm(false)}>
+                <Text style={styles.dialogCancelBtnText}>キャンセル</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.dialogLogoutBtn} onPress={handleLogout}>
+                <Text style={styles.dialogLogoutBtnText}>ログアウト</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -334,5 +374,71 @@ const styles = StyleSheet.create({
   bodyLabel: {
     fontSize: FontSize.xs,
     color: Colors.textHint,
+  },
+
+  // ── ログアウト
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Space[2],
+    height: Layout.buttonHeightMd,
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    borderColor: Colors.error,
+    backgroundColor: Colors.bgCard,
+  },
+  logoutBtnText: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.semibold,
+    color: Colors.error,
+  },
+
+  // ── ログアウト確認ダイアログ
+  dialogOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.bgOverlay,
+    paddingHorizontal: Space[5],
+  },
+  dialogBox: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.xl,
+    width: '100%',
+    padding: Space[5],
+    gap: Space[2],
+  },
+  dialogTitle: {
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+    marginBottom: Space[2],
+  },
+  dialogActions: { flexDirection: 'row', gap: Space[3] },
+  dialogCancelBtn: {
+    flex: 1,
+    paddingVertical: Space[3],
+    borderRadius: Radius.md,
+    backgroundColor: Colors.bgScreen,
+    alignItems: 'center',
+  },
+  dialogCancelBtnText: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textPrimary,
+  },
+  dialogLogoutBtn: {
+    flex: 1,
+    paddingVertical: Space[3],
+    borderRadius: Radius.md,
+    backgroundColor: Colors.error,
+    alignItems: 'center',
+  },
+  dialogLogoutBtnText: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textOnPrimary,
   },
 });
