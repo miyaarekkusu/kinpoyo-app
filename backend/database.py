@@ -46,7 +46,8 @@ def init_schema():
         processing_status        NVARCHAR(20)  NOT NULL DEFAULT 'done',
         processed_frames         INT           NOT NULL DEFAULT 0,
         total_frames_expected    INT           NULL,
-        processing_error         NVARCHAR(500) NULL
+        processing_error         NVARCHAR(500) NULL,
+        true_reps                INT           NULL
     );
 
     IF COL_LENGTH('RecordingSession', 'deleted') IS NULL
@@ -66,6 +67,9 @@ def init_schema():
 
     IF COL_LENGTH('RecordingSession', 'processing_error') IS NULL
     ALTER TABLE RecordingSession ADD processing_error NVARCHAR(500) NULL;
+
+    IF COL_LENGTH('RecordingSession', 'true_reps') IS NULL
+    ALTER TABLE RecordingSession ADD true_reps INT NULL;
 
     IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='FrameSample' AND xtype='U')
     CREATE TABLE FrameSample (
@@ -117,6 +121,26 @@ def init_schema():
         CONSTRAINT FK_AIS_Analysis FOREIGN KEY (analysis_id)
             REFERENCES AnalysisResult(id) ON DELETE CASCADE
     );
+
+    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='RepModel' AND xtype='U')
+    CREATE TABLE RepModel (
+        id                INT IDENTITY(1,1) PRIMARY KEY,
+        tag_id            INT           NOT NULL,
+        name              NVARCHAR(100) NOT NULL,
+        config_json       NVARCHAR(MAX) NOT NULL,
+        mae               FLOAT         NULL,
+        exact_match_rate  FLOAT         NULL,
+        session_count     INT           NOT NULL DEFAULT 0,
+        created_at        DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT FK_RepModel_Tag FOREIGN KEY (tag_id)
+            REFERENCES Tag(id) ON DELETE CASCADE
+    );
+
+    IF NOT EXISTS (
+        SELECT 1 FROM sys.indexes
+        WHERE name = 'UX_RepModel_tag' AND object_id = OBJECT_ID('RepModel')
+    )
+    CREATE UNIQUE INDEX UX_RepModel_tag ON RepModel(tag_id);
     """
     with get_connection() as conn:
         cursor = conn.cursor()

@@ -494,7 +494,7 @@ def list_sessions(
 
     sql = f"""
         SELECT s.id, s.exercise_name, s.recorded_at, s.fps, s.total_frames,
-               s.start_frame, s.end_frame,
+               s.start_frame, s.end_frame, s.true_reps,
                CASE WHEN EXISTS (
                    SELECT 1 FROM AnalysisInputSession ais WHERE ais.session_id = s.id
                ) THEN 1 ELSE 0 END AS used
@@ -516,10 +516,33 @@ def list_sessions(
                 "total_frames": r[4],
                 "start_frame": r[5],
                 "end_frame": r[6],
-                "used": bool(r[7]),
+                "true_reps": int(r[7]) if r[7] is not None else None,
+                "used": bool(r[8]),
             }
             for r in rows
         ]
+
+
+class SessionUpdateRequest(BaseModel):
+    """正解回数(true_reps)の登録・更新用。null を渡すと未設定に戻す。"""
+
+    true_reps: int | None = None
+
+
+@app.patch("/sessions/{session_id}")
+def update_session(session_id: int, body: SessionUpdateRequest):
+    """Set the ground-truth rep count used to calibrate the rep counter."""
+    if body.true_reps is not None and body.true_reps < 0:
+        raise HTTPException(status_code=400, detail="true_reps must be >= 0")
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        _ensure_session_alive(cursor, session_id)
+        cursor.execute(
+            "UPDATE RecordingSession SET true_reps = ? WHERE id = ?",
+            (body.true_reps, session_id),
+        )
+        conn.commit()
+    return {"id": session_id, "true_reps": body.true_reps}
 
 
 def _ensure_session_alive(cursor, session_id: int) -> None:
@@ -834,8 +857,43 @@ def update_tag(tag_id: int, body: TagUpdateRequest):
 
 @app.delete("/tags/{tag_id}", status_code=204)
 def delete_tag(tag_id: int):
+    """タグ本体と、タグに紐づく学習データをまとめて削除する。
+
+    学習データ = このタグの分析(AnalysisResult/AnalysisInputSession)・model(RepModel)・
+    このタグでしか使っていないセッションの正解回数(true_reps)。セッション（撮影
+    データ）自体は他タグで再利用できるため残す。分析が消えることで、専用だった
+    セッションは「未使用」表示にも戻る。
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
+        # このタグ専用（他タグの分析で使われていない）セッションのラベルをクリア
+        cursor.execute(
+            """
+            UPDATE s SET s.true_reps = NULL
+            FROM RecordingSession s
+            WHERE EXISTS (
+                SELECT 1 FROM AnalysisInputSession ais
+                JOIN AnalysisResult ar ON ar.id = ais.analysis_id
+                WHERE ais.session_id = s.id AND ar.tag_id = ?
+            ) AND NOT EXISTS (
+                SELECT 1 FROM AnalysisInputSession ais2
+                JOIN AnalysisResult ar2 ON ar2.id = ais2.analysis_id
+                WHERE ais2.session_id = s.id AND ar2.tag_id <> ?
+            )
+            """,
+            (tag_id, tag_id),
+        )
+        # 分析・モデルは FK の ON DELETE CASCADE でも消えるが、意図を明示して削除
+        cursor.execute("DELETE FROM RepModel WHERE tag_id = ?", (tag_id,))
+        cursor.execute(
+            """
+            DELETE ais FROM AnalysisInputSession ais
+            JOIN AnalysisResult ar ON ar.id = ais.analysis_id
+            WHERE ar.tag_id = ?
+            """,
+            (tag_id,),
+        )
+        cursor.execute("DELETE FROM AnalysisResult WHERE tag_id = ?", (tag_id,))
         cursor.execute("DELETE FROM Tag WHERE id = ?", (tag_id,))
         conn.commit()
     return None
@@ -1018,3 +1076,304 @@ def get_analysis(analysis_id: int):
             "created_at": row[3].isoformat() if row[3] else None,
             "tag_name": row[4],
         }
+
+
+# --- Rep-count models (state-machine calibration per label) ---------------
+
+
+@app.post("/tags/{tag_id}/build-model")
+def build_model(tag_id: int):
+    """Calibrate ("learn") a rep-count model from the tag's labeled sessions.
+
+    Uses every session linked to the tag that has a registered true_reps value,
+    grid-searches the state-machine thresholds to best reproduce those counts,
+    and upserts the result as the tag's single model (1 label = 1 model)."""
+    from pose_analysis import analyze_sessions
+    from rep_model import (
+        build_cycle_stats,
+        build_template_for_sessions,
+        calibrate,
+        model_to_dict,
+        pick_main_joint,
+    )
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT name, monitored_joints FROM Tag WHERE id = ?", (tag_id,)
+        )
+        tag_row = cursor.fetchone()
+        if tag_row is None:
+            raise HTTPException(status_code=404, detail="tag not found")
+        tag_name = str(tag_row[0])
+        monitored = _parse_monitored_joints(tag_row[1])
+
+        # All sessions linked to this tag that carry a ground-truth rep count.
+        cursor.execute(
+            """
+            SELECT DISTINCT s.id, s.true_reps
+            FROM RecordingSession s
+            JOIN AnalysisInputSession ais ON ais.session_id = s.id
+            JOIN AnalysisResult ar ON ar.id = ais.analysis_id
+            WHERE ar.tag_id = ? AND s.deleted = 0 AND s.true_reps IS NOT NULL
+            """,
+            (tag_id,),
+        )
+        labeled = [(int(r[0]), int(r[1])) for r in cursor.fetchall()]
+        if not labeled:
+            raise HTTPException(
+                status_code=400,
+                detail="正解回数が登録されたセッションがありません。先に正解回数を保存してください。",
+            )
+
+        session_ids = [sid for sid, _ in labeled]
+        analysis = analyze_sessions(
+            _fetch_frames(cursor, session_ids),
+            monitored_joints=monitored or None,
+        )
+
+        # session_id -> {joint -> points}
+        per_session: dict[int, dict[str, list]] = {sid: {} for sid in session_ids}
+        for joint, jdata in analysis["joints"].items():
+            for s in jdata["series"]:
+                per_session.setdefault(s["session_id"], {})[joint] = s["points"]
+
+        labeled_sessions = [
+            (per_session.get(sid, {}), true_reps) for sid, true_reps in labeled
+        ]
+        # ① 閾値を較正（サイクル境界を安定して出すためのブートストラップ）。
+        #    同精度なら最も厳しい設定を選ぶ（対象外動作の棄却力を最大化）。
+        cfg, metrics = calibrate(labeled_sessions, monitored)
+        # ② 主役関節を固定し、全サイクルから1レップ・テンプレートを学習。
+        main_joint = pick_main_joint(labeled_sessions, monitored, cfg)
+        template, shape_threshold, cycle_count = build_template_for_sessions(
+            labeled_sessions, main_joint, cfg
+        )
+        # ③ 正解サイクルの実測統計（絶対角度帯・ROM帯）をゲートとして学習（周期は速さ依存のため不使用）。
+        cycle_stats = build_cycle_stats(labeled_sessions, main_joint, cfg)
+        config_json = json.dumps(
+            model_to_dict(
+                cfg,
+                monitored,
+                main_joint,
+                template,
+                shape_threshold,
+                cycle_count,
+                cycle_stats,
+            ),
+            ensure_ascii=False,
+        )
+
+        # Upsert: one model per tag.
+        cursor.execute("DELETE FROM RepModel WHERE tag_id = ?", (tag_id,))
+        cursor.execute(
+            """
+            INSERT INTO RepModel
+                (tag_id, name, config_json, mae, exact_match_rate, session_count)
+            OUTPUT INSERTED.id
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tag_id,
+                tag_name,
+                config_json,
+                metrics["mae"],
+                metrics["exact_match_rate"],
+                metrics["session_count"],
+            ),
+        )
+        model_id = int(cursor.fetchone()[0])
+        conn.commit()
+
+    return {
+        "id": model_id,
+        "tag_id": tag_id,
+        "name": tag_name,
+        "config": json.loads(config_json),
+        "main_joint": main_joint,
+        "cycle_count": cycle_count,
+        "mae": metrics["mae"],
+        "exact_match_rate": metrics["exact_match_rate"],
+        "session_count": metrics["session_count"],
+    }
+
+
+@app.get("/models")
+def list_models():
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, tag_id, name, mae, exact_match_rate, session_count, created_at
+            FROM RepModel
+            ORDER BY name
+            """
+        )
+        return [
+            {
+                "id": r[0],
+                "tag_id": r[1],
+                "name": r[2],
+                "mae": r[3],
+                "exact_match_rate": r[4],
+                "session_count": r[5],
+                "created_at": r[6].isoformat() if r[6] else None,
+            }
+            for r in cursor.fetchall()
+        ]
+
+
+@app.get("/models/{model_id}")
+def get_model(model_id: int):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, tag_id, name, config_json, mae, exact_match_rate,
+                   session_count, created_at
+            FROM RepModel WHERE id = ?
+            """,
+            (model_id,),
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="model not found")
+    return {
+        "id": row[0],
+        "tag_id": row[1],
+        "name": row[2],
+        "config": json.loads(row[3]),
+        "mae": row[4],
+        "exact_match_rate": row[5],
+        "session_count": row[6],
+        "created_at": row[7].isoformat() if row[7] else None,
+    }
+
+
+@app.delete("/models/{model_id}", status_code=204)
+def delete_model(model_id: int):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM RepModel WHERE id = ?", (model_id,))
+        conn.commit()
+    return None
+
+
+@app.post("/models/{model_id}/count")
+async def count_with_model(
+    model_id: int,
+    video: UploadFile = File(...),
+    start_time_sec: float = Form(0.0),
+    end_time_sec: float = Form(...),
+):
+    """Run the selected model against a freshly uploaded clip and count reps.
+
+    Stateless: the video is processed in-memory (MediaPipe), the model's main
+    joint angle series is built, and the state machine counts. Nothing is saved."""
+    from rep_model import (
+        count_with_template,
+        joint_series_from_frames,
+        model_from_dict,
+    )
+    from pose_analysis import JOINT_DEFINITIONS_JA
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT config_json, name FROM RepModel WHERE id = ?", (model_id,)
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="model not found")
+    cfg, candidates, main_joint, template, shape_threshold, cycle_stats = (
+        model_from_dict(json.loads(row[0]))
+    )
+    model_name = str(row[1])
+
+    if end_time_sec < start_time_sec:
+        raise HTTPException(status_code=400, detail="end < start")
+
+    suffix = Path(video.filename or "").suffix or ".mp4"
+    tmp_path = UPLOAD_DIR / f"count_{uuid.uuid4().hex}{suffix}"
+    try:
+        with tmp_path.open("wb") as f:
+            f.write(await video.read())
+
+        cap = cv2.VideoCapture(str(tmp_path))
+        if not cap.isOpened():
+            raise HTTPException(status_code=400, detail="cannot open video")
+        try:
+            cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+        except Exception:
+            pass
+
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        if fps <= 0:
+            cap.release()
+            raise HTTPException(status_code=400, detail="invalid fps")
+
+        start_frame = int(round(start_time_sec * fps))
+        end_frame = int(round(end_time_sec * fps))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+        collected: list[tuple[int, list]] = []
+        with mp_pose.Pose(static_image_mode=False, model_complexity=1) as pose:
+            frame_no = start_frame
+            while frame_no <= end_frame:
+                ok, frame_bgr = cap.read()
+                if not ok:
+                    break
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                result = pose.process(frame_rgb)
+                if result.pose_landmarks:
+                    landmarks = [
+                        {"x": lm.x, "y": lm.y, "z": lm.z, "visibility": lm.visibility}
+                        for lm in result.pose_landmarks.landmark
+                    ]
+                    collected.append((frame_no, landmarks))
+                frame_no += 1
+        cap.release()
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    joints = candidates if candidates else list(JOINT_DEFINITIONS_JA)
+    if main_joint and main_joint not in joints:
+        joints = joints + [main_joint]
+    joint_series = joint_series_from_frames(collected, joints)
+    res = count_with_template(
+        joint_series, candidates, cfg, main_joint, template, shape_threshold,
+        cycle_stats,
+    )
+
+    # 主役関節の生波形（フレーム軸そのまま）。チェック画面で「動画の連続性」を
+    # 描くのに使う。カウントに実際に使った関節（res["joint"]）の系列を返す。
+    used_pts = joint_series.get(res["joint"]) if res["joint"] else None
+    series = (
+        [
+            {"frame": int(p["frame"]), "angle": float(p["angle"])}
+            for p in sorted(used_pts, key=lambda p: p["frame"])
+        ]
+        if used_pts
+        else []
+    )
+
+    return {
+        "model_id": model_id,
+        "model_name": model_name,
+        "count": res["count"],
+        "joint": res["joint"],
+        "rom": round(res["rom"], 1),
+        "rep_frames": res["rep_frames"],
+        "segments": res.get("segments", 0),
+        "rejected": res.get("rejected", 0),
+        "fps": fps,
+        "pose_frames": len(collected),
+        # --- 検証の内訳（動画の連続性 vs モデルの連続性の比較用）---
+        "series": series,
+        "cycles": res.get("cycles", []),
+        "template": template,
+        "shape_threshold": shape_threshold,
+    }

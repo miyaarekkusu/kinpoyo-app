@@ -18,6 +18,7 @@ export default function RootLayout() {
         <Stack.Screen name="tag-new" options={{ title: '新規タグ', presentation: 'modal' }} />
         <Stack.Screen name="select" options={{ title: 'データ選択' }} />
         <Stack.Screen name="result" options={{ title: '分析結果' }} />
+        <Stack.Screen name="check" options={{ title: '回数カウント チェック' }} />
         <Stack.Screen name="delete" options={{ title: 'データ削除' }} />
       </Stack>
     </>

@@ -15,7 +15,7 @@ $start = Get-Date
 # Always run from this script's directory so relative file names work.
 Set-Location -LiteralPath $PSScriptRoot
 
-$files = @('main.py', 'database.py', 'pose.py', 'pose_analysis.py', 'requirements.txt')
+$files = @('main.py', 'database.py', 'pose.py', 'pose_analysis.py', 'rep_model.py', 'requirements.txt')
 foreach ($f in $files) {
     if (-not (Test-Path -LiteralPath $f)) {
         throw "Missing file: $f"

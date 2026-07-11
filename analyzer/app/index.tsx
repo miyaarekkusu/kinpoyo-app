@@ -1,4 +1,4 @@
-﻿import { router, useFocusEffect } from 'expo-router';
+﻿import { router, useFocusEffect, type Href } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
@@ -106,6 +106,14 @@ export default function TagListScreen() {
                 <Text style={sharedStyles.buttonSecondaryText}>データ削除</Text>
               </Pressable>
             </View>
+            <Pressable
+              style={[sharedStyles.buttonSecondary, { marginTop: 4 }]}
+              onPress={() => router.push('/check' as Href)}
+            >
+              <Text style={sharedStyles.buttonSecondaryText}>
+                🎯 model で回数カウントをチェック
+              </Text>
+            </Pressable>
           </View>
         }
         ListEmptyComponent={
