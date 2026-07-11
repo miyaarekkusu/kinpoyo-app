@@ -1,4 +1,6 @@
-﻿import { API_URL } from '../constants/api';
+﻿import { Platform } from 'react-native';
+
+import { API_URL } from '../constants/api';
 
 export type SessionRow = {
   id: number;
@@ -330,11 +332,21 @@ export async function countWithModel(
   endTimeSec: number,
 ): Promise<CountResult> {
   const form = new FormData();
-  form.append('video', {
-    uri: videoUri,
-    name: `check_${modelId}.mp4`,
-    type: 'video/mp4',
-  } as unknown as Blob);
+  const filename = `check_${modelId}.mp4`;
+  if (Platform.OS === 'web') {
+    // Web(PC): fetch を通して実体の Blob を取得して添付する。RN形式の
+    // {uri,name,type} オブジェクトはブラウザでは [object Object] に文字列化
+    // されてしまい、動画が送信されない。
+    const blob = await (await fetch(videoUri)).blob();
+    form.append('video', blob, filename);
+  } else {
+    // ネイティブ(iOS/Android): fetch が uri を読んでファイルをストリーム送信する。
+    form.append('video', {
+      uri: videoUri,
+      name: filename,
+      type: 'video/mp4',
+    } as unknown as Blob);
+  }
   form.append('start_time_sec', String(startTimeSec));
   form.append('end_time_sec', String(endTimeSec));
 

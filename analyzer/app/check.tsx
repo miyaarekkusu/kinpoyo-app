@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,7 +22,7 @@ import {
 } from '../lib/api';
 import { colors, sharedStyles } from '../lib/theme';
 
-type PickedVideo = { uri: string; name: string; durationSec: number };
+type PickedVideo = { uri: string; name: string; durationSec: number | null };
 
 export default function CheckScreen() {
   const { width } = useWindowDimensions();
@@ -56,10 +57,13 @@ export default function CheckScreen() {
 
   const pickVideo = async () => {
     setError(null);
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      setError('動画ライブラリへのアクセスが許可されていません。');
-      return;
+    // Web(PC)は <input type=file> で開くため権限要求は不要（呼ぶと未対応で失敗しうる）。
+    if (Platform.OS !== 'web') {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        setError('動画ライブラリへのアクセスが許可されていません。');
+        return;
+      }
     }
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['videos'],
@@ -67,11 +71,18 @@ export default function CheckScreen() {
     });
     if (res.canceled || res.assets.length === 0) return;
     const a = res.assets[0];
+    // 表示用の秒数のみ。duration の単位はプラットフォーム差があり、native は ms、
+    // web は秒で返る。処理範囲には使わない（runCount はクリップ全体を対象にする）。
+    const durationSec =
+      a.duration != null
+        ? Platform.OS === 'web'
+          ? a.duration
+          : a.duration / 1000
+        : null;
     setVideo({
       uri: a.uri,
       name: a.fileName ?? 'video.mp4',
-      // duration は ms。取れない場合は十分大きい値でクリップ全体を対象に。
-      durationSec: a.duration != null ? a.duration / 1000 : 3600,
+      durationSec,
     });
     setResult(null);
   };
@@ -82,7 +93,10 @@ export default function CheckScreen() {
     setError(null);
     setResult(null);
     try {
-      const r = await countWithModel(selectedId, video.uri, 0, video.durationSec);
+      // クリップ全体を対象にする。duration は単位がプラットフォーム差で不安定なため
+      // 処理範囲には使わず十分大きい終端を渡す。バックエンドは実フレームが尽きたら
+      // 止まるので、どんな長さの動画でも全体が処理される。
+      const r = await countWithModel(selectedId, video.uri, 0, 24 * 3600);
       setResult(r);
     } catch (e: any) {
       setError(e.message ?? String(e));
@@ -151,7 +165,7 @@ export default function CheckScreen() {
           {video && (
             <Text style={[sharedStyles.subtitle, { marginTop: 8 }]}>
               選択中: {video.name}
-              {video.durationSec < 3600
+              {video.durationSec != null
                 ? ` (${video.durationSec.toFixed(1)}秒)`
                 : ''}
             </Text>
