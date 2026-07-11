@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import {
+  ActivityIndicator,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,6 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, Stack } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
@@ -19,6 +22,14 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { useAuth } from '@/hooks/use-auth';
+import {
+  ProgramOut,
+  UserProgramOut,
+  fetchMyCreatedPrograms,
+  fetchMyPrograms,
+  leaveProgram,
+} from '@/services/program';
 
 const PROGRAMS = [
   {
@@ -50,6 +61,61 @@ const PROGRAMS = [
 ] as const;
 
 export default function ProgramIchiranScreen() {
+  const { token } = useAuth();
+  const handleSelectProgram = (route: string) => {
+    router.push(route as any);
+  };
+
+  // ── 作成したカスタムプログラム一覧 ──────────────
+  const [myCreatedPrograms, setMyCreatedPrograms] = useState<ProgramOut[]>([]);
+
+  const loadMyCreatedPrograms = useCallback(async () => {
+    try {
+      const data = await fetchMyCreatedPrograms(token);
+      setMyCreatedPrograms(data);
+    } catch {
+      setMyCreatedPrograms([]);
+    }
+  }, [token]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadMyCreatedPrograms();
+    }, [loadMyCreatedPrograms])
+  );
+
+  // ── 参加中プログラムがある場合、先に中断を促すゲート ──
+  const [leaveGateTarget, setLeaveGateTarget] = useState<UserProgramOut | null>(null);
+  const [isLeaving, setIsLeaving] = useState(false);
+
+  const handleCreatePress = async () => {
+    try {
+      const mine = await fetchMyPrograms(token);
+      const active = mine.find(up => up.status_code === 'active');
+      if (active) {
+        setLeaveGateTarget(active);
+        return;
+      }
+    } catch {
+      // 取得に失敗した場合は通常通り作成フローへ進む
+    }
+    router.push('/program/custom_program');
+  };
+
+  const handleLeaveAndProceed = async () => {
+    if (!leaveGateTarget) return;
+    setIsLeaving(true);
+    try {
+      await leaveProgram(token, leaveGateTarget.id);
+      setLeaveGateTarget(null);
+      router.push('/program/custom_program');
+    } catch {
+      // 失敗時はゲートを閉じずに再試行できるようにする
+    } finally {
+      setIsLeaving(false);
+    }
+  };
+
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
@@ -75,7 +141,7 @@ export default function ProgramIchiranScreen() {
             <TouchableOpacity
               key={p.id}
               style={styles.card}
-              onPress={() => router.push(p.route as any)}
+              onPress={() => handleSelectProgram(p.route)}
               activeOpacity={0.8}>
 
               {/* 上段: アイコン + タイトル + タグ */}
@@ -108,17 +174,77 @@ export default function ProgramIchiranScreen() {
           ))}
 
           {/* ── カスタム作成 ─────────────────── */}
-          <TouchableOpacity 
-            style={styles.customBtn} 
+          <TouchableOpacity
+            style={styles.customBtn}
             activeOpacity={0.7}
-            onPress={() => router.push('/program/custom_program')}
+            onPress={handleCreatePress}
           >
             <IconSymbol name="plus" size={18} color={Colors.primaryDark} />
             <Text style={styles.customBtnText}>カスタムプログラムを作成</Text>
           </TouchableOpacity>
 
+          {/* ── あなたが作成したプログラム ─────── */}
+          {myCreatedPrograms.length > 0 && (
+            <View style={styles.myProgramsSection}>
+              <Text style={styles.myProgramsTitle}>あなたが作成したプログラム</Text>
+              {myCreatedPrograms.map(p => (
+                <TouchableOpacity
+                  key={p.id}
+                  style={styles.myProgramCard}
+                  activeOpacity={0.8}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/program/custom-detail',
+                      params: { programId: String(p.id) },
+                    })
+                  }>
+                  <View style={styles.myProgramCardLeft}>
+                    <Text style={styles.myProgramCardTitle}>{p.name}</Text>
+                    {p.description && (
+                      <Text style={styles.myProgramCardDesc} numberOfLines={2}>
+                        {p.description}
+                      </Text>
+                    )}
+                  </View>
+                  <IconSymbol name="chevron.right" size={18} color={Colors.textHint} />
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
         </ScrollView>
       </SafeAreaView>
+
+      {/* ── 参加中プログラムがある場合の中断ゲート ─────── */}
+      <Modal
+        visible={!!leaveGateTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLeaveGateTarget(null)}>
+        <View style={styles.dialogOverlay}>
+          <View style={styles.dialogBox}>
+            <Text style={styles.dialogTitle}>参加中のプログラムがあります</Text>
+            <Text style={styles.dialogMessage}>
+              現在『{leaveGateTarget?.program_name}』に参加中です。カスタムプログラムを作成するには、先にそのプログラムを中断してください。
+            </Text>
+            <View style={styles.dialogActions}>
+              <TouchableOpacity style={styles.dialogCancelBtn} onPress={() => setLeaveGateTarget(null)}>
+                <Text style={styles.dialogCancelBtnText}>キャンセル</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.dialogConfirmBtn}
+                onPress={handleLeaveAndProceed}
+                disabled={isLeaving}>
+                {isLeaving ? (
+                  <ActivityIndicator color={Colors.textOnPrimary} />
+                ) : (
+                  <Text style={styles.dialogConfirmBtnText}>中断して作成へ進む</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -237,5 +363,90 @@ const styles = StyleSheet.create({
     fontSize: FontSize.base,
     fontWeight: FontWeight.semibold,
     color: Colors.primaryDark,
+  },
+
+  // ── あなたが作成したプログラム
+  myProgramsSection: {
+    marginTop: Space[5],
+  },
+  myProgramsTitle: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+    marginBottom: Space[3],
+  },
+  myProgramCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.lg,
+    padding: Space[4],
+    marginBottom: Space[3],
+    ...Shadow.sm,
+  },
+  myProgramCardLeft: { flex: 1, paddingRight: Space[2] },
+  myProgramCardTitle: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textPrimary,
+    marginBottom: 2,
+  },
+  myProgramCardDesc: {
+    fontSize: FontSize.sm,
+    color: Colors.textHint,
+  },
+
+  // ── 中断ゲートダイアログ
+  dialogOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.bgOverlay,
+    paddingHorizontal: Space[5],
+  },
+  dialogBox: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.xl,
+    width: '100%',
+    padding: Space[5],
+    gap: Space[2],
+  },
+  dialogTitle: {
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+  },
+  dialogMessage: {
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: Space[2],
+  },
+  dialogActions: { flexDirection: 'row', gap: Space[3] },
+  dialogCancelBtn: {
+    flex: 1,
+    paddingVertical: Space[3],
+    borderRadius: Radius.md,
+    backgroundColor: Colors.bgScreen,
+    alignItems: 'center',
+  },
+  dialogCancelBtnText: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textPrimary,
+  },
+  dialogConfirmBtn: {
+    flex: 1,
+    paddingVertical: Space[3],
+    borderRadius: Radius.md,
+    backgroundColor: Colors.primaryDark,
+    alignItems: 'center',
+  },
+  dialogConfirmBtnText: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textOnPrimary,
   },
 });

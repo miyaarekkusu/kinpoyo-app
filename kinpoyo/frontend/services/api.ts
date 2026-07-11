@@ -13,6 +13,14 @@ function resolveApiBaseUrl(): string {
 
 export const API_BASE_URL = resolveApiBaseUrl();
 
+// トークン付きリクエストが401（期限切れ・無効）になった時にAuthProviderへ通知するためのフック。
+// api.ts はReactの外にあるモジュールなので、use-auth.tsx側でこの関数にsignOut相当の処理を登録する。
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  unauthorizedHandler = handler;
+}
+
 export class ApiError extends Error {
   status: number;
   detail: string;
@@ -64,6 +72,10 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
       if (typeof data.detail === 'string') detail = data.detail;
     } catch {
       // レスポンスがJSONでない場合はデフォルトメッセージのまま
+    }
+    // token付きで呼んだのに401＝トークン期限切れ/無効。ログイン自体の401（token無し）と区別する
+    if (response.status === 401 && token) {
+      unauthorizedHandler?.();
     }
     throw new ApiError(response.status, detail);
   }

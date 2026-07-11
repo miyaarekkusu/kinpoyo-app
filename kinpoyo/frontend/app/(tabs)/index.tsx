@@ -1,9 +1,6 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Dimensions,
-  FlatList,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
+  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { NotificationsModal } from '@/components/notifications-modal';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -24,132 +22,256 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { useAuth } from '@/hooks/use-auth';
+import { ApiError } from '@/services/api';
+import { ExerciseOut, fetchExercises } from '@/services/exercises';
+import {
+  ProgramExerciseOut,
+  UserProgramOut,
+  advanceProgram,
+  fetchMyPrograms,
+  fetchProgramExercises,
+} from '@/services/program';
+import {
+  SessionExerciseCreate,
+  SessionSetCreate,
+  WorkoutSessionOut,
+  createWorkout,
+  fetchWorkoutsForDates,
+  toIsoDate,
+} from '@/services/workout';
+import { formatDecimal } from '@/utils/format';
 
-const SCREEN_W = Dimensions.get('window').width;
 const H_PAD = Layout.screenPaddingH;
-const CARD_W = SCREEN_W - H_PAD * 2;
-
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'] as const;
-const NUM_WEEKS = 8;
 
-const STREAK_COUNT = 0;
-const WEEKLY_COUNT = 0;
+type Cell = { date: number; current: boolean };
 
-type DayInfo = {
-  date: number;
-  month: number;
-  year: number;
-  dateStr: string;
-  isToday: boolean;
+type WorkoutItem = {
+  id: number;
+  name: string;
+  muscle: string;
+  color: string;
+  sets: { weight: string; reps: string }[];
 };
 
-function buildWeeks(): DayInfo[][] {
-  const today = new Date();
-  const todayStr = today.toDateString();
-  const sunday = new Date(today);
-  sunday.setDate(today.getDate() - today.getDay());
-
-  return Array.from({ length: NUM_WEEKS }, (_, wi) =>
-    Array.from({ length: 7 }, (_, di) => {
-      const d = new Date(sunday);
-      d.setDate(sunday.getDate() + wi * 7 + di);
-      return {
-        date: d.getDate(),
-        month: d.getMonth(),
-        year: d.getFullYear(),
-        dateStr: d.toDateString(),
-        isToday: d.toDateString() === todayStr,
-      };
-    }),
-  );
+function buildGrid(year: number, month: number): Cell[] {
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrev = new Date(year, month, 0).getDate();
+  const cells: Cell[] = [];
+  for (let i = firstDow - 1; i >= 0; i--) cells.push({ date: daysInPrev - i, current: false });
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ date: d, current: true });
+  const trailing = 42 - cells.length;
+  for (let d = 1; d <= trailing; d++) cells.push({ date: d, current: false });
+  return cells;
 }
 
 export default function HomeScreen() {
+  const { token } = useAuth();
   const today = new Date();
-  const weeks = useMemo(() => buildWeeks(), []);
-  const [weekIndex, setWeekIndex] = useState(0);
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth());
   const [selectedDateStr, setSelectedDateStr] = useState(today.toDateString());
   const [showNotifModal, setShowNotifModal] = useState(false);
-  const flatListRef = useRef<FlatList<DayInfo[]>>(null);
 
-  // 📝 カスタムプログラムのモック状態（nullに切り替えると元の「トレーニングなし」の表示に戻せます）
-  const [registeredProgram, setRegisteredProgram] = useState<{
-    title: string;
-    exercises: { name: string; setsCount: number; maxWeight: string; targetRpe: string }[];
-  } | null>({
-    title: 'PPL (Push)',
-    exercises: [
-      { name: 'ベンチプレス', setsCount: 3, maxWeight: '60', targetRpe: '8' },
-      { name: 'インクラインベンチプレス', setsCount: 3, maxWeight: '50', targetRpe: '8' },
-      { name: 'ダンベルベンチプレス', setsCount: 3, maxWeight: '24', targetRpe: '8' },
-    ]
-  });
+  const grid = useMemo(() => buildGrid(year, month), [year, month]);
+  const rows = useMemo(() => {
+    const rs: Cell[][] = [];
+    for (let i = 0; i < grid.length; i += 7) rs.push(grid.slice(i, i + 7));
+    return rs;
+  }, [grid]);
 
-  const currentWeek = weeks[weekIndex];
-  const firstDay = currentWeek[0];
-  const monthLabel = `${firstDay.year}年${firstDay.month + 1}月`;
+  // ── 実データ（種目マスター＋当月ワークアウト）─────────
+  const [exercisesById, setExercisesById] = useState<Map<number, ExerciseOut>>(new Map());
+  const [monthWorkouts, setMonthWorkouts] = useState<Record<string, WorkoutSessionOut[]>>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const onScrollEnd = useCallback(
-    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const idx = Math.round(e.nativeEvent.contentOffset.x / CARD_W);
-      setWeekIndex(idx);
-    },
-    [],
+  const isoDatesForMonth = useMemo(
+    () => grid.filter(c => c.current).map(c => toIsoDate(new Date(year, month, c.date))),
+    [grid, year, month]
   );
 
-  const renderWeek = useCallback(
-    ({ item: week }: { item: DayInfo[] }) => (
-      <View style={styles.weekPage}>
-        {week.map((day, i) => {
-          const isSelected = day.dateStr === selectedDateStr;
-          return (
-            <TouchableOpacity
-              key={i}
-              style={styles.dayCol}
-              onPress={() => setSelectedDateStr(day.dateStr)}
-              activeOpacity={0.7}>
-              <View
-                style={[
-                  styles.dateCircle,
-                  day.isToday && styles.dateCircleToday,
-                  isSelected && !day.isToday && styles.dateCircleSelected,
-                ]}>
-                <Text
-                  style={[
-                    styles.dateText,
-                    i === 0 && styles.sunText,
-                    i === 6 && styles.satText,
-                    day.isToday && styles.dateTextToday,
-                    isSelected && !day.isToday && styles.dateTextSelected,
-                  ]}>
-                  {day.date}
-                </Text>
-              </View>
-              {/* placeholder dot — replace with real data check later */}
-              <View style={styles.dotPlaceholder} />
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    ),
-    [selectedDateStr],
+  const loadExercises = useCallback(async () => {
+    try {
+      const data = await fetchExercises();
+      setExercisesById(new Map(data.map(e => [e.id, e])));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : '種目情報の取得に失敗しました');
+    }
+  }, []);
+
+  const loadMonthWorkouts = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const map = await fetchWorkoutsForDates(token, isoDatesForMonth);
+      setMonthWorkouts(map);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : '筋トレ情報の取得に失敗しました');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, isoDatesForMonth]);
+
+  useEffect(() => {
+    loadExercises();
+  }, [loadExercises]);
+
+  useEffect(() => {
+    loadMonthWorkouts();
+  }, [loadMonthWorkouts]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadMonthWorkouts();
+    }, [loadMonthWorkouts])
   );
+
+  // ── 参加中プログラム＋次のメニュー提案 ────────────
+  const [myProgram, setMyProgram] = useState<UserProgramOut | null>(null);
+  const [suggestedExercises, setSuggestedExercises] = useState<ProgramExerciseOut[]>([]);
+  const [suggestionLoading, setSuggestionLoading] = useState(false);
+  const [isRegisteringSuggestion, setIsRegisteringSuggestion] = useState(false);
+  const [suggestionError, setSuggestionError] = useState<string | null>(null);
+
+  const loadMyProgram = useCallback(async () => {
+    try {
+      const list = await fetchMyPrograms(token);
+      setMyProgram(list.find(p => p.status_code === 'active') ?? null);
+    } catch {
+      setMyProgram(null);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadMyProgram();
+  }, [loadMyProgram]);
+
+  const hasWorkoutForCell = (cell: Cell): boolean => {
+    if (!cell.current) return false;
+    const iso = toIsoDate(new Date(year, month, cell.date));
+    const sessions = monthWorkouts[iso] ?? [];
+    return sessions.some(s => s.status_code !== 'cancelled' && s.exercises.length > 0);
+  };
+
+  const isToday = (d: number, m: number, y: number) =>
+    d === today.getDate() && m === today.getMonth() && y === today.getFullYear();
+
+  const goToToday = () => {
+    setYear(today.getFullYear());
+    setMonth(today.getMonth());
+    setSelectedDateStr(today.toDateString());
+  };
+
+  const prevMonth = () => {
+    if (month === 0) {
+      setMonth(11);
+      setYear(year - 1);
+    } else {
+      setMonth(month - 1);
+    }
+  };
+
+  const nextMonth = () => {
+    if (month === 11) {
+      setMonth(0);
+      setYear(year + 1);
+    } else {
+      setMonth(month + 1);
+    }
+  };
 
   const selDate = new Date(selectedDateStr);
   const selLabel = `${selDate.getMonth() + 1}月${selDate.getDate()}日（${WEEKDAYS[selDate.getDay()]}）`;
+  const selDateIso = toIsoDate(selDate);
 
-  // カードをタップした際に program_choice.tsx にシリアライズして移動するロジック
-  const handleEditProgram = () => {
-    if (!registeredProgram) return;
+  const selDaySessions = useMemo(
+    () => (monthWorkouts[selDateIso] ?? []).filter(s => s.status_code !== 'cancelled'),
+    [monthWorkouts, selDateIso]
+  );
 
-    const chosenNames = registeredProgram.exercises.map(ex => ex.name);
+  const selDayWorkouts: WorkoutItem[] = useMemo(
+    () =>
+      selDaySessions.flatMap(s =>
+        s.exercises.map(ex => {
+          const info = exercisesById.get(ex.exercise_id);
+          return {
+            id: ex.id,
+            name: ex.exercise_name,
+            muscle: info?.muscle ?? '',
+            color: info?.muscle_color ?? Colors.textHint,
+            sets: ex.sets.map(st => ({
+              weight: formatDecimal(st.weight_kg) ?? '-',
+              reps: st.reps != null ? String(st.reps) : '-',
+            })),
+          };
+        })
+      ),
+    [selDaySessions, exercisesById]
+  );
 
+  // 選択日に登録が無く、参加中プログラムがある時だけ「次のメニュー」を取得
+  useEffect(() => {
+    if (!myProgram || selDaySessions.length > 0) {
+      setSuggestedExercises([]);
+      return;
+    }
+    let cancelled = false;
+    setSuggestionLoading(true);
+    fetchProgramExercises(myProgram.program_id, myProgram.current_week, myProgram.current_day)
+      .then(data => {
+        if (!cancelled) setSuggestedExercises(data);
+      })
+      .catch(() => {
+        if (!cancelled) setSuggestedExercises([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSuggestionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [myProgram, selDaySessions.length]);
+
+  const handleRegisterSuggestion = async () => {
+    if (!myProgram || suggestedExercises.length === 0) return;
+    setSuggestionError(null);
+    setIsRegisteringSuggestion(true);
+    try {
+      const exercises: SessionExerciseCreate[] = suggestedExercises.map(pe => {
+        const setCount = Math.max(1, pe.sets);
+        const reps = pe.reps_min ?? pe.reps_max ?? undefined;
+        const sets: SessionSetCreate[] = Array.from({ length: setCount }, () => ({ reps }));
+        return { exercise_id: pe.exercise_id, order_index: pe.order_index, sets };
+      });
+      await createWorkout(token, { scheduled_date: selDateIso, exercises });
+      await advanceProgram(token, myProgram.id);
+      await Promise.all([loadMonthWorkouts(), loadMyProgram()]);
+    } catch (e) {
+      setSuggestionError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
+    } finally {
+      setIsRegisteringSuggestion(false);
+    }
+  };
+
+  const handleEditRegisteredMenu = () => {
+    if (selDaySessions.length === 0) return;
     router.push({
-      pathname: '/(screens)/program/program_choice' as any,
+      pathname: '/(screens)/program/program_choice',
       params: {
-        title: registeredProgram.title,
-        exercises: JSON.stringify(chosenNames)
-      }
+        mode: 'edit',
+        sessionId: String(selDaySessions[0].id),
+        title: selLabel,
+      },
+    });
+  };
+
+  const handleGoToRegister = () => {
+    router.push({
+      pathname: '/workout-register',
+      params: { year: String(year), month: String(month), date: String(selDate.getDate()) },
     });
   };
 
@@ -157,20 +279,11 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* ── Header ─────────────────────────────── */}
       <View style={styles.header}>
-        <View style={styles.streakBadge}>
-          <IconSymbol name="flame.fill" size={20} color="#F97316" />
-          <Text style={styles.streakCount}>{STREAK_COUNT}</Text>
-        </View>
+        <View style={styles.headerSide} />
 
         <Text style={styles.appName}>kinpoyo</Text>
 
-        <View style={styles.headerIcons}>
-          <TouchableOpacity
-            onPress={() => router.push('/calendar')}
-            hitSlop={8}
-            style={styles.iconBtn}>
-            <IconSymbol name="calendar" size={22} color={Colors.textSecondary} />
-          </TouchableOpacity>
+        <View style={[styles.headerSide, styles.headerIcons]}>
           <TouchableOpacity
             onPress={() => setShowNotifModal(true)}
             hitSlop={8}
@@ -180,111 +293,158 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* ── 通信状態バナー ─────────────────────── */}
+        {error && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{error}</Text>
+            <TouchableOpacity onPress={loadMonthWorkouts} hitSlop={8}>
+              <Text style={styles.retryText}>再試行</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {loading && !error && (
+          <View style={styles.loadingRow}>
+            <ActivityIndicator color={Colors.primaryDark} size="small" />
+          </View>
+        )}
 
-        {/* ── Weekly Calendar Card ─────────────── */}
+        {/* ── 月カレンダー ─────────────────────── */}
         <View style={styles.calendarCard}>
-          <View style={styles.calendarHeader}>
-            <Text style={styles.monthLabel}>{monthLabel}</Text>
-            <View style={styles.dayNameRow}>
-              {WEEKDAYS.map((d, i) => (
-                <Text
-                  key={i}
-                  style={[
-                    styles.dayName,
-                    i === 0 && styles.sunText,
-                    i === 6 && styles.satText,
-                  ]}>
-                  {d}
-                </Text>
-              ))}
-            </View>
+          <View style={styles.calendarHeaderRow}>
+            <TouchableOpacity onPress={prevMonth} hitSlop={8}>
+              <IconSymbol name="chevron.left" size={20} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.monthTitle}>{`${year}年${month + 1}月`}</Text>
+            <TouchableOpacity onPress={nextMonth} hitSlop={8}>
+              <IconSymbol name="chevron.right" size={20} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={goToToday} hitSlop={8} style={styles.todayBtn}>
+              <Text style={styles.todayBtnText}>{today.getDate()}</Text>
+            </TouchableOpacity>
           </View>
 
-          <FlatList
-            ref={flatListRef}
-            data={weeks}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            keyExtractor={(_, i) => String(i)}
-            renderItem={renderWeek}
-            onMomentumScrollEnd={onScrollEnd}
-            getItemLayout={(_, index) => ({
-              length: CARD_W,
-              offset: CARD_W * index,
-              index,
-            })}
-            style={{ width: CARD_W }}
-          />
-
-          <View style={styles.pageDots}>
-            {weeks.map((_, i) => (
-              <View key={i} style={[styles.dot, i === weekIndex && styles.dotActive]} />
+          <View style={styles.dayNameRow}>
+            {WEEKDAYS.map((d, i) => (
+              <Text key={i} style={[styles.dayName, i === 0 && styles.sunText, i === 6 && styles.satText]}>
+                {d}
+              </Text>
             ))}
           </View>
+
+          {rows.map((row, ri) => (
+            <View key={ri} style={styles.gridRow}>
+              {row.map((cell, ci) => {
+                const cellDate = new Date(year, month, cell.date);
+                const isSelected = cell.current && cellDate.toDateString() === selectedDateStr;
+                const cellToday = cell.current && isToday(cell.date, month, year);
+                return (
+                  <TouchableOpacity
+                    key={ci}
+                    style={styles.cell}
+                    disabled={!cell.current}
+                    onPress={() => setSelectedDateStr(cellDate.toDateString())}
+                    activeOpacity={0.7}>
+                    <View
+                      style={[
+                        styles.dateBubble,
+                        cellToday && styles.dateBubbleToday,
+                        isSelected && !cellToday && styles.dateBubbleSelected,
+                      ]}>
+                      <Text
+                        style={[
+                          styles.cellText,
+                          !cell.current && { color: Colors.textHint },
+                          ci === 0 && cell.current && styles.sunText,
+                          ci === 6 && cell.current && styles.satText,
+                          cellToday && styles.dateTextToday,
+                          isSelected && !cellToday && styles.dateTextSelected,
+                        ]}>
+                        {cell.date}
+                      </Text>
+                    </View>
+                    <View style={styles.dotsRow}>
+                      {hasWorkoutForCell(cell) && <View style={styles.dot} />}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ))}
         </View>
 
-        {/* ── Selected Day / Program State ───────── */}
-        {registeredProgram ? (
-          /* 💡 プログラムが登録されている場合は、トレーニングリストをカード形式で表示 */
-          <TouchableOpacity 
-            style={styles.programCard} 
-            onPress={handleEditProgram}
-            activeOpacity={0.8}
-          >
-            <View style={styles.cardHeader}>
-              <View style={styles.tagBadge}>
-                <Text style={styles.tagBadgeText}>{registeredProgram.title}</Text>
-              </View>
-              <View style={styles.editLink}>
-                <Text style={styles.editLinkText}>詳細設定へ</Text>
-                <IconSymbol name="chevron.right" size={14} color={Colors.primaryDark} />
-              </View>
-            </View>
-
-            <Text style={styles.programCardTitle}>本日のトレーニングメニュー</Text>
-
-            {registeredProgram.exercises.map((ex, idx) => (
-              <View key={idx} style={styles.exerciseRow}>
-                <Text style={styles.exerciseName} numberOfLines={1}>• {ex.name}</Text>
+        {/* ── 選択日のトレーニングメニュー ─────── */}
+        {selDayWorkouts.length > 0 ? (
+          /* 登録済み：実データを本日のトレーニングメニューカードで表示（タップで編集画面へ） */
+          <TouchableOpacity
+            style={styles.programCard}
+            onPress={handleEditRegisteredMenu}
+            activeOpacity={0.8}>
+            <Text style={styles.programCardTitle}>{selLabel}のトレーニングメニュー</Text>
+            {selDayWorkouts.map(w => (
+              <View key={w.id} style={styles.exerciseRow}>
+                <Text style={styles.exerciseName} numberOfLines={1}>
+                  • {w.name}
+                </Text>
                 <Text style={styles.exerciseDetails}>
-                  {ex.setsCount}set / {ex.maxWeight}kg / RPE {ex.targetRpe}
+                  {w.sets.length}set / {w.sets.map(s => `${s.weight}kg×${s.reps}`).join(', ')}
                 </Text>
               </View>
             ))}
           </TouchableOpacity>
         ) : (
-          /* 🍏 登録がない場合は従来の「トレーニングなし」空状態を表示 */
-          <View style={styles.emptyCard}>
+          /* 未登録：タップで筋トレメニュー登録画面へ */
+          <TouchableOpacity style={styles.emptyCard} onPress={handleGoToRegister} activeOpacity={0.8}>
             <Text style={styles.selDateLabel}>{selLabel}</Text>
             <Text style={styles.emptyIcon}>🏋️</Text>
             <Text style={styles.emptyTitle}>トレーニングなし</Text>
-            <Text style={styles.emptySubtitle}>ワークアウトを登録してみましょう</Text>
-          </View>
+            <Text style={styles.emptySubtitle}>タップして筋トレメニューを登録しましょう</Text>
+          </TouchableOpacity>
         )}
 
-        {/* ── Stats Row ────────────────────────── */}
-        <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <View style={styles.statIconWrap}>
-              <IconSymbol name="timer" size={20} color={Colors.primaryDark} />
-            </View>
-            <Text style={styles.statNumber}>0</Text>
-            <Text style={styles.statUnit}>時間</Text>
-            <Text style={styles.statLabel}>合計時間</Text>
+        {/* ── プログラムの筋トレメニュー登録（未登録日＋参加中プログラムがある時のみ） ─── */}
+        {selDayWorkouts.length === 0 && myProgram && (
+          <View style={styles.programCard}>
+            <Text style={styles.programCardTitle}>プログラムの筋トレメニュー登録</Text>
+
+            {suggestionLoading ? (
+              <ActivityIndicator color={Colors.primaryDark} />
+            ) : suggestedExercises.length === 0 ? (
+              <Text style={styles.suggestionEmpty}>このプログラムの提案データがありません</Text>
+            ) : (
+              <>
+                {suggestedExercises.map(ex => (
+                  <View key={ex.id} style={styles.exerciseRow}>
+                    <Text style={styles.exerciseName} numberOfLines={1}>
+                      • {ex.exercise_name}
+                    </Text>
+                    <Text style={styles.exerciseDetails}>
+                      {ex.sets}set{ex.reps_min && ex.reps_max ? ` / ${ex.reps_min}-${ex.reps_max}回` : ''}
+                    </Text>
+                  </View>
+                ))}
+
+                {suggestionError && (
+                  <View style={styles.errorBox}>
+                    <Text style={styles.errorText}>{suggestionError}</Text>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.suggestionBtn, isRegisteringSuggestion && styles.suggestionBtnDisabled]}
+                  activeOpacity={0.85}
+                  disabled={isRegisteringSuggestion}
+                  onPress={handleRegisterSuggestion}>
+                  {isRegisteringSuggestion ? (
+                    <ActivityIndicator color={Colors.textOnPrimary} />
+                  ) : (
+                    <Text style={styles.suggestionBtnText}>このメニューを登録する</Text>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
           </View>
-          <View style={styles.statCard}>
-            <View style={styles.statIconWrap}>
-              <IconSymbol name="flame.fill" size={20} color="#F97316" />
-            </View>
-            <Text style={styles.statNumber}>0</Text>
-            <Text style={styles.statUnit}>回</Text>
-            <Text style={styles.statLabel}>今週の筋トレ</Text>
-          </View>
-        </View>
+        )}
 
         {/* ── Program Card ─────────────────────── */}
         <TouchableOpacity style={styles.card} activeOpacity={0.75} onPress={() => router.push('/program')}>
@@ -295,7 +455,7 @@ export default function HomeScreen() {
               </View>
               <View>
                 <Text style={styles.cardTitle}>プログラム</Text>
-                <Text style={styles.cardSubtitle}>未参加</Text>
+                <Text style={styles.cardSubtitle}>{myProgram ? `参加中：${myProgram.program_name}` : '未参加'}</Text>
               </View>
             </View>
             <IconSymbol name="chevron.right" size={20} color={Colors.textHint} />
@@ -308,12 +468,10 @@ export default function HomeScreen() {
           <Text style={styles.knowledgeSectionTitle}>💡 トレーニング知識</Text>
 
           <View style={styles.knowledgeGrid}>
-            {/* 筋肥大とは */}
             <TouchableOpacity
               style={styles.knowledgeCard}
               activeOpacity={0.75}
-              onPress={() => router.push('/program/hypertrophy' as any)}
-            >
+              onPress={() => router.push('/program/hypertrophy' as any)}>
               <View style={styles.cardRow}>
                 <View style={styles.cardLeft}>
                   <View style={[styles.cardIconWrap, { backgroundColor: '#FEF3C7' }]}>
@@ -328,12 +486,10 @@ export default function HomeScreen() {
               </View>
             </TouchableOpacity>
 
-            {/* プログラム組み方 */}
             <TouchableOpacity
               style={styles.knowledgeCard}
               activeOpacity={0.75}
-              onPress={() => router.push('/program/program-design' as any)}
-            >
+              onPress={() => router.push('/program/program-design' as any)}>
               <View style={styles.cardRow}>
                 <View style={styles.cardLeft}>
                   <View style={[styles.cardIconWrap, { backgroundColor: '#E0F2FE' }]}>
@@ -348,12 +504,10 @@ export default function HomeScreen() {
               </View>
             </TouchableOpacity>
 
-            {/* RPEとは */}
             <TouchableOpacity
               style={styles.knowledgeCard}
               activeOpacity={0.75}
-              onPress={() => router.push('/program/rpe' as any)}
-            >
+              onPress={() => router.push('/program/rpe' as any)}>
               <View style={styles.cardRow}>
                 <View style={styles.cardLeft}>
                   <View style={[styles.cardIconWrap, { backgroundColor: '#DCFCE7' }]}>
@@ -386,37 +540,24 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: H_PAD,
     paddingVertical: Space[3],
     backgroundColor: Colors.bgScreen,
   },
-  streakBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFF7ED',
-    borderRadius: Radius.full,
-    paddingHorizontal: Space[3],
-    paddingVertical: Space[1],
-    gap: 4,
-    borderWidth: 1,
-    borderColor: '#FED7AA',
-  },
-  streakCount: {
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.bold,
-    color: '#F97316',
-    lineHeight: FontSize.xl * 1.2,
+  headerSide: {
+    flex: 1,
   },
   appName: {
     fontSize: FontSize.lg,
     fontWeight: FontWeight.bold,
     color: Colors.primaryDark,
     letterSpacing: 1,
+    textAlign: 'center',
   },
   headerIcons: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-end',
     gap: Space[1],
   },
   iconBtn: {
@@ -432,28 +573,64 @@ const styles = StyleSheet.create({
     paddingHorizontal: H_PAD,
     paddingTop: Space[2],
   },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: Radius.md,
+    backgroundColor: Colors.errorSubtle,
+    paddingVertical: Space[3],
+    paddingHorizontal: Space[4],
+    marginBottom: Space[3],
+  },
+  errorBannerText: { flex: 1, fontSize: FontSize.sm, color: Colors.error, marginRight: Space[2] },
+  retryText: { fontSize: FontSize.sm, fontWeight: FontWeight.bold, color: Colors.error },
+  loadingRow: { alignItems: 'center', paddingVertical: Space[2] },
+
+  // ── カレンダー
   calendarCard: {
     backgroundColor: Colors.bgCard,
     borderRadius: Radius.lg,
-    paddingTop: Space[4],
+    paddingTop: Space[3],
     paddingBottom: Space[3],
+    paddingHorizontal: Space[2],
     marginBottom: Space[4],
-    overflow: 'hidden',
     ...Shadow.sm,
   },
-  calendarHeader: {
-    paddingHorizontal: Space[4],
-    marginBottom: Space[2],
+  calendarHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Space[4],
+    position: 'relative',
   },
-  monthLabel: {
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textSecondary,
-    marginBottom: Space[2],
+  monthTitle: {
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+    color: Colors.primaryDark,
+    marginHorizontal: Space[4],
+  },
+  todayBtn: {
+    position: 'absolute',
+    right: Space[2],
+    width: 32,
+    height: 32,
+    borderRadius: Radius.sm,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.bgScreen,
+  },
+  todayBtnText: {
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.bold,
+    color: Colors.primaryDark,
   },
   dayNameRow: {
     flexDirection: 'row',
     justifyContent: 'space-around',
+    marginBottom: Space[2],
   },
   dayName: {
     width: 36,
@@ -464,33 +641,32 @@ const styles = StyleSheet.create({
   },
   sunText: { color: '#EF4444' },
   satText: { color: '#3B82F6' },
-  weekPage: {
-    width: CARD_W,
+  gridRow: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingVertical: Space[1],
-    paddingHorizontal: Space[4],
+    height: 52,
   },
-  dayCol: {
+  cell: {
     alignItems: 'center',
-    gap: 4,
-  },
-  dateCircle: {
+    justifyContent: 'center',
     width: 36,
-    height: 36,
-    borderRadius: 18,
+  },
+  dateBubble: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  dateCircleToday: {
+  dateBubbleToday: {
     backgroundColor: Colors.primary,
   },
-  dateCircleSelected: {
+  dateBubbleSelected: {
     backgroundColor: Colors.primarySubtle,
     borderWidth: 1.5,
     borderColor: Colors.primary,
   },
-  dateText: {
+  cellText: {
     fontSize: FontSize.sm,
     fontWeight: FontWeight.medium,
     color: Colors.textPrimary,
@@ -503,27 +679,34 @@ const styles = StyleSheet.create({
     color: Colors.primaryDark,
     fontWeight: FontWeight.bold,
   },
-  dotPlaceholder: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: 'transparent',
-  },
-  pageDots: {
+  dotsRow: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: Space[1],
-    marginTop: Space[3],
+    gap: 2,
+    height: 6,
+    marginTop: 2,
   },
   dot: {
     width: 5,
     height: 5,
-    borderRadius: 3,
-    backgroundColor: Colors.border,
-  },
-  dotActive: {
+    borderRadius: 2.5,
     backgroundColor: Colors.primary,
-    width: 14,
+  },
+
+  // ── 本日のトレーニングメニューカード（登録済み・提案共通）
+  programCard: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.lg,
+    padding: Space[4],
+    marginBottom: Space[4],
+    borderWidth: 1.5,
+    borderColor: Colors.primaryBorder,
+    ...Shadow.sm,
+  },
+  programCardTitle: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+    marginBottom: Space[3],
   },
   emptyCard: {
     backgroundColor: Colors.bgCard,
@@ -544,11 +727,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     overflow: 'hidden',
   },
-  emptyIcon: {
-    fontSize: 40,
-    marginBottom: Space[2],
-    marginTop: Space[2],
-  },
+  emptyIcon: { fontSize: 40, marginBottom: Space[2] },
   emptyTitle: {
     fontSize: FontSize.base,
     fontWeight: FontWeight.semibold,
@@ -559,46 +738,16 @@ const styles = StyleSheet.create({
     fontSize: FontSize.sm,
     color: Colors.textHint,
   },
-  statsRow: {
-    flexDirection: 'row',
-    gap: Space[3],
-    marginBottom: Space[4],
+
+  errorBox: {
+    borderRadius: Radius.md,
+    backgroundColor: Colors.errorSubtle,
+    paddingVertical: Space[3],
+    paddingHorizontal: Space[4],
+    marginBottom: Space[3],
   },
-  statCard: {
-    flex: 1,
-    backgroundColor: Colors.bgCard,
-    borderRadius: Radius.lg,
-    paddingVertical: Space[4],
-    paddingHorizontal: Space[3],
-    alignItems: 'center',
-    ...Shadow.sm,
-  },
-  statIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primarySubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Space[2],
-  },
-  statNumber: {
-    fontSize: FontSize['2xl'],
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
-    lineHeight: FontSize['2xl'] * 1.1,
-  },
-  statUnit: {
-    fontSize: FontSize.xs,
-    fontWeight: FontWeight.medium,
-    color: Colors.textSecondary,
-    marginBottom: Space[1],
-  },
-  statLabel: {
-    fontSize: FontSize.xs,
-    color: Colors.textHint,
-    textAlign: 'center',
-  },
+  errorText: { fontSize: FontSize.sm, color: Colors.error },
+
   card: {
     backgroundColor: Colors.bgCard,
     borderRadius: Radius.lg,
@@ -642,7 +791,7 @@ const styles = StyleSheet.create({
     color: Colors.textHint,
   },
   knowledgeSection: {
-    marginTop: Space[4],
+    marginTop: Space[1],
   },
   knowledgeSectionTitle: {
     fontSize: FontSize.base,
@@ -663,55 +812,15 @@ const styles = StyleSheet.create({
     ...Shadow.sm,
   },
 
-  // ── 💡 登録済みプログラムカードのスタイル
-  programCard: {
-    backgroundColor: Colors.bgCard,
-    borderRadius: Radius.lg,
-    padding: Space[4],
-    marginBottom: Space[4],
-    borderWidth: 1.5,
-    borderColor: Colors.primaryBorder,
-    ...Shadow.sm,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Space[2],
-  },
-  tagBadge: {
-    backgroundColor: Colors.primarySubtle,
-    // 👈 型エラーを完全に防ぐため、Space配列ではなく直値の整数 10 に変更
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: Radius.full,
-  },
-  tagBadgeText: {
-    fontSize: FontSize.xs,
-    fontWeight: FontWeight.bold,
-    color: Colors.primaryDark,
-  },
-  editLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  editLinkText: {
-    fontSize: FontSize.xs,
-    fontWeight: FontWeight.semibold,
-    color: Colors.primaryDark,
-  },
-  programCardTitle: {
-    fontSize: FontSize.base,
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
-    marginBottom: Space[3],
+  // ── プログラム提案の補足スタイル
+  suggestionEmpty: {
+    fontSize: FontSize.sm,
+    color: Colors.textHint,
   },
   exerciseRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    // 👈 型エラーを完全に防ぐため、小数(1.5)ではなく整数である Space[2] に変更
     paddingVertical: Space[2],
     borderBottomWidth: 1,
     borderBottomColor: Colors.divider,
@@ -728,4 +837,14 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.bold,
     color: Colors.textSecondary,
   },
+  suggestionBtn: {
+    height: Layout.buttonHeightMd,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.primaryDark,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: Space[3],
+  },
+  suggestionBtnDisabled: { opacity: 0.6 },
+  suggestionBtnText: { color: Colors.textOnPrimary, fontSize: FontSize.base, fontWeight: FontWeight.bold },
 });

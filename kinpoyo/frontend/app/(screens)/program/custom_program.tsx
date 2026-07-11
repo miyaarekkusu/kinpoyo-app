@@ -43,7 +43,7 @@ export default function CustomProgramScreen() {
     // 👈 エラー画像の型に合わせて正しいフルパスに変更
     router.push({
       pathname: '/(screens)/program/even_program',
-      params: { title: headerTitle }
+      params: { title: headerTitle, description: method.description }
     });
   };
 

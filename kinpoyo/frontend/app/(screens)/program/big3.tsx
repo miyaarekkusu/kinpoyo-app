@@ -9,6 +9,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, Stack } from 'expo-router';
 
+import { ProgramActionBar } from '@/components/program-action-bar';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
   Colors,
@@ -127,18 +128,8 @@ export default function ProgramShousa1Screen() {
           <View style={{ height: 100 }} />
         </ScrollView>
 
-        {/* ── 開始ボタン（固定下部） ───────── */}
-        <View style={styles.bottomBar}>
-          <SafeAreaView edges={['bottom']}>
-            <TouchableOpacity
-              style={styles.startBtn}
-              onPress={() => router.back()}
-              activeOpacity={0.85}>
-              <Text style={styles.startBtnText}>このプログラムを開始する</Text>
-              <IconSymbol name="chevron.right" size={18} color={Colors.textOnPrimary} />
-            </TouchableOpacity>
-          </SafeAreaView>
-        </View>
+        {/* ── 参加/中断ボタン（固定下部） ───────── */}
+        <ProgramActionBar programName="BIG3強化プログラム" />
 
       </SafeAreaView>
     </>
@@ -336,29 +327,4 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.bold,
   },
 
-  // ── Bottom bar
-  bottomBar: {
-    backgroundColor: Colors.bgCard,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    paddingHorizontal: Layout.screenPaddingH,
-    paddingTop: Space[3],
-  },
-  startBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Space[2],
-    height: Layout.buttonHeightLg,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.primaryDark,
-    marginBottom: Space[3],
-    ...Shadow.md,
-    shadowColor: Colors.primaryDark,
-  },
-  startBtnText: {
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.bold,
-    color: Colors.textOnPrimary,
-  },
 });

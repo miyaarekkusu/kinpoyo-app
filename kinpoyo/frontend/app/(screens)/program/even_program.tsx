@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -13,157 +13,101 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { ApiError } from '@/services/api';
+import { ExerciseOut, fetchExercises } from '@/services/exercises';
 
-// ── 各部位のパーツデータを定義 ───────────────────
-const CHEST_EXERCISES = [
-  'ベンチプレス',
-  'インクラインベンチプレス',
-  'ダンベルベンチプレス',
-  'ディップス',
-  'インクラインダンベルベンチプレス',
-  'チェストプレスマシン',
-  'スミスマシンインクラインベンチプレス',
-  'スミスマシンベンチプレス',
-  'ハンマーベンチプレス',
-  'ディップチンアシスト'
-];
+const UPPER_MUSCLES = ['胸', '肩', '背中', '腕'];
+const LOWER_MUSCLES = ['脚', 'お尻', 'ふくらはぎ'];
 
-const SHOULDER_EXERCISES = [
-  'オーバーヘッドプレス',
-  'ダンベルショルダープレス',
-  'ショルダープレスマシン',
-  'ダンベルサイドレイズ',
-  'リアデルトフライマシン',
-  'サイドレイズマシン'
-];
-
-const BACK_EXERCISES = [
-  'デッドリフト',
-  'チンアップ',
-  '加重チンアップ',
-  'ベントオーバーロウ',
-  'ダンベルインクラインロウ',
-  'ワンハンドダンベルロウ',
-  'シーテッドロウマシン',
-  'シーテッドケーブルロウ',
-  'ラットプルダウン',
-  'パラレルグリップラットプルダウン',
-  'スミスマシンベントオーバーロウ',
-  'ローローマシン',
-  'ワンハンドローローマシン',
-  'ナローラットプルダウン',
-  'フロントプルダウン'
-];
-
-const BICEPS_EXERCISES = [
-  'バーベルカール',
-  'EZ バーカール',
-  'ダンベルカール',
-  'ダンベルハンマーカール',
-  'ケーブルカール',
-  'ダンベルプリーチャーカール',
-  'EZ バープリーチャーカール',
-  'プリーチャーカールマシン',
-  'インクラインダンベルカール'
-];
-
-const TRICEPS_EXERCISES = [
-  'ナローベンチプレス',
-  'ダンベルフレンチプレス',
-  'シーテッドダンベルフレンチプレス',
-  'ケーブルプレスダウン',
-  'スミスマシン JM プレス',
-  'ナロースミスマシンベンチプレス'
-];
-
-const ARM_EXERCISES = [...BICEPS_EXERCISES, ...TRICEPS_EXERCISES];
-
-const LEG_EXERCISES = [
-  'ハックスクワット',
-  'バックスクワット',
-  'フロントスクワット',
-  'バーベルブルガリアンスプリットスクワット',
-  'ダンベルブルガリアンスプリットスクワット',
-  'レッグプレス',
-  'レッグカール',
-  'レッグエクステンション'
-];
-
-// ── 正確な種目マッピングデータ ───────────────────
-const EXERCISE_DATA: Record<string, string[]> = {
-  '胸': CHEST_EXERCISES,
-  '肩': SHOULDER_EXERCISES,
-  '背中': BACK_EXERCISES,
-  '腕': ARM_EXERCISES,
-  '脚': LEG_EXERCISES,
-  'Push': [...CHEST_EXERCISES, ...SHOULDER_EXERCISES, ...TRICEPS_EXERCISES],
-  'Pull': [...BACK_EXERCISES, ...BICEPS_EXERCISES],
-  'Leg': LEG_EXERCISES,
-  '上半身': [...CHEST_EXERCISES, ...SHOULDER_EXERCISES, ...BACK_EXERCISES, ...ARM_EXERCISES],
-  '下半身': LEG_EXERCISES
-};
+function exercisesForPart(part: string, all: ExerciseOut[]): ExerciseOut[] {
+  if (part === 'Push') return all.filter(e => e.movement === 'push');
+  if (part === 'Pull') return all.filter(e => e.movement === 'pull');
+  if (part === 'Leg') return all.filter(e => e.movement === 'legs');
+  if (part === '上半身') return all.filter(e => UPPER_MUSCLES.includes(e.muscle));
+  if (part === '下半身') return all.filter(e => LOWER_MUSCLES.includes(e.muscle));
+  return all.filter(e => e.muscle === part);
+}
 
 export default function EvenProgramScreen() {
   const router = useRouter();
-  const { title } = useLocalSearchParams<{ title: string }>();
+  const { title, description } = useLocalSearchParams<{ title: string; description?: string }>();
+
+  const [allExercises, setAllExercises] = useState<ExerciseOut[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadExercises = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const data = await fetchExercises();
+      setAllExercises(data);
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.detail : '種目一覧の取得に失敗しました');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadExercises();
+  }, []);
 
   // 分割法（title）に応じて表示する部位のリストを動的に決定
-  const getTargetParts = () => {
-    if (!title) return ['胸', '肩', '背中', '脚', '腕'];
+  const parts = useMemo(() => {
+    if (!title) return ['胸', '肩', '背中', '脚', '腕', 'お尻', 'ふくらはぎ'];
     if (title.toUpperCase().includes('PPL')) {
       return ['Push', 'Pull', 'Leg'];
     }
     if (title.includes('上半身') || title.includes('下半身')) {
       return ['上半身', '下半身'];
     }
-    return ['胸', '肩', '背中', '脚', '腕'];
-  };
+    return ['胸', '肩', '背中', '脚', '腕', 'お尻', 'ふくらはぎ'];
+  }, [title]);
 
-  const parts = getTargetParts();
   const [selectedPart, setSelectedPart] = useState<string>(parts[0]);
-  
-  // 選択された種目をID（"部位-種目名" をキーとするオブジェクト）で管理
-  const [selectedExercises, setSelectedExercises] = useState<Record<string, boolean>>({});
+
+  // 選択された種目をexercise idで管理
+  const [selectedExercises, setSelectedExercises] = useState<Record<number, boolean>>({});
 
   // 選択部位の安全な初期補正
   useEffect(() => {
     if (!parts.includes(selectedPart)) {
       setSelectedPart(parts[0]);
     }
-  }, [title, parts, selectedPart]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, parts]);
 
-  // 種目のチェック選択を切り替える
-  const toggleExercise = (part: string, exerciseName: string) => {
-    const key = `${part}-${exerciseName}`;
+  const toggleExercise = (exerciseId: number) => {
     setSelectedExercises(prev => ({
       ...prev,
-      [key]: !prev[key]
+      [exerciseId]: !prev[exerciseId],
     }));
   };
 
   // 選択決定ボタンを押したときの処理
   const handleDecision = () => {
-    // チェックが入っている種目の「種目名のみ」を抽出
-    const chosen = Object.keys(selectedExercises)
-      .filter(key => selectedExercises[key])
-      .map(key => key.split('-')[1]);
+    const chosen = allExercises
+      .filter(e => selectedExercises[e.id])
+      .map(e => ({ id: e.id, name: e.name }));
 
     if (chosen.length === 0) {
       alert('種目を1つ以上選択してください。');
       return;
     }
 
-    // 👈 厳密なフルパスの型エラーを回避するため、同階層の相対パス指定（stringキャスト）に修正
     router.push({
       pathname: './program_choice' as any,
-      params: { 
-        title: title, 
-        exercises: JSON.stringify(chosen) 
-      }
+      params: {
+        title,
+        description,
+        mode: 'custom',
+        exercises: JSON.stringify(chosen),
+      },
     });
   };
 
-  const currentExercises = EXERCISE_DATA[selectedPart] || [];
+  const currentExercises = exercisesForPart(selectedPart, allExercises);
 
   return (
     <>
@@ -193,64 +137,78 @@ export default function EvenProgramScreen() {
             </Text>
           </View>
 
-          {/* 部位選択タブ */}
-          <Text style={styles.blockLabel}>対象の部位を選択</Text>
-          <View style={styles.tabContainer}>
-            {parts.map((part) => {
-              const isSelected = selectedPart === part;
-              return (
-                <TouchableOpacity
-                  key={part}
-                  style={[styles.tabButton, isSelected && styles.tabButtonActive]}
-                  onPress={() => setSelectedPart(part)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.tabText, isSelected && styles.tabTextActive]}>
-                    {part}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* 種目選択リストエリア */}
-          <Text style={styles.blockLabel}>【{selectedPart}】の種目一覧</Text>
-          
-          {currentExercises.length > 0 ? (
-            <View style={styles.exerciseList}>
-              {currentExercises.map((exercise) => {
-                const isChecked = !!selectedExercises[`${selectedPart}-${exercise}`];
-                return (
-                  <TouchableOpacity
-                    key={exercise}
-                    style={[styles.exerciseCard, isChecked && styles.exerciseCardChecked]}
-                    onPress={() => toggleExercise(selectedPart, exercise)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.exerciseLeft}>
-                      {/* チェックボックス */}
-                      <View style={[styles.checkboxOuter, isChecked && styles.checkboxOuterChecked]}>
-                        {isChecked && <IconSymbol name="checkmark" size={14} color="#FFFFFF" />}
-                      </View>
-                      <Text style={[styles.exerciseName, isChecked && styles.exerciseNameChecked]}>
-                        {exercise}
-                      </Text>
-                    </View>
-                    
-                    {/* インフォアイコン */}
-                    <TouchableOpacity hitSlop={6}>
-                      <IconSymbol name="info.circle" size={22} color={Colors.textSecondary} />
-                    </TouchableOpacity>
-                  </TouchableOpacity>
-                );
-              })}
+          {isLoading ? (
+            <View style={styles.centerBox}>
+              <ActivityIndicator color={Colors.primaryDark} size="large" />
+            </View>
+          ) : loadError ? (
+            <View style={styles.centerBox}>
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{loadError}</Text>
+              </View>
+              <TouchableOpacity style={styles.retryBtn} onPress={loadExercises}>
+                <Text style={styles.retryBtnText}>再読み込み</Text>
+              </TouchableOpacity>
             </View>
           ) : (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyText}>
-                「{selectedPart}」のサンプル種目は現在準備中です。他の部位を選択してください。
-              </Text>
-            </View>
+            <>
+              {/* 部位選択タブ */}
+              <Text style={styles.blockLabel}>対象の部位を選択</Text>
+              <View style={styles.tabContainer}>
+                {parts.map((part) => {
+                  const isSelected = selectedPart === part;
+                  return (
+                    <TouchableOpacity
+                      key={part}
+                      style={[styles.tabButton, isSelected && styles.tabButtonActive]}
+                      onPress={() => setSelectedPart(part)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.tabText, isSelected && styles.tabTextActive]}>
+                        {part}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* 種目選択リストエリア */}
+              <Text style={styles.blockLabel}>【{selectedPart}】の種目一覧</Text>
+
+              {currentExercises.length > 0 ? (
+                <View style={styles.exerciseList}>
+                  {currentExercises.map((exercise) => {
+                    const isChecked = !!selectedExercises[exercise.id];
+                    return (
+                      <TouchableOpacity
+                        key={exercise.id}
+                        style={[styles.exerciseCard, isChecked && styles.exerciseCardChecked]}
+                        onPress={() => toggleExercise(exercise.id)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.exerciseLeft}>
+                          <View style={[styles.checkboxOuter, isChecked && styles.checkboxOuterChecked]}>
+                            {isChecked && <IconSymbol name="checkmark" size={14} color="#FFFFFF" />}
+                          </View>
+                          {exercise.muscle_color && (
+                            <View style={[styles.muscleDot, { backgroundColor: exercise.muscle_color }]} />
+                          )}
+                          <Text style={[styles.exerciseName, isChecked && styles.exerciseNameChecked]}>
+                            {exercise.name}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : (
+                <View style={styles.emptyCard}>
+                  <Text style={styles.emptyText}>
+                    「{selectedPart}」の種目データがありません。他の部位を選択してください。
+                  </Text>
+                </View>
+              )}
+            </>
           )}
         </ScrollView>
 
@@ -336,6 +294,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
+  centerBox: { alignItems: 'center', justifyContent: 'center', paddingVertical: Space[10], gap: Space[3] },
+  errorBox: {
+    borderRadius: Radius.md,
+    backgroundColor: Colors.errorSubtle,
+    paddingVertical: Space[3],
+    paddingHorizontal: Space[4],
+  },
+  errorText: { fontSize: FontSize.sm, color: Colors.error },
+  retryBtn: {
+    paddingHorizontal: Space[4],
+    paddingVertical: Space[2],
+    borderRadius: Radius.md,
+    backgroundColor: Colors.primaryDark,
+  },
+  retryBtnText: { color: Colors.textOnPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
   blockLabel: {
     fontSize: FontSize.sm,
     fontWeight: FontWeight.bold,
@@ -394,6 +367,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+    gap: Space[2],
   },
   checkboxOuter: {
     width: 22,
@@ -403,13 +377,13 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: Space[3],
     backgroundColor: Colors.bgCard,
   },
   checkboxOuterChecked: {
     borderColor: Colors.primaryDark,
     backgroundColor: Colors.primaryDark,
   },
+  muscleDot: { width: 8, height: 8, borderRadius: 4 },
   exerciseName: {
     fontSize: FontSize.sm,
     fontWeight: FontWeight.semibold,

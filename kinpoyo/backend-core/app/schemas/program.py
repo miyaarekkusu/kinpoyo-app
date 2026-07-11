@@ -32,3 +32,31 @@ class UserProgramOut(BaseModel):
 
 class UserProgramStatusUpdate(BaseModel):
     status_id: int
+
+
+class ProgramExerciseOut(BaseModel):
+    id: int
+    exercise_id: int
+    exercise_name: str
+    week_number: int
+    day_number: int
+    order_index: int
+    sets: int
+    reps_min: Optional[int] = None
+    reps_max: Optional[int] = None
+    rest_interval_sec: Optional[int] = None
+    note: Optional[str] = None
+
+
+class ProgramExerciseCreate(BaseModel):
+    exercise_id: int
+    sets: int
+    reps_min: Optional[int] = None
+    reps_max: Optional[int] = None
+    note: Optional[str] = None
+
+
+class ProgramCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    exercises: list[ProgramExerciseCreate]
