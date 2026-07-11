@@ -1176,7 +1176,7 @@ backend-core/
     │   └── community.py      # Post, PostLike, PostComment, Follow  (BE-B担当)
     ├── schemas/              # Pydantic スキーマ（リクエスト・レスポンス定義）
     │   ├── master.py
-    │   ├── user.py
+    │   ├── user.py           #プロフィール
     │   ├── workout.py
     │   ├── program.py
     │   └── community.py
