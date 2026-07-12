@@ -1,0 +1,10 @@
+﻿fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+pyodbc
+opencv-python-headless
+gunicorn
+mediapipe>=0.10.14,<0.10.22
+numpy
+pillow
