@@ -2,9 +2,10 @@
 
 /**
  * 回数カウント（状態機械）の設定。
- * 主役関節の角度の生波形に対して、「伸ばし域から連続下降で low 到達 → 連続上昇で
- * high 復帰」の連続1サイクルを観測できたときだけ1回と数える。連続性が途切れたら
- * サイクル検出を最初からやり直す。
+ * 主役関節の角度の生波形に対して、「伸ばし域(high超)から沈み域(low未満)まで下がり、
+ * 再び伸ばし域まで戻る」往復を1回と数える（ヒステリシス）。low と high の間の往復
+ * ——浅い上下動や姿勢推定のゆらぎ——は何度繰り返されても回数に影響しない。
+ * backend rep_model.py の count_reps と同じ意味。
  */
 export type RepConfig = {
   /** 平滑化窓（フレーム）。キーポイント推定のブレを消す。 */
@@ -17,8 +18,6 @@ export type RepConfig = {
   minPeriodFrames: number;
   /** これ未満のROM(度)しかない関節は動いていないとみなし、カウント対象外。 */
   minRomDeg: number;
-  /** 下降・上昇の追跡中に許容する逆行量（ROM比）。超えたら連続性の破れとしてリセット。 */
-  reversalTolRatio: number;
   /** フレーム番号の隙間がこれを超えたら姿勢ロストとみなしリセット。連続性の唯一の区切り根拠。 */
   maxGapFrames: number;
   /** デグリッチ用しきい値。1フレームだけ両隣からこれ超で飛びすぐ戻る外れ値（ワープ）
@@ -32,8 +31,6 @@ export const DEFAULT_REP_CONFIG: RepConfig = {
   exitRatio: 0.7,
   minPeriodFrames: 8,
   minRomDeg: 15,
-  // 速さで波を分断しなくなった分、逆行許容は締めても本物は落ちず怪しい遅サイクルを弾ける。
-  reversalTolRatio: 0.1,
   maxGapFrames: 6,
   // 単発のワープスパイクを均すデグリッチ閾値。持続的な速い動作は連続して同方向に
   // 動くため触らない＝速さ非依存。以前は「跳躍で波を分断」する用途だったが、走行など
@@ -131,11 +128,9 @@ export function countReps(
 
   const low = min + rom * cfg.enterRatio; // 深い側
   const high = min + rom * cfg.exitRatio; // 伸ばし側
-  const tol = rom * cfg.reversalTolRatio; // これを超える逆行 = 連続性の破れ
 
-  // search: 伸ばし域(high超)の出現待ち / down: 連続下降を追跡 / up: 連続上昇を追跡
+  // search: 最初の伸ばし域の出現待ち / down: 沈み域への到達待ち / up: 伸ばし域への復帰待ち
   let state: 'search' | 'down' | 'up' = 'search';
-  let extreme = 0; // down では下降中の最小値、up では上昇中の最大値
   let count = 0;
   let lastRep = -Infinity;
   const repFrames: number[] = [];
@@ -154,42 +149,20 @@ export function countReps(
     }
 
     if (state === 'search') {
-      if (a > high) {
-        state = 'down';
-        extreme = a;
-      }
+      if (a > high) state = 'down';
     } else if (state === 'down') {
-      if (a < extreme) {
-        extreme = a;
-      } else if (a - extreme > tol) {
-        // ボトムから tol 超の上昇 = 切り返し or 逆行
-        if (extreme < low) {
-          // 深い域まで下降済み → 本物の切り返し(上昇開始)
-          state = 'up';
-          extreme = a;
-        } else if (a > high) {
-          // 深い域に達する前に伸ばし域へ戻った → 再アーム
-          extreme = a;
-        } else {
-          // 中途半端な逆行 → 連続性の破れ
-          state = 'search';
-        }
-      }
+      // 沈み域に到達したときだけ前進する。伸ばし域と沈み域の間でどれだけ往復しても
+      // （＝浅い上下動やジッター）状態は変わらない。
+      if (a < low) state = 'up';
     } else {
       if (a > high) {
-        // 連続上昇のまま伸ばし域に復帰 = 1サイクル完了
+        // 伸ばし域に復帰 = 1サイクル完了
         if (frame - lastRep >= cfg.minPeriodFrames) {
           count++;
           repFrames.push(frame);
           lastRep = frame;
         }
-        state = 'down';
-        extreme = a; // そのまま次のレップの下降追跡へ
-      } else if (a > extreme) {
-        extreme = a;
-      } else if (extreme - a > tol) {
-        // 上昇中の逆行 → 連続性の破れ
-        state = 'search';
+        state = 'down'; // そのまま次のレップの下降を待つ
       }
     }
   }

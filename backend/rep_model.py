@@ -38,10 +38,6 @@ class RepConfig:
     max_step_deg: float = 60.0
     # 区切った塊がこのフレーム数未満なら短すぎるとして捨てる。
     min_segment_frames: int = 8
-    # 下降・上昇の追跡中に許容する逆行量（ROM比）。これを超える逆行は
-    # 連続性の破れとみなし、サイクル検出を最初からやり直す。速さで波を分断しなく
-    # なった分、ここは締めても本物のレップは落ちず、怪しい遅サイクルを弾ける。
-    reversal_tol_ratio: float = 0.10
 
 
 def _smooth(values: list[float], window: int) -> list[float]:
@@ -94,13 +90,18 @@ def count_reps(
 ) -> tuple[int, list[tuple[int, int]], float]:
     """1関節の (frame, angle) 列から回数を数える。
     戻り値 = (回数, 各回の (開始フレーム, 完了フレーム), ROM)。
-    開始フレームは「そのレップの下降追跡を開始（アーム）した点」なので、サイクル
-    区間の切り出しに探索中の助走が混ざらない。
+    開始フレームは「そのレップで最後に伸ばし域にいたフレーム」＝実際に下降を始めた
+    点なので、サイクル区間に立位のふらつきや助走が混ざらない。
 
-    連続性ベースのカウント:「伸ばし域(high超)から連続して low まで下降し、そのまま
-    連続して high まで戻る」1サイクルを観測できたときだけ1回と数える。下降・上昇の
-    途中で許容量(tol)を超える逆行があれば連続性の破れとみなし、最初（伸ばし域の
-    検出）からやり直す。
+    ヒステリシス・カウント:「伸ばし域(high超)から沈み域(low未満)まで下がり、再び
+    伸ばし域まで戻る」往復を1回と数える。low と high の間の往復（浅い上下動・姿勢
+    推定のゆらぎ）は、どれだけ繰り返されても回数に影響しない——ヒステリシス幅
+    (enter_ratio〜exit_ratio) がそのままノイズ耐性になる。
+
+    途中の逆行でサイクル検出を破棄することは「しない」。以前はそうしていたが、下降中
+    のわずかな戻り（数度のジッター）で状態が振り出しに戻り、その直後に来る本物の
+    深いレップを丸ごと取りこぼしてカウント0になっていた。対象外の動きの棄却は、
+    沈み域/伸ばし域の到達要求・統計ゲート・形状テンプレートが担う。
     フレーム軸そのままの生 series を渡すこと（0〜100%正規化したカーブは不可）。
     """
     if len(points) < 2:
@@ -121,12 +122,10 @@ def count_reps(
 
     low = lo + rom * cfg.enter_ratio
     high = lo + rom * cfg.exit_ratio
-    tol = rom * cfg.reversal_tol_ratio  # これを超える逆行 = 連続性の破れ
 
-    # search: 伸ばし域(high超)の出現待ち / down: 連続下降を追跡 / up: 連続上昇を追跡
+    # search: 最初の伸ばし域の出現待ち / down: 沈み域への到達待ち / up: 伸ばし域への復帰待ち
     state = "search"
-    extreme = 0.0  # down では下降中の最小値、up では上昇中の最大値
-    cycle_start = 0  # 現在追跡中のレップの開始（下降アーム）フレーム
+    cycle_start = 0  # 現在追跡中のレップの下降開始フレーム
     count = 0
     last_rep = float("-inf")
     reps: list[tuple[int, int]] = []
@@ -135,33 +134,20 @@ def count_reps(
         if state == "search":
             if a > high:
                 state = "down"
-                extreme = a
                 cycle_start = frame
         elif state == "down":
-            if a < extreme:
-                extreme = a
-            elif a - extreme > tol:  # ボトムから tol 超の上昇 = 切り返し or 逆行
-                if extreme < low:  # 深い域まで下降済み → 本物の切り返し(上昇開始)
-                    state = "up"
-                    extreme = a
-                elif a > high:  # 深い域に達する前に伸ばし域へ戻った → 再アーム
-                    extreme = a
-                    cycle_start = frame
-                else:  # 中途半端な逆行 → 連続性の破れ
-                    state = "search"
+            if a > high:  # まだ伸ばし域。下降開始点を「最後に伸ばし域にいた点」に更新
+                cycle_start = frame
+            elif a < low:  # 沈み域に到達 → 伸ばし域への復帰を待つ
+                state = "up"
         else:  # state == "up"
-            if a > high:  # 連続上昇のまま伸ばし域に復帰 = 1サイクル完了
+            if a > high:  # 伸ばし域に復帰 = 1サイクル完了
                 if frame - last_rep >= cfg.min_period_frames:
                     count += 1
                     reps.append((cycle_start, frame))
                     last_rep = frame
-                state = "down"
-                extreme = a  # そのまま次のレップの下降追跡へ
+                state = "down"  # そのまま次のレップの下降を待つ
                 cycle_start = frame
-            elif a > extreme:
-                extreme = a
-            elif extreme - a > tol:  # 上昇中の逆行 → 連続性の破れ
-                state = "search"
     return count, reps, rom
 
 
@@ -376,9 +362,12 @@ def build_template_for_sessions(
         return None, 0.3, 0
     mean, std = _mean_std_vectors(vecs)
     dists = [template_distance(v, mean) for v in vecs]
-    # 形状しきい値も甘めに: 学習サイクルの最大距離×1.5（下限0.16・上限0.6）。
-    # 学習データが少ない/揃いすぎている時にしきい値が過度に厳しくなるのを防ぐ。
-    thr = min(0.6, max(max(dists) * 1.5, 0.16))
+    # 形状しきい値は学習サイクルの最大距離×1.5（下限0.35・上限0.6）。
+    # 下限が要る理由: 学習サイクルが数本しかないと互いに似すぎて最大距離がほぼ0に
+    # なり、しきい値が過度に厳しくなる。実測では、同じ人の同じ種目でも沈み込みの
+    # 深さ・ボトムでの静止時間が違うだけで距離 0.19〜0.27 が出る。下限がこれを下回る
+    # と本物のレップを形違いとして棄却してしまう。
+    thr = min(0.6, max(max(dists) * 1.5, 0.35))
     template = {
         "bins": n_bins,
         "mean": [round(x, 4) for x in mean],
@@ -584,7 +573,6 @@ _GRID_ENTER = [0.2, 0.25, 0.3, 0.35, 0.4]
 _GRID_EXIT = [0.6, 0.65, 0.7, 0.75, 0.8]
 _GRID_MIN_PERIOD = [5, 8, 12]
 _GRID_MIN_ROM = [10.0, 15.0, 20.0]
-_GRID_REVERSAL = [0.08, 0.12, 0.16, 0.22]
 
 
 def calibrate(
@@ -593,11 +581,10 @@ def calibrate(
 ) -> tuple[RepConfig, dict]:
     """正解回数つきセッション群に対し、ズレ合計が最小になる閾値をグリッドサーチ。
 
-    連続性ロジックの核心である許容逆行量(reversal_tol_ratio)も探索対象。
     精度が同点の設定が複数あるときは「最も厳しい」設定を選ぶ（マージン最大化）:
-    逆行許容が小さい → 最小ROMが大きい → ヒステリシス幅が広い → 最短周期が長い、
-    の優先順。正解データの回数を再現できる範囲で受理領域を最小にすることで、
-    計数対象外の動きへの棄却力を最大化する。
+    最小ROMが大きい → ヒステリシス幅が広い → 最短周期が長い、の優先順。正解データの
+    回数を再現できる範囲で受理領域を最小にすることで、計数対象外の動きへの棄却力を
+    最大化する。ヒステリシス幅が広いほど、浅い上下動や姿勢推定のゆらぎに強い。
 
     labeled_sessions: [(joint_series, true_reps), ...]
     candidates:       監視関節（[] なら全関節）
@@ -618,30 +605,27 @@ def calibrate(
                     continue
                 for mp in _GRID_MIN_PERIOD:
                     for mr in _GRID_MIN_ROM:
-                        for rt in _GRID_REVERSAL:
-                            cfg = RepConfig(
-                                sw, en, ex, mp, mr, reversal_tol_ratio=rt
-                            )
-                            total_abs = 0
-                            exact = 0
-                            for joint_series, true_reps in labeled_sessions:
-                                res = count_for_session(joint_series, candidates, cfg)
-                                err = abs(res["count"] - true_reps)
-                                total_abs += err
-                                if err == 0:
-                                    exact += 1
-                            mae = total_abs / n
-                            # ズレ最小 → 一致数が多い方 → 同点なら最も厳しい設定
-                            strictness = (rt, -mr, -(ex - en), -mp)
-                            score = (mae, -exact, *strictness)
-                            if best_score is None or score < best_score:
-                                best_score = score
-                                best_cfg = cfg
-                                best_metrics = {
-                                    "mae": round(mae, 3),
-                                    "exact_match_rate": round(exact / n, 3),
-                                    "session_count": n,
-                                }
+                        cfg = RepConfig(sw, en, ex, mp, mr)
+                        total_abs = 0
+                        exact = 0
+                        for joint_series, true_reps in labeled_sessions:
+                            res = count_for_session(joint_series, candidates, cfg)
+                            err = abs(res["count"] - true_reps)
+                            total_abs += err
+                            if err == 0:
+                                exact += 1
+                        mae = total_abs / n
+                        # ズレ最小 → 一致数が多い方 → 同点なら最も厳しい設定
+                        strictness = (-mr, -(ex - en), -mp)
+                        score = (mae, -exact, *strictness)
+                        if best_score is None or score < best_score:
+                            best_score = score
+                            best_cfg = cfg
+                            best_metrics = {
+                                "mae": round(mae, 3),
+                                "exact_match_rate": round(exact / n, 3),
+                                "session_count": n,
+                            }
 
     return best_cfg or RepConfig(), best_metrics
 
@@ -659,7 +643,6 @@ def cfg_to_dict(cfg: RepConfig, candidates: list[str]) -> dict:
         "maxGapFrames": cfg.max_gap_frames,
         "maxStepDeg": cfg.max_step_deg,
         "minSegmentFrames": cfg.min_segment_frames,
-        "reversalTolRatio": cfg.reversal_tol_ratio,
         "candidates": list(candidates),
     }
 
@@ -677,8 +660,9 @@ def cfg_from_dict(d: dict) -> tuple[RepConfig, list[str]]:
         # 既存モデルも救済する。
         max_step_deg=max(60.0, float(d.get("maxStepDeg", 60.0))),
         min_segment_frames=int(d.get("minSegmentFrames", 8)),
-        reversal_tol_ratio=float(d.get("reversalTolRatio", 0.15)),
     )
+    # 旧モデルの reversalTolRatio は無視する。逆行でサイクルを破棄する仕組み自体を
+    # 廃止したため（本物のレップを取りこぼす原因だった）。
     candidates = [str(x) for x in d.get("candidates", [])]
     return cfg, candidates
 
