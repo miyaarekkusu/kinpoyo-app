@@ -1,6 +1,9 @@
-﻿import { router, useFocusEffect } from 'expo-router';
+﻿import * as ImagePicker from 'expo-image-picker';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -10,11 +13,13 @@ import {
   View,
 } from 'react-native';
 
+import { persistVideo } from '../lib/files';
 import { pendingCount } from '../lib/pending';
 
 export default function Index() {
   const [exerciseName, setExerciseName] = useState('');
   const [pendingNum, setPendingNum] = useState(0);
+  const [busy, setBusy] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -22,14 +27,48 @@ export default function Index() {
     }, []),
   );
 
-  const canProceed = exerciseName.trim().length > 0;
+  const canProceed = exerciseName.trim().length > 0 && !busy;
 
-  const handleStart = () => {
+  const handlePick = async () => {
     if (!canProceed) return;
-    router.push({
-      pathname: '/camera',
-      params: { exercise: exerciseName.trim() },
-    });
+
+    // Web(PC)は <input type=file> で開くため権限要求は不要（呼ぶと未対応で失敗しうる）。
+    if (Platform.OS !== 'web') {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(
+          '権限がありません',
+          'フォトライブラリへのアクセスを許可してください。',
+        );
+        return;
+      }
+    }
+
+    setBusy(true);
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['videos'],
+        quality: 1,
+        // iPhone の動画は HEVC が多く、サーバの OpenCV がデコードできないことがある。
+        // Compatible にすると iOS 側で H.264 に変換してから渡してくれる。
+        preferredAssetRepresentationMode:
+          ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+      });
+      if (res.canceled || res.assets.length === 0) return;
+
+      const sessionId = `${Date.now()}`;
+      // ピッカーが返す URI はキャッシュ上にあり消えうるので、documents へ複製して永続化する。
+      const persistedUri = await persistVideo(res.assets[0].uri, sessionId);
+      router.push({
+        pathname: '/review',
+        params: { exercise: exerciseName.trim(), videoUri: persistedUri, sessionId },
+      });
+    } catch (err) {
+      console.error('pick failed', err);
+      Alert.alert('動画を読み込めませんでした', String(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -46,20 +85,26 @@ export default function Index() {
           placeholder="例: 腹筋 / スクワット / 腕立て"
           placeholderTextColor="#9ca3af"
           returnKeyType="done"
-          onSubmitEditing={handleStart}
+          editable={!busy}
+          onSubmitEditing={handlePick}
         />
 
         <Pressable
           style={[styles.button, !canProceed && styles.buttonDisabled]}
-          onPress={handleStart}
+          onPress={handlePick}
           disabled={!canProceed}
         >
-          <Text style={styles.buttonText}>撮影を始める</Text>
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>動画を選択</Text>
+          )}
         </Pressable>
 
         <Pressable
           style={styles.pendingButton}
           onPress={() => router.push('/pending')}
+          disabled={busy}
         >
           <Text style={styles.pendingButtonText}>
             保留一覧 ({pendingNum}件)
@@ -67,7 +112,7 @@ export default function Index() {
         </Pressable>
 
         <Text style={styles.hint}>
-          撮影 → 範囲を複数選択 → サーバーへ送信。
+          端末の動画を選択 → 範囲を複数選択 → サーバーへ送信。
         </Text>
       </View>
     </KeyboardAvoidingView>

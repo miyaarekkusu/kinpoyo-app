@@ -47,17 +47,31 @@ type SessionProgressResponse = {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+const MIME_BY_EXT: Record<string, string> = {
+  mov: 'video/quicktime',
+  m4v: 'video/x-m4v',
+  mp4: 'video/mp4',
+};
+
+// フォトライブラリから選んだ動画は .mov のこともある。バックエンドは送られた
+// ファイル名の拡張子で一時ファイルを作るので、実体と合う拡張子を送る。
+function videoPart(uri: string, id: string) {
+  const ext = (uri.split('.').pop() ?? 'mp4').toLowerCase();
+  const safeExt = ext in MIME_BY_EXT ? ext : 'mp4';
+  return {
+    uri,
+    name: `recording_${id}.${safeExt}`,
+    type: MIME_BY_EXT[safeExt],
+  };
+}
+
 export async function uploadSession(
   s: UploadInput,
   opts: UploadOptions = {},
 ): Promise<UploadResult> {
   const form = new FormData();
   form.append('exercise_name', s.exerciseName);
-  form.append('video', {
-    uri: s.videoUri,
-    name: `recording_${s.id}.mp4`,
-    type: 'video/mp4',
-  } as unknown as Blob);
+  form.append('video', videoPart(s.videoUri, s.id) as unknown as Blob);
   form.append('start_time_sec', String(s.startTimeSec));
   form.append('end_time_sec', String(s.endTimeSec));
 

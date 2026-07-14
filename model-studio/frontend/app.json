@@ -43,11 +43,11 @@
       ],
       "expo-video",
       [
-        "expo-camera",
+        "expo-image-picker",
         {
-          "cameraPermission": "kinpoyo は筋トレ動画の撮影のためにカメラを使用します。",
-          "microphonePermission": "kinpoyo は撮影のためにマイクを使用します。",
-          "recordAudioAndroid": true
+          "photosPermission": "kinpoyo は学習データにする筋トレ動画を選ぶためにフォトライブラリを使用します。",
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ]
     ],

@@ -12,7 +12,6 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" options={{ title: 'kinpoyo' }} />
-        <Stack.Screen name="camera" options={{ title: '撮影' }} />
         <Stack.Screen name="review" options={{ title: '範囲選択' }} />
         <Stack.Screen name="pending" options={{ title: '送信保留' }} />
       </Stack>
