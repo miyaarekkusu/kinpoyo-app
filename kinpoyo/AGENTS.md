@@ -705,6 +705,208 @@ AI回数カウント（バッチ版）の計測結果をもとに、DeepSeek API
 > クリアして対応した。今後この種のJSONB保存スキーマを変更する際は、既存行への影響
 > （必要ならデータマイグレーション、または後方互換のデフォルト値）を先に検討すること。
 
+### 妥当性ゲートの復活（2026-08-28、腕立て伏せモデル追加時に発覚・対応）
+
+model-studioで新規に「腕立て（アレックス）」モデルを作成し（`monitored_joints`を
+`右肘`/`左肘`のみに限定して較正、mae=0.0・exact_match_rate=1.0）、kinpoyoへ
+`import_rep_model.py`で取り込んで実機テストしたところ、上記「棄却の廃止」の副作用が
+2つ具体的に見つかった：
+
+1. **姿勢準備の誤カウント**：腕立て伏せは録画開始→プランク姿勢を整える、という
+   準備動作が録画に含まれやすい。model-studio側の学習データは`start_time_sec`/
+   `end_time_sec`で範囲指定してトリミング済みだが、kinpoyo側の`count-reps`には
+   トリミング機構が無く、録画全体（準備動作込み）を解析するため、`low`/`high`
+   しきい値が準備動作の角度で歪んだり、準備動作自体が1レップとしてカウントされ
+   得ることが判明。**対応：まずはUI側で「準備を整えてから録画開始を押す」運用で
+   回避する方針**（アルゴリズム側の対応は保留）
+2. **「変な動き」が"良いフォーム"と判定される**：実機で明らかにフォームが崩れた
+   腕立て伏せを行ったところ`form_quality: "good"`と判定された。原因は
+   `count_with_template`の品質判定が**主役関節（肘）の角度カーブのみ**を見ており、
+   股関節・体幹の崩れ等は原理的に検出できないため（1関節ベースの軽量な閾値検出
+   というアーキテクチャ自体の限界）。さらに検証の結果、**腕立て伏せと無関係な
+   動きでも、肘が十分な振れ幅で一往復しさえすれば無条件にカウントされる**ことも
+   判明（棄却廃止の設計上、ROM・周期の緩い条件を満たせば形状・統計ゲートに
+   関わらずcounted=Trueになるため）。
+
+上記2番目（無関係な動きの誤カウント）への対応として、`app/core/rep_model.py`に
+**妥当性ゲート**（`_passes_validity_gate`）を追加した：
+
+- `cycle_stats`（品質ラベル用、±25°マージン）とは別に、さらに緩いマージン
+  （`_VALIDITY_GATE_EXTRA_MARGIN_DEG=40.0`・ROM倍率`(0.5, 2.0)`を`cycle_stats`の
+  レンジにさらに掛ける）で「そもそもこの種目の動きらしいか」だけを判定し、これに
+  外れる候補のみ`counted=False`にする（`info["invalid"]=True`も付与）
+- `cycle_stats`自体・`shape_threshold`は**品質ラベル（good/needs_improvement）
+  のみに使い続ける**（変更なし）。マージンを`cycle_stats`よりずっと広く取っている
+  のは、深さ・テンポが多少ズレた本物のレップまで棄却してしまった旧設計
+  （2026-08-24以前）の失敗を繰り返さないため——「明らかに別の動き」だけを弾く
+  最後の砦、という位置づけ
+- `app/routers/exercises.py`のデバッグprintも、`counted=False`の理由を
+  「カウント外(別動作の可能性)」／「カウント外(測定不能)」で区別するよう変更
+- 1番目（姿勢準備の誤カウント）は今回は未対応。UI側の運用回避で十分か、録画側の
+  トリミング機構が必要かは今後実機テストで判断する
+- `_VALIDITY_GATE_EXTRA_MARGIN_DEG`/`_VALIDITY_GATE_ROM_SCALE`は初期値であり、
+  実機での腕立て伏せ検証を通じてチューニングが必要になる可能性がある
+
+**追記（同日）**：角度帯・ROMのみの妥当性ゲートでは、腕立て伏せと無関係な
+「変な動き」が実機でまだ通過することを確認。腕の曲げ伸ばしを伴う動きは種目が
+違っても絶対角度・ROMが被りやすく、この2つだけでは判別力が弱いと判断。
+以下2点を追加変更：
+
+- マージンを縮小：`_VALIDITY_GATE_EXTRA_MARGIN_DEG` 40.0→**20.0**、
+  `_VALIDITY_GATE_ROM_SCALE` (0.5, 2.0)→**(0.6, 1.6)**
+- **形状テンプレート距離も妥当性ゲートに追加**（新定数
+  `_VALIDITY_GATE_SHAPE_MULTIPLIER=1.6`。品質判定の`shape_threshold`より
+  1.6倍緩い距離までは許容しつつ、それも超えたら棄却）。カーブの"形"は
+  種目間でより差が出やすいため、角度帯・ROMより強い判別力を期待している
+- これに伴い`count_with_template`内の距離計算（`template_distance`）を
+  品質判定ブロックから妥当性ゲート呼び出しの直前に移動し、1回の計算結果を
+  両方の判定で使い回すようリファクタ（`_passes_validity_gate`の引数に
+  `dist`/`shape_threshold`を追加）
+- 実機再検証はこれから（マージン値は依然として初期値であり、要調整の可能性あり）
+
+**再修正（同日）**：角度帯マージン・ROM倍率の縮小（20.0/(0.6,1.6)）により、今度は
+本物のレップまでカウントされなくなる逆方向の問題が実機で発生。**角度帯マージン・
+ROM倍率は元の40.0/(0.5,2.0)に戻した**。判別力の強化は形状テンプレート距離
+（`_VALIDITY_GATE_SHAPE_MULTIPLIER=1.6`、8/28に追加した分）側だけに委ねる方針に
+変更。角度帯・ROMは「明らかに別の動き」だけを弾く最後の砦という当初の位置づけに
+戻し、種目間の判別は形状（カーブの形）に任せる。実機再検証はこれから。
+
+### 姿勢ゲートの追加（2026-08-28、立ったままの誤カウント対策）
+
+上記の妥当性ゲート（角度帯・ROM・形状）を追加しても、**「立ったまま肘だけ曲げ
+伸ばしする」ような、プッシュアップと無関係な動きが実機でまだカウントされる**
+ことが判明。原因は肘の角度だけでは体全体の向き（立位かうつ伏せか）が分からない
+ため。これに対応する姿勢ゲートを新設した：
+
+- `app/core/pose_analysis.py`に`torso_orientation_deg`/`torso_orientation_series`
+  を追加（kinpoyo側のみ・model-studioには無い概念）。肩の中点→股関節中点の
+  ベクトルが垂直軸(y軸)から何度傾いているかを`pose_world_landmarks`から算出
+  （0°=垂直、90°=水平）
+- `app/core/rep_model.py`に`EXERCISE_POSTURE`（`exercise_id → "upright"|"prone"`
+  の対応表。現状`{17: "upright"（スクワット）, 4: "prone"（プッシュアップ）}`）
+  ・`_passes_posture_gate`（想定姿勢と実測の体幹の向きが大まかに合っているかの
+  粗いチェック、`_POSTURE_UPRIGHT_MAX_DEG=55.0`/`_POSTURE_PRONE_MIN_DEG=35.0`）
+  を追加。`count_with_template`に`torso_orientation`/`posture`引数を追加し、
+  角度帯・ROM・形状の妥当性ゲートと同じ扱い（外れたら`counted=False`・
+  `invalid=True`）で組み込んだ
+- `EXERCISE_POSTURE`はmodel-studioの`config_json`とは無関係の**kinpoyo側だけの
+  追加情報**（model-studio側の較正には姿勢の概念が無いため）。新しい種目を
+  追加する際は、この対応表に1行追加する必要がある（追加し忘れると姿勢チェック
+  はスキップされるだけで、エラーにはならない＝後方互換だが、対策が効かなくなる
+  点に注意）
+- **既知の限界**：`upright`/`prone`の2値だけでは、仰向け種目（ベンチプレス等、
+  体幹はproneと同じく水平になる）を区別できない。対応する種目が無いうちは
+  対応不要と判断し先送りしている。ベンチプレス等を追加する際は、体幹の向き
+  だけでなく別の判別軸（例：顔・胸がカメラのどちら向きか）の追加を検討すること
+- `app/routers/exercises.py`のcount-repsエンドポイントで`torso_orientation_series`
+  を呼び出し、`EXERCISE_POSTURE`から該当種目のpostureを引いて渡すよう変更。
+  デバッグprintにも`torso=X.X°`を追加
+- 実機ログで動作確認済み：立ったままの動画（torso≈4.0°/5.1°、ほぼ垂直）で
+  `count=0`となり正しく棄却された（プッシュアップの想定postureは"prone"で
+  `_POSTURE_PRONE_MIN_DEG=35.0`未満のため）
+
+### 姿勢不一致をAIレビューに反映（2026-08-28）
+
+上記の姿勢ゲートで棄却された候補があっても、今までは結果画面に「カウント外」
+と出るだけでAIレビューには一切反映されなかった。ユーザーから「別の種目をやって
+いることをAIレビューに出してほしい」との要望があり対応：
+
+- 棄却理由を区別するため、`app/core/rep_model.py`の`count_with_template`が
+  付与する`info["invalid"]`に加えて`info["invalid_reason"]`
+  （`"movement"`＝角度帯/ROM/形状の妥当性ゲート、`"posture"`＝姿勢ゲート）を
+  追加
+- `RepCycleOut`/`RepCycleJson`（`app/schemas/exercise.py`）に`invalid`/
+  `invalid_reason`フィールドを追加（DB保存・API応答の両方に反映。既存行は
+  デフォルト値`invalid=False`で後方互換）
+- `app/core/review_judge.py`：`ReviewMeasurements`に`posture_mismatch_count`
+  を追加。`aggregate_cycles`は`invalid_reason=="posture"`の候補数を
+  カウント（品質評価とは別軸の情報として、実測値の平均計算には混ぜない）。
+  `judge_aspects`は`posture_mismatch_count > 0`なら観点`"posture_mismatch"`
+  を追加（良し悪しの対にはならない一方向の観点）
+- `app/core/review_prompt.py`：ベースプロンプトの実測データに「種目と異なる
+  姿勢・動きだった可能性がある候補: N件」を追加
+- `scripts/seed_ai_review_prompt_parts.py`に種目共通パーツ`"code":
+  "general_posture_mismatch"`（`exercise_id=None`）を追加・DB投入済み。
+  「責めるのではなく確認を促す」トーンをprompt_fragmentで明示的に指定
+- `app/routers/workouts.py`の`generate_review`：`total_rep_count==0`だけを
+  理由にした400エラーを、`posture_mismatch_count==0`も同時に満たす場合のみ
+  に変更（立ったままの動画しか無いセットでも、姿勢不一致の情報自体は伝える
+  価値があるため、レビュー生成を続行できるようにした）
+- フロントエンド（`services/exercises.ts`の`RepCycle`・`services/workout.ts`の
+  `RepCycleJson`・`workout-camera.tsx`の保存処理）も`invalid`/`invalid_reason`
+  を受け渡すよう対応。`tsc --noEmit`で型チェック済み
+- 実機再検証はこれから（`generate-review`を呼んで実際にAIコメントが出るか
+  確認が必要）
+
+### AIレビューを「今回のセットのみ」に変更 + movement理由もレビューへ反映（2026-08-28）
+
+ユーザーから2点要望があり対応：
+
+1. **AIレビューの対象を「その種目の全セット」から「今回記録した1セットのみ」に変更**。
+   `ai_reviews`テーブルは`session_exercise_id`にUNIQUE制約があり元々「1種目1件・
+   再生成のたびに削除して作り直す」設計だったため、**スキーマ変更は不要**——
+   `generate_review`（`app/routers/workouts.py`）に`set_id`クエリパラメータを
+   追加し、指定時はその1セットの`rep_cycles_json`のみを集計するよう変更した
+   （省略時は後方互換で従来の全セット集計にフォールバック）。フロントエンド
+   （`services/workout.ts`の`generateAiReview`・`workout-camera.tsx`）は
+   `lastSetIdRef.current`（今保存したセットのID）を渡すよう変更。
+   **注**：これは2026-08-24の筋トレフロー刷新時点での意図的な設計
+   （「1セットだけでなく、その種目でこれまでにやった全セットをまとめて評価する」）
+   を覆す変更
+2. **「movement」棄却理由（角度帯・ROM・形状の妥当性ゲート）もAIレビューに反映**。
+   既存の`posture_mismatch`と対になる形で追加：
+   - `review_judge.py`：`ReviewMeasurements.movement_mismatch_count`追加、
+     `aggregate_cycles`が`invalid_reason=="movement"`の候補数を集計、
+     `judge_aspects`は`movement_mismatch_count > 0`で観点`"movement_mismatch"`
+     を追加
+   - `review_prompt.py`：実測データに「種目と動きの形が大きく異なっていた
+     可能性がある候補: N件」を追加
+   - `seed_ai_review_prompt_parts.py`に種目共通パーツ`"general_movement_mismatch"`
+     （`exercise_id=None`）を追加・DB投入済み
+   - `generate_review`の400エラーガードを、`movement_mismatch_count>0`でも
+     続行するよう拡張
+   - **スコープ外とした点**：測定不能（`invalid_reason`が付かない、点数不足で
+     形状ベクトル自体が計算できないケース）はレビューに反映していない。
+     フォームの問題ではなく動画・トラッキングの技術的な問題のため、コーチ
+     コメントの対象として毛色が違うと判断し対象外にした
+- 実機再検証はこれから
+
+### 映像の質・撮影環境の警告（2026-08-28、AIレビューを経由しない即時警告）
+
+上記でスコープ外とした「測定不能（点数不足）」＝映像の質・撮影環境の問題に
+ついて、ユーザーへ事前に設計案を提示（A案：即時警告／B案：AIレビュー経由）し、
+**A案（AIレビューを経由しない、その場での即時警告）で承認を得て実装**。
+
+- 判定材料は`pose_frames/total_frames`（姿勢検出率）。既に`count-reps`の
+  レスポンスに含まれていた値をそのまま利用——DBスキーマ変更・マイグレーション
+  一切不要
+- `app/routers/exercises.py`に`MIN_POSE_DETECTION_RATE=0.5`（初期値、要調整）
+  を追加。検出率がこれ未満なら`CountRepsResult.quality_warning`に警告文を
+  設定（`app/schemas/exercise.py`にフィールド追加）
+- AIレビュー（DeepSeek呼び出し）は経由しない。理由：posture/movement不一致
+  （コーチ的な判断）と違い「撮影がうまくいっていない」という技術的な問題
+  なので、後から遅れて伝えるより撮影直後にその場で伝えて撮り直しを促す
+  方が実用的と判断
+- フロントエンド（`services/exercises.ts`の`CountRepsResult`型・
+  `workout-camera.tsx`）：結果画面の回数カウントカードの下に警告ボックス
+  （`Colors.warningSubtle`/`Colors.warning`）を追加、`quality_warning`が
+  あれば表示
+- `tsc --noEmit`・Python構文チェックとも通過。実機再検証はこれから
+  （`MIN_POSE_DETECTION_RATE=0.5`は初期値のため、要調整の可能性あり）
+
+### 休憩画面に次のセットの予定回数を表示（2026-08-28）
+
+`workout-camera.tsx`の休憩カード（休憩カウントダウン中／「次のセットへ」ボタン
+の下）に、次に記録する予定セットの目標回数（登録時に設定した`reps`。
+`ai_counted_reps`＝実測値とは別物）を表示するよう追加。
+
+- `slotsRef`の要素に`reps: number | null`を追加（`fetchWorkout`で取得した
+  `SessionSetOut.reps`をそのまま保持。新規作成セット＝計画外のおまけセットは
+  `reps: null`）
+- 次に埋める予定のセット（`slotsRef.current.find(s => !s.recorded)`）の`reps`
+  を`nextSetReps`として算出し、`null`でなければ「次のセット予定: N回」を表示
+- `tsc --noEmit`通過
+
 ## 筋トレフロー刷新（セット管理・休憩・全体レポート）（2026-08-24 設計・実装完了）
 
 AI回数カウント機能がバッチ版で安定して動くようになったことを受けて、筋トレ実施中の

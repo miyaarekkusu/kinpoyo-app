@@ -82,6 +82,36 @@ def seed_ai_review_prompt_parts(session: Session) -> None:
             ),
             "is_active": True,
         },
+        {
+            # 種目共通（exercise_id=None）。姿勢ゲート（app/core/rep_model.py）で
+            # 「体幹の向きが種目の想定と大きく食い違う」として棄却された候補が
+            # あった場合に使う。2026-08-28追加。
+            "code": "general_posture_mismatch",
+            "exercise_id": None,
+            "label_ja": "姿勢：別の動き・種目の可能性",
+            "prompt_fragment": (
+                "動画の一部に、この種目とは異なる姿勢（例：立ったままの動作等）が"
+                "混ざっていた可能性があることについて、責めるのではなく「正しい"
+                "姿勢で行えているか確認してみましょう」という優しい確認のコメントを"
+                "一言してください。"
+            ),
+            "is_active": True,
+        },
+        {
+            # 種目共通（exercise_id=None）。妥当性ゲート（app/core/rep_model.py）
+            # で「動きの形が種目の想定と大きく食い違う」として棄却された候補が
+            # あった場合に使う。2026-08-28追加（姿勢版と対になるもの）。
+            "code": "general_movement_mismatch",
+            "exercise_id": None,
+            "label_ja": "動き：別の動き・種目の可能性",
+            "prompt_fragment": (
+                "動画の一部に、この種目の動きとは形が大きく異なる候補が"
+                "混ざっていた可能性があることについて、責めるのではなく「正しい"
+                "動きで行えているか確認してみましょう」という優しい確認のコメントを"
+                "一言してください。"
+            ),
+            "is_active": True,
+        },
     ])
 
 

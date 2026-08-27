@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -190,12 +191,19 @@ def update_workout_set(
 def generate_review(
     session_id: int,
     exercise_id: int,  # 実体はsession_exercise.id（既存のsetsエンドポイントと同じ命名慣習）
+    set_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """該当種目の全セットのrep_cycles_jsonを集計し、決定的ロジックで観点を判定、
+    """該当種目のrep_cycles_jsonを集計し、決定的ロジックで観点を判定、
     ベース＋パーツでプロンプトを組み立ててDeepSeek APIでレビュー文を生成、
     ai_reviewsに保存して返す。既存レビューがあれば削除して作り直す（再生成）。
+
+    2026-08-28変更：以前は「その種目でこれまでにやった全セットをまとめて評価」
+    していたが、ユーザーから「今回記録したセットだけのレビューにしてほしい」との
+    要望を受け、`set_id`クエリパラメータで対象を1セットに絞れるようにした。
+    `set_id`省略時は後方互換のため従来通り全セット集計にフォールバックする
+    （現状のフロントエンド呼び出し元は必ず`set_id`を渡す）。
     """
     _get_owned_session(db, session_id, current_user)
     session_exercise = workout_crud.get_session_exercise(db, session_id, exercise_id)
@@ -207,11 +215,25 @@ def generate_review(
         rep_model.config_json.get("cycleStats") if rep_model is not None else None
     )
 
-    rep_cycles_lists = [
-        s.rep_cycles_json for s in session_exercise.sets if s.rep_cycles_json
-    ]
+    if set_id is not None:
+        target_set = workout_crud.get_set(db, session_exercise.id, set_id)
+        if target_set is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="セットが見つかりません")
+        rep_cycles_lists = [target_set.rep_cycles_json] if target_set.rep_cycles_json else []
+    else:
+        rep_cycles_lists = [
+            s.rep_cycles_json for s in session_exercise.sets if s.rep_cycles_json
+        ]
     measurements = review_judge.aggregate_cycles(rep_cycles_lists)
-    if measurements.total_rep_count == 0:
+    # 2026-08-28変更：カウントできたレップが0件でも、妥当性/姿勢ゲートで
+    # 「種目と違う動き・姿勢だった可能性」が検出できていれば、それ自体が
+    # 伝える価値のある情報なのでレビュー生成を続行する
+    # （total_rep_count=0のみを理由に400にしない）。
+    if (
+        measurements.total_rep_count == 0
+        and measurements.posture_mismatch_count == 0
+        and measurements.movement_mismatch_count == 0
+    ):
         raise HTTPException(status_code=400, detail="まだ有効な計測データがありません")
 
     aspect_suffixes = review_judge.judge_aspects(measurements, cycle_stats)

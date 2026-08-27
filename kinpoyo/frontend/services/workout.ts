@@ -15,6 +15,8 @@ export type RepCycleJson = {
   bottom_deg: number | null;
   top_deg: number | null;
   period_sec: number | null;
+  invalid: boolean;
+  invalid_reason: 'movement' | 'posture' | null;
 };
 export type SessionSetCreate = {
   set_number?: number;
@@ -106,13 +108,16 @@ export type AiReviewOut = {
   matched_part_codes_json: string[] | null;
   generated_at: string;
 };
+// 2026-08-28変更：setIdを渡すと、その1セットのみのレビューになる（以前は
+// その種目の全セットをまとめて評価していた）。
 export function generateAiReview(
   token: string | null,
   sessionId: number,
   sessionExerciseId: number,
+  setId: number,
 ): Promise<AiReviewOut> {
   return apiFetch<AiReviewOut>(
-    `/workouts/${sessionId}/exercises/${sessionExerciseId}/generate-review`,
+    `/workouts/${sessionId}/exercises/${sessionExerciseId}/generate-review?set_id=${setId}`,
     { method: 'POST', token },
   );
 }
@@ -155,6 +160,12 @@ export type WorkoutSessionReportOut = {
       prev_avg_reps: number | null;
       prev_avg_rpe: number | null;
       weight_change_pct: number | null;
+      // 2026-08-28追加：セットごとの実測値（前回の同じ種目と1セットずつ比較表示
+      // するため）。avg_*系はAIレビュー文面の生成に引き続き使われるが、画面上の
+      // 種目カードはこちらを使う（「平均はいらない、実際の値を出して比較したい」
+      // というフィードバックにより、平均表示から置き換え）。
+      sets: { set_number: number; weight_kg: number | null; reps: number | null; rpe: number | null }[];
+      prev_sets: { set_number: number; weight_kg: number | null; reps: number | null; rpe: number | null }[];
       // 2026-08-25追加：自己ベスト推定1RMからの予測RPEと実測との差、停滞判定。
       // AIレビューmatched_part_codes_json経由でフィードバック文には反映されるが、
       // 専用UIはまだ無い（フロントは今のところ表示していない）。

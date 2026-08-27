@@ -31,7 +31,8 @@ class RepCycleOut(BaseModel):
     分離した。測定可能なサイクルは全てcounted=Trueでカウントし、
     form_qualityで品質をラベル付けするのみ（カウントの可否には影響しない）。
     counted=Falseになるのは、点数が少なすぎて形状ベクトルすら計算できない
-    （そもそも1レップとして測定不能）場合のみ。
+    （そもそも1レップとして測定不能）場合か、2026-08-28追加の妥当性ゲート・
+    姿勢ゲート（invalid=True）に外れた場合。
     """
     start: int
     end: int
@@ -41,6 +42,8 @@ class RepCycleOut(BaseModel):
     bottom_deg: Optional[float] = None
     top_deg: Optional[float] = None
     period: Optional[int] = None
+    invalid: bool = False  # 妥当性/姿勢ゲートで棄却された候補か
+    invalid_reason: Optional[str] = None  # "movement" | "posture"（invalid=Falseならnull）
 
 
 class CountRepsResult(BaseModel):
@@ -57,6 +60,9 @@ class CountRepsResult(BaseModel):
     pose_frames: int
     fps: float
     cycles: list[RepCycleOut]
+    # 2026-08-28追加：姿勢検出率が低い（映像の質・撮影環境の問題）場合の警告。
+    # AIレビューは経由せず、その場ですぐ伝える（app/routers/exercises.py参照）。
+    quality_warning: Optional[str] = None
 
 
 class RepCycleJson(BaseModel):
@@ -72,6 +78,8 @@ class RepCycleJson(BaseModel):
     bottom_deg: Optional[float] = None
     top_deg: Optional[float] = None
     period_sec: Optional[float] = None
+    invalid: bool = False
+    invalid_reason: Optional[str] = None
 
 
 class AiReviewOut(BaseModel):
