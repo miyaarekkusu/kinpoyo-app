@@ -40,6 +40,11 @@ import {
   fetchWorkoutsForDates,
   toIsoDate,
 } from '@/services/workout';
+import {
+  applyWorkoutTemplate,
+  fetchWorkoutTemplates,
+  type WorkoutTemplateListItem,
+} from '@/services/workout-templates';
 import { formatDecimal } from '@/utils/format';
 
 const H_PAD = Layout.screenPaddingH;
@@ -148,6 +153,22 @@ export default function HomeScreen() {
   useEffect(() => {
     loadMyProgram();
   }, [loadMyProgram]);
+
+  // ── My筋トレ（保存済みテンプレート）から登録 ──────
+  const [templates, setTemplates] = useState<WorkoutTemplateListItem[]>([]);
+  const [applyingTemplateId, setApplyingTemplateId] = useState<number | null>(null);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+
+  const loadTemplates = useCallback(async () => {
+    try {
+      const list = await fetchWorkoutTemplates(token);
+      setTemplates(list);
+    } catch {
+      setTemplates([]);
+    }
+  }, [token]);
+
+  useFocusEffect(useCallback(() => { loadTemplates(); }, [loadTemplates]));
 
   const hasWorkoutForCell = (cell: Cell): boolean => {
     if (!cell.current) return false;
@@ -275,6 +296,19 @@ export default function HomeScreen() {
     });
   };
 
+  const handleApplyTemplate = async (t: WorkoutTemplateListItem) => {
+    setTemplateError(null);
+    setApplyingTemplateId(t.id);
+    try {
+      await applyWorkoutTemplate(token, t.id, selDateIso);
+      await loadMonthWorkouts();
+    } catch (e) {
+      setTemplateError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
+    } finally {
+      setApplyingTemplateId(null);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* ── Header ─────────────────────────────── */}
@@ -400,6 +434,37 @@ export default function HomeScreen() {
             <Text style={styles.emptyTitle}>トレーニングなし</Text>
             <Text style={styles.emptySubtitle}>タップして筋トレメニューを登録しましょう</Text>
           </TouchableOpacity>
+        )}
+
+        {/* ── My筋トレから登録（未登録日＋テンプレートがある時のみ） ─── */}
+        {selDayWorkouts.length === 0 && templates.length > 0 && (
+          <View style={styles.programCard}>
+            <Text style={styles.programCardTitle}>My筋トレから登録</Text>
+            {templateError && (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{templateError}</Text>
+              </View>
+            )}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.templateChipsRow}>
+              {templates.map(t => (
+                <TouchableOpacity
+                  key={t.id}
+                  style={styles.templateChip}
+                  activeOpacity={0.75}
+                  disabled={applyingTemplateId != null}
+                  onPress={() => handleApplyTemplate(t)}>
+                  {applyingTemplateId === t.id ? (
+                    <ActivityIndicator color={Colors.primaryDark} size="small" />
+                  ) : (
+                    <>
+                      <Text style={styles.templateChipName} numberOfLines={1}>{t.name}</Text>
+                      <Text style={styles.templateChipMeta}>{t.exercise_count}種目</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
         )}
 
         {/* ── プログラムの筋トレメニュー登録（未登録日＋参加中プログラムがある時のみ） ─── */}
@@ -847,4 +912,20 @@ const styles = StyleSheet.create({
   },
   suggestionBtnDisabled: { opacity: 0.6 },
   suggestionBtnText: { color: Colors.textOnPrimary, fontSize: FontSize.base, fontWeight: FontWeight.bold },
+
+  // ── My筋トレテンプレート チップ
+  templateChipsRow: { gap: Space[2], paddingTop: Space[1] },
+  templateChip: {
+    minWidth: 96,
+    paddingHorizontal: Space[3],
+    paddingVertical: Space[2],
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    borderColor: Colors.primaryBorder,
+    backgroundColor: Colors.primarySubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  templateChipName: { fontSize: FontSize.sm, fontWeight: FontWeight.bold, color: Colors.primaryDark },
+  templateChipMeta: { fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 2 },
 });

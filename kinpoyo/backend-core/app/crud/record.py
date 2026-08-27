@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session as DbSession, selectinload
 
 from app.models.workout import SessionExercise, WorkoutSession
 from app.schemas.record import (
+    AchievementsOut,
     HistoryExerciseSummary,
     HistoryItem,
     HistoryPeriodKey,
@@ -17,7 +18,10 @@ from app.schemas.record import (
     VolumeSummaryPoint,
 )
 
-STATUS_CANCELLED = 4
+# 「記録」は実際にやった筋トレのみを対象とする。予定済み(scheduled)・実施中
+# (in_progress)のセッションはtotal_volumeが未確定/0なので含めない
+# （2026-08-24、記録画面を実データ接続する際に統一）。
+STATUS_COMPLETED = 3
 
 
 def _completed_sessions_in_range(
@@ -25,7 +29,7 @@ def _completed_sessions_in_range(
 ) -> list[WorkoutSession]:
     stmt = select(WorkoutSession).where(
         WorkoutSession.user_id == user_id,
-        WorkoutSession.status_id != STATUS_CANCELLED,
+        WorkoutSession.status_id == STATUS_COMPLETED,
         WorkoutSession.scheduled_date.is_not(None),
         WorkoutSession.scheduled_date >= start,
         WorkoutSession.scheduled_date <= end,
@@ -99,7 +103,7 @@ def get_max_weight(db: DbSession, user_id: int, exercise_id: int) -> Optional[Ma
         .join(WorkoutSession.session_exercises)
         .where(
             WorkoutSession.user_id == user_id,
-            WorkoutSession.status_id != STATUS_CANCELLED,
+            WorkoutSession.status_id == STATUS_COMPLETED,
             WorkoutSession.scheduled_date.is_not(None),
             SessionExercise.exercise_id == exercise_id,
         )
@@ -146,7 +150,7 @@ def get_history(
     today = date.today()
     stmt = select(WorkoutSession).where(
         WorkoutSession.user_id == user_id,
-        WorkoutSession.status_id != STATUS_CANCELLED,
+        WorkoutSession.status_id == STATUS_COMPLETED,
         WorkoutSession.scheduled_date.is_not(None),
     )
     if period == "week":
@@ -187,8 +191,52 @@ def get_history(
                 session_id=session.id,
                 scheduled_date=session.scheduled_date,
                 title=session.title,
+                duration_sec=session.duration_sec,
                 exercises=exercise_summaries,
             )
         )
 
     return results
+
+
+def _compute_weekly_streak(sessions: list[WorkoutSession]) -> int:
+    """今週を含めて連続で、完了済みワークアウトが1回以上あった週の数を数える
+    （ISO週。プロフィール画面の「実績」セクション用、2026-08-25追加）。"""
+    weeks_with_workout: set[tuple[int, int]] = set()
+    for s in sessions:
+        if s.scheduled_date is None:
+            continue
+        iso_year, iso_week, _ = s.scheduled_date.isocalendar()
+        weeks_with_workout.add((iso_year, iso_week))
+
+    if not weeks_with_workout:
+        return 0
+
+    today = date.today()
+    year, week, _ = today.isocalendar()
+    streak = 0
+    while (year, week) in weeks_with_workout:
+        streak += 1
+        prev_monday = date.fromisocalendar(year, week, 1) - timedelta(days=7)
+        year, week, _ = prev_monday.isocalendar()
+    return streak
+
+
+def get_achievements(db: DbSession, user_id: int) -> AchievementsOut:
+    """プロフィール画面の「実績」セクション用。全期間（累計）の集計。"""
+    stmt = select(WorkoutSession).where(
+        WorkoutSession.user_id == user_id,
+        WorkoutSession.status_id == STATUS_COMPLETED,
+        WorkoutSession.scheduled_date.is_not(None),
+    )
+    sessions = list(db.scalars(stmt).all())
+
+    total_volume = sum((s.total_volume or Decimal("0")) for s in sessions)
+    total_duration_sec = sum((s.duration_sec or 0) for s in sessions)
+
+    return AchievementsOut(
+        total_volume=total_volume,
+        total_workouts=len(sessions),
+        total_duration_sec=total_duration_sec,
+        weekly_streak=_compute_weekly_streak(sessions),
+    )

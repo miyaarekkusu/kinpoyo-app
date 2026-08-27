@@ -86,6 +86,11 @@ class SessionSet(Base):
     duration_sec: Mapped[Optional[int]] = mapped_column(Integer)
     is_warmup: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_counted_reps: Mapped[Optional[int]] = mapped_column(SmallInteger)
+    rep_cycles_json: Mapped[Optional[list]] = mapped_column(JSONB)
+    # このセットの後に取る休憩時間（秒）。2026-08-24、セットごとにカスタムな休憩を
+    # 挟めるようにするため session_exercises.rest_interval_sec（種目単位・一律）から
+    # こちらへ移行。未設定ならworkout-camera.tsx側は手動再開ボタンにフォールバックする。
+    rest_after_sec: Mapped[Optional[int]] = mapped_column(Integer)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, nullable=False
@@ -117,7 +122,7 @@ class PoseRecord(Base):
 
 
 class AiReview(Base):
-    """Claude API フォームレビュー — AI処理テーブル（変更禁止）"""
+    """DeepSeek API フォームレビュー"""
     __tablename__ = "ai_reviews"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -125,7 +130,7 @@ class AiReview(Base):
         Integer, ForeignKey("session_exercises.id", ondelete="CASCADE"), unique=True, nullable=False
     )
     model_version: Mapped[str] = mapped_column(
-        String(50), default="claude-sonnet-4-6", nullable=False
+        String(50), default="deepseek-chat", nullable=False
     )
     prompt_tokens: Mapped[Optional[int]] = mapped_column(Integer)
     completion_tokens: Mapped[Optional[int]] = mapped_column(Integer)
@@ -134,8 +139,37 @@ class AiReview(Base):
     strengths_json: Mapped[Optional[dict]] = mapped_column(JSONB)
     improvements_json: Mapped[Optional[dict]] = mapped_column(JSONB)
     injury_risk_level: Mapped[Optional[str]] = mapped_column(String(10))
+    matched_part_codes_json: Mapped[Optional[dict]] = mapped_column(JSONB)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, nullable=False
     )
 
     session_exercise: Mapped["SessionExercise"] = relationship(back_populates="ai_review")
+
+
+class WorkoutSessionReport(Base):
+    """DeepSeek API 筋トレ全体（複数種目にまたがる）のAIレビュー・実績レポート。
+    DATABASE.md 4.20参照。種目ごとのAiReviewとは別テーブル。"""
+    __tablename__ = "workout_session_reports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    workout_session_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workout_sessions.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    feedback_text: Mapped[str] = mapped_column(Text, nullable=False)
+    matched_part_codes_json: Mapped[Optional[list]] = mapped_column(JSONB)
+    planned_vs_actual_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    compared_session_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("workout_sessions.id", ondelete="SET NULL")
+    )
+    model_version: Mapped[str] = mapped_column(
+        String(50), default="deepseek-chat", nullable=False
+    )
+    prompt_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    completion_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )
+
+    workout_session: Mapped["WorkoutSession"] = relationship(foreign_keys=[workout_session_id])
+    compared_session: Mapped[Optional["WorkoutSession"]] = relationship(foreign_keys=[compared_session_id])

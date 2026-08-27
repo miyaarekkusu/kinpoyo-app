@@ -1,5 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Dimensions,
   Modal,
   ScrollView,
@@ -9,13 +11,30 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { LineChart } from 'react-native-gifted-charts';
 
+import { AppHeader, PageTitleBar } from '@/components/ui/app-header';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { TrainerAvatar } from '@/components/ui/trainer-avatar';
+import { NotificationsModal } from '@/components/notifications-modal';
 import {
   Colors, FontSize, FontWeight, Layout, Radius, Shadow, Space,
 } from '@/constants/theme';
+import { useAuth } from '@/hooks/use-auth';
+import { ApiError } from '@/services/api';
+import { fetchWorkoutReport } from '@/services/workout';
+import {
+  HistoryItem,
+  HistoryPeriodKey,
+  MaxWeightOut,
+  PeriodKey,
+  VolumeSummaryOut,
+  fetchHistory,
+  fetchMaxWeight,
+  fetchVolumeSummary,
+} from '@/services/records';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const H_PAD   = Layout.screenPaddingH;
@@ -25,157 +44,73 @@ const CHART_W  = SCREEN_W - H_PAD * 2 - CARD_PAD * 2 - Y_AXIS_W;
 
 const AXIS_TEXT: object = { fontSize: 10, color: Colors.textHint };
 
-// ─── グラフ データ型 ──────────────────────────────────────────
+// ─── 期間・型 ──────────────────────────────────────────────────
 
 type GraphPeriod = '週' | '月' | '年';
-
-type VolPoint = { value: number; label: string };
-const VOLUME: Record<GraphPeriod, VolPoint[]> = {
-  週: [
-    { value: 2800, label: '月' }, { value: 0,    label: '火' },
-    { value: 4200, label: '水' }, { value: 0,    label: '木' },
-    { value: 3100, label: '金' }, { value: 5500, label: '土' },
-    { value: 0,    label: '日' },
-  ],
-  月: [
-    { value: 8500,  label: '1週' }, { value: 9200,  label: '2週' },
-    { value: 10100, label: '3週' }, { value: 11300, label: '4週' },
-  ],
-  年: [
-    { value: 32000, label: '1月' }, { value: 28000, label: '2月' },
-    { value: 35000, label: '3月' }, { value: 40000, label: '4月' },
-    { value: 38000, label: '5月' }, { value: 15000, label: '6月' },
-  ],
-};
-
-const SUMMARY: Record<GraphPeriod, { count: number; volume: number; label: string }> = {
-  週: { count: 3,  volume: 15600,  label: '回 / 今週' },
-  月: { count: 12, volume: 39100,  label: '回 / 今月' },
-  年: { count: 20, volume: 188000, label: '回 / 今年' },
-};
-
-const EXERCISES = ['ベンチプレス', 'スクワット', 'デッドリフト', 'ショルダープレス'] as const;
-type Ex = (typeof EXERCISES)[number];
-
-type WtPoint = { value: number; label: string; dataPointText: string };
-const WEIGHT_DATA: Record<Ex, WtPoint[]> = {
-  ベンチプレス: [
-    { value: 65,   label: '5/9',  dataPointText: '65'    },
-    { value: 67.5, label: '5/16', dataPointText: '67.5'  },
-    { value: 70,   label: '5/23', dataPointText: '70'    },
-    { value: 70,   label: '5/30', dataPointText: '70'    },
-    { value: 72.5, label: '6/6',  dataPointText: '72.5'  },
-  ],
-  スクワット: [
-    { value: 80,   label: '5/9',  dataPointText: '80'   },
-    { value: 80,   label: '5/16', dataPointText: '80'   },
-    { value: 82.5, label: '5/23', dataPointText: '82.5' },
-    { value: 85,   label: '5/30', dataPointText: '85'   },
-    { value: 87.5, label: '6/6',  dataPointText: '87.5' },
-  ],
-  デッドリフト: [
-    { value: 100,   label: '5/9',  dataPointText: '100'   },
-    { value: 100,   label: '5/16', dataPointText: '100'   },
-    { value: 105,   label: '5/23', dataPointText: '105'   },
-    { value: 107.5, label: '5/30', dataPointText: '107.5' },
-    { value: 110,   label: '6/6',  dataPointText: '110'   },
-  ],
-  ショルダープレス: [
-    { value: 40,   label: '5/9',  dataPointText: '40'   },
-    { value: 42.5, label: '5/16', dataPointText: '42.5' },
-    { value: 42.5, label: '5/23', dataPointText: '42.5' },
-    { value: 45,   label: '5/30', dataPointText: '45'   },
-    { value: 45,   label: '6/6',  dataPointText: '45'   },
-  ],
-};
-
-// ─── 履歴 データ型 ────────────────────────────────────────────
+const GRAPH_PERIOD_TO_KEY: Record<GraphPeriod, PeriodKey> = { 週: 'week', 月: 'month', 年: 'year' };
 
 type HistPeriod = '全期間' | '今月' | '今週';
 const HIST_PERIODS: HistPeriod[] = ['全期間', '今月', '今週'];
+const HIST_PERIOD_TO_KEY: Record<HistPeriod, HistoryPeriodKey> = { 全期間: 'all', 今月: 'month', 今週: 'week' };
 
-const MUSCLE_GROUPS = [
-  { label: '胸',   color: '#EF4444' },
-  { label: '背中', color: '#3B82F6' },
-  { label: '脚',   color: '#22C55E' },
-  { label: '肩',   color: '#F59E0B' },
-  { label: '腕',   color: '#8B5CF6' },
-  { label: '腹筋', color: '#EC4899' },
-] as const;
-type MuscleGroup = (typeof MUSCLE_GROUPS)[number]['label'];
-
-type HistWorkout = { name: string; muscle: string; color: string; sets: number; maxWeight: number };
-type HistEntry   = { date: string; weekday: string; month: number; day: number; workouts: HistWorkout[] };
-
-const HISTORY: HistEntry[] = [
-  {
-    date: '6/6', weekday: '土', month: 6, day: 6,
-    workouts: [
-      { name: 'スクワット',       muscle: '脚', color: '#22C55E', sets: 3, maxWeight: 87.5 },
-      { name: 'ショルダープレス', muscle: '肩', color: '#F59E0B', sets: 2, maxWeight: 45   },
-    ],
-  },
-  {
-    date: '6/4', weekday: '木', month: 6, day: 4,
-    workouts: [
-      { name: 'デッドリフト', muscle: '背中', color: '#3B82F6', sets: 3, maxWeight: 110 },
-    ],
-  },
-  {
-    date: '6/2', weekday: '火', month: 6, day: 2,
-    workouts: [
-      { name: 'ベンチプレス', muscle: '胸', color: '#EF4444', sets: 3, maxWeight: 72.5 },
-    ],
-  },
-  {
-    date: '5/30', weekday: '金', month: 5, day: 30,
-    workouts: [
-      { name: 'ベンチプレス', muscle: '胸', color: '#EF4444', sets: 3, maxWeight: 70 },
-      { name: 'アームカール', muscle: '腕', color: '#8B5CF6', sets: 3, maxWeight: 20 },
-    ],
-  },
-  {
-    date: '5/23', weekday: '土', month: 5, day: 23,
-    workouts: [
-      { name: 'スクワット', muscle: '脚', color: '#22C55E', sets: 3, maxWeight: 82.5 },
-    ],
-  },
-  {
-    date: '5/16', weekday: '金', month: 5, day: 16,
-    workouts: [
-      { name: 'デッドリフト',     muscle: '背中', color: '#3B82F6', sets: 3, maxWeight: 100 },
-      { name: 'ショルダープレス', muscle: '肩',   color: '#F59E0B', sets: 3, maxWeight: 42.5 },
-    ],
-  },
-  {
-    date: '5/9', weekday: '金', month: 5, day: 9,
-    workouts: [
-      { name: 'ベンチプレス', muscle: '胸', color: '#EF4444', sets: 3, maxWeight: 65 },
-      { name: 'スクワット',   muscle: '脚', color: '#22C55E', sets: 3, maxWeight: 80 },
-    ],
-  },
-];
+type VolPoint = { value: number; label: string };
+type MuscleOption = { label: string; color: string };
+type ExerciseOption = { id: number; name: string };
 
 // ─── ユーティリティ ───────────────────────────────────────────
 
+// "YYYY-MM-DD"をローカルタイムゾーンの日付として解釈する（new Date(string)の
+// UTC解釈によるタイムゾーンずれを避けるため）。
+function parseIsoDate(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+function mdLabel(s: string): string {
+  const d = parseIsoDate(s);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+const WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土'];
+function weekdayLabel(s: string): string {
+  return WEEKDAY_JA[parseIsoDate(s).getDay()];
+}
+function toNum(v: string | number | null | undefined): number {
+  if (v === null || v === undefined) return 0;
+  return typeof v === 'number' ? v : Number(v);
+}
 function spacing(n: number): number {
   return Math.max(20, Math.floor((CHART_W - 20) / Math.max(n - 1, 1)));
 }
 function fmtVol(v: number): string {
   if (v >= 10000) return `${(v / 1000).toFixed(0)}k`;
   if (v > 0)      return `${(v / 1000).toFixed(1)}k`;
-  return '';
+  return '0';
+}
+function fmtDuration(sec: number | null): string | null {
+  if (sec == null || sec <= 0) return null;
+  const mins = Math.round(sec / 60);
+  if (mins < 60) return `${mins}分`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}時間${m}分` : `${h}時間`;
 }
 
-// AIトレーナーのコメント（仮実装 — 今後 Claude API 連携のレビューに置き換え予定）
-function aiComment(period: GraphPeriod, vol: VolPoint[], summary: { count: number; volume: number }): string {
+// AIトレーナーのコメント：実測データ（volumeSummary/セッション数）を使った決定的な
+// 傾向判定文。期間集計に対する本物のAIレビュー機能（DeepSeek等）はまだ無いため、
+// 簡易ヒューリスティックのまま（AGENTS.md参照。将来的にAI生成へ置き換え候補）。
+function aiComment(period: GraphPeriod, vol: VolPoint[], sessionCount: number): string {
+  if (sessionCount === 0) {
+    if (period === '週') return '今週はまだトレーニング記録がありません。まずは1回、体を動かしてみましょう。';
+    if (period === '月') return '今月はまだトレーニング記録がありません。無理のない範囲で始めてみましょう。';
+    return '今年はまだトレーニング記録がありません。少しずつ積み重ねていきましょう。';
+  }
+
   const points = vol.map(v => v.value).filter(v => v > 0);
   const trendUp = points.length >= 2 && points[points.length - 1] >= points[0];
 
   if (period === '週') {
     return trendUp
-      ? `今週は${summary.count}回のトレーニングでボリュームが順調に伸びています。この調子で来週も継続していきましょう。`
-      : `今週は${summary.count}回トレーニングできました。次回は少し強度を上げてみると、さらに成長につながりそうです。`;
+      ? `今週は${sessionCount}回のトレーニングでボリュームが順調に伸びています。この調子で来週も継続していきましょう。`
+      : `今週は${sessionCount}回トレーニングできました。次回は少し強度を上げてみると、さらに成長につながりそうです。`;
   }
   if (period === '月') {
     return trendUp
@@ -187,46 +122,17 @@ function aiComment(period: GraphPeriod, vol: VolPoint[], summary: { count: numbe
     : `直近の月でボリュームが落ち着いています。無理のないペースで継続していきましょう。`;
 }
 
-function applyHistFilter(
-  entries: HistEntry[],
-  period: HistPeriod,
-  muscles: string[],
-): HistEntry[] {
-  const today = new Date();
-  const year  = today.getFullYear();
-
-  let result = entries.filter(e => {
-    const d = new Date(year, e.month - 1, e.day);
-    if (period === '今週') {
-      const sun = new Date(today);
-      sun.setDate(today.getDate() - today.getDay());
-      sun.setHours(0, 0, 0, 0);
-      return d >= sun;
-    }
-    if (period === '今月') {
-      return e.month === today.getMonth() + 1;
-    }
-    return true;
-  });
-
-  if (muscles.length > 0) {
-    result = result
-      .map(e => ({ ...e, workouts: e.workouts.filter(w => muscles.includes(w.muscle)) }))
-      .filter(e => e.workouts.length > 0);
-  }
-  return result;
-}
-
 // ─── 履歴フィルターバー（共通 UI） ───────────────────────────
 
 type FilterBarProps = {
   histPeriod:   HistPeriod;
   histMuscles:  string[];
+  muscleOptions: MuscleOption[];
   onPeriod:     (p: HistPeriod) => void;
   onToggleMuscle: (m: string) => void;
 };
 
-function FilterBar({ histPeriod, histMuscles, onPeriod, onToggleMuscle }: FilterBarProps) {
+function FilterBar({ histPeriod, histMuscles, muscleOptions, onPeriod, onToggleMuscle }: FilterBarProps) {
   return (
     <View style={fb.wrap}>
       {/* 期間 */}
@@ -240,9 +146,9 @@ function FilterBar({ histPeriod, histMuscles, onPeriod, onToggleMuscle }: Filter
             <Text style={[fb.chipText, histPeriod === p && fb.chipTextActive]}>{p}</Text>
           </TouchableOpacity>
         ))}
-        <View style={fb.divider} />
+        {muscleOptions.length > 0 && <View style={fb.divider} />}
         {/* 部位（選択時は部位ごとの色） */}
-        {MUSCLE_GROUPS.map(({ label, color }) => {
+        {muscleOptions.map(({ label, color }) => {
           const active = histMuscles.includes(label);
           return (
             <TouchableOpacity
@@ -283,29 +189,48 @@ const fb = StyleSheet.create({
 
 // ─── 履歴カード（共通 UI） ────────────────────────────────────
 
-function HistoryCard({ entry }: { entry: HistEntry }) {
+function HistoryCard({ item, onPress, loading }: { item: HistoryItem; onPress: () => void; loading: boolean }) {
+  const dateLabel = item.scheduled_date ? mdLabel(item.scheduled_date) : '-';
+  const weekday = item.scheduled_date ? weekdayLabel(item.scheduled_date) : null;
+  const duration = fmtDuration(item.duration_sec);
   return (
-    <View style={hc.card}>
+    <TouchableOpacity style={hc.card} onPress={onPress} activeOpacity={0.7} disabled={loading}>
       <View style={hc.header}>
         <View style={hc.dateWrap}>
-          <Text style={hc.date}>{entry.date}</Text>
-          <Text style={hc.weekday}>（{entry.weekday}）</Text>
+          <Text style={hc.date}>{dateLabel}</Text>
+          {weekday && <Text style={hc.weekday}>（{weekday}）</Text>}
+          {duration && <Text style={hc.duration}>· {duration}</Text>}
         </View>
-        <Text style={hc.count}>{entry.workouts.length}種目</Text>
+        <View style={hc.headerRight}>
+          <Text style={hc.count}>{item.exercises.length}種目</Text>
+          {loading ? (
+            <ActivityIndicator size="small" color={Colors.primaryDark} />
+          ) : (
+            <IconSymbol name="chevron.right" size={14} color={Colors.textHint} />
+          )}
+        </View>
       </View>
-      {entry.workouts.map((w, j) => (
-        <View key={j} style={[hc.row, j < entry.workouts.length - 1 && hc.rowBorder]}>
-          <View style={[hc.bar, { backgroundColor: w.color }]} />
-          <View style={hc.info}>
-            <Text style={hc.name}>{w.name}</Text>
-            <Text style={hc.detail}>{w.sets}セット · 最大 {w.maxWeight}kg</Text>
+      {item.exercises.map((ex, j) => {
+        const color = ex.muscle_group_color ?? Colors.textHint;
+        return (
+          <View
+            key={ex.exercise_id}
+            style={[hc.row, j < item.exercises.length - 1 && hc.rowBorder]}>
+            <View style={[hc.bar, { backgroundColor: color }]} />
+            <View style={hc.info}>
+              <Text style={hc.name}>{ex.exercise_name}</Text>
+              <Text style={hc.detail}>
+                {ex.sets_count}セット
+                {ex.max_weight_kg != null ? ` · 最大 ${toNum(ex.max_weight_kg)}kg` : ''}
+              </Text>
+            </View>
+            <View style={[hc.badge, { backgroundColor: color + '22' }]}>
+              <Text style={[hc.badgeText, { color }]}>{ex.muscle_group_name}</Text>
+            </View>
           </View>
-          <View style={[hc.badge, { backgroundColor: w.color + '22' }]}>
-            <Text style={[hc.badgeText, { color: w.color }]}>{w.muscle}</Text>
-          </View>
-        </View>
-      ))}
-    </View>
+        );
+      })}
+    </TouchableOpacity>
   );
 }
 
@@ -329,6 +254,8 @@ const hc = StyleSheet.create({
   dateWrap: { flexDirection: 'row', alignItems: 'baseline', gap: Space[1] },
   date:     { fontSize: FontSize.md, fontWeight: FontWeight.bold, color: Colors.textPrimary },
   weekday:  { fontSize: FontSize.sm, color: Colors.textSecondary },
+  duration: { fontSize: FontSize.sm, color: Colors.textHint, marginLeft: Space[1] },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: Space[2] },
   count:    { fontSize: FontSize.sm, color: Colors.textHint, fontWeight: FontWeight.medium },
   row:      { flexDirection: 'row', alignItems: 'center', gap: Space[3], paddingVertical: Space[2] },
   rowBorder:{ borderBottomWidth: 1, borderBottomColor: Colors.divider },
@@ -343,26 +270,159 @@ const hc = StyleSheet.create({
 // ─── メイン画面 ───────────────────────────────────────────────
 
 export default function RecordsScreen() {
-  const [graphPeriod,    setGraphPeriod]    = useState<GraphPeriod>('週');
-  const [exercise,       setExercise]       = useState<Ex>('ベンチプレス');
-  const [histPeriod,     setHistPeriod]     = useState<HistPeriod>('全期間');
-  const [histMuscles,    setHistMuscles]    = useState<string[]>([]);
-  const [histModalOpen,  setHistModalOpen]  = useState(false);
+  const { token } = useAuth();
+  const [showNotifModal, setShowNotifModal] = useState(false);
 
-  const volData = VOLUME[graphPeriod];
-  const summary = SUMMARY[graphPeriod];
-  const wtData  = WEIGHT_DATA[exercise];
+  // ── ボリューム推移・サマリー ──────────────────
+  const [graphPeriod, setGraphPeriod] = useState<GraphPeriod>('週');
+  const [volumeSummary, setVolumeSummary] = useState<VolumeSummaryOut | null>(null);
+  const [volumeLoading, setVolumeLoading] = useState(true);
+  const [volumeError, setVolumeError] = useState<string | null>(null);
 
-  const latestWt = wtData[wtData.length - 1].value;
-  const firstWt  = wtData[0].value;
-  const wtDiff   = +(latestWt - firstWt).toFixed(1);
-  const wtMin    = Math.min(...wtData.map(d => d.value));
+  const loadVolume = useCallback(async () => {
+    setVolumeLoading(true);
+    setVolumeError(null);
+    try {
+      const data = await fetchVolumeSummary(token, GRAPH_PERIOD_TO_KEY[graphPeriod]);
+      setVolumeSummary(data);
+    } catch (e) {
+      setVolumeError(e instanceof ApiError ? e.detail : '読み込みに失敗しました');
+    } finally {
+      setVolumeLoading(false);
+    }
+  }, [token, graphPeriod]);
+
+  useEffect(() => { loadVolume(); }, [loadVolume]);
+  useFocusEffect(useCallback(() => { loadVolume(); }, [loadVolume]));
+
+  const volData: VolPoint[] = useMemo(() => {
+    if (!volumeSummary) return [];
+    return volumeSummary.points.map((p, i) => {
+      let label: string;
+      if (graphPeriod === '週') label = weekdayLabel(p.period_start);
+      else if (graphPeriod === '月') label = `${i + 1}週`;
+      else label = `${parseIsoDate(p.period_start).getMonth() + 1}月`;
+      return { value: toNum(p.volume), label };
+    });
+  }, [volumeSummary, graphPeriod]);
+
+  const summaryCount = volumeSummary?.total_sessions ?? 0;
+  const summaryVolume = toNum(volumeSummary?.total_volume);
+  const summaryLabel = graphPeriod === '週' ? '回 / 今週' : graphPeriod === '月' ? '回 / 今月' : '回 / 今年';
+
+  // ── 種目別最大重量・履歴フィルター選択肢（全期間データから作成）──
+  const [allHistory, setAllHistory] = useState<HistoryItem[] | null>(null);
+  const [allHistoryLoading, setAllHistoryLoading] = useState(true);
+  const [allHistoryError, setAllHistoryError] = useState<string | null>(null);
+  const [exerciseId, setExerciseId] = useState<number | null>(null);
+
+  const loadAllHistory = useCallback(async () => {
+    setAllHistoryLoading(true);
+    setAllHistoryError(null);
+    try {
+      const data = await fetchHistory(token, 'all');
+      setAllHistory(data);
+      setExerciseId(prev => prev ?? data.flatMap(h => h.exercises)[0]?.exercise_id ?? null);
+    } catch (e) {
+      setAllHistoryError(e instanceof ApiError ? e.detail : '読み込みに失敗しました');
+    } finally {
+      setAllHistoryLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { loadAllHistory(); }, [loadAllHistory]);
+  useFocusEffect(useCallback(() => { loadAllHistory(); }, [loadAllHistory]));
+
+  const muscleOptions: MuscleOption[] = useMemo(() => {
+    if (!allHistory) return [];
+    const map = new Map<string, MuscleOption>();
+    for (const item of allHistory) {
+      for (const ex of item.exercises) {
+        if (!map.has(ex.muscle_group_name)) {
+          map.set(ex.muscle_group_name, { label: ex.muscle_group_name, color: ex.muscle_group_color ?? Colors.textHint });
+        }
+      }
+    }
+    return Array.from(map.values());
+  }, [allHistory]);
+
+  const exerciseOptions: ExerciseOption[] = useMemo(() => {
+    if (!allHistory) return [];
+    const seen = new Set<number>();
+    const list: ExerciseOption[] = [];
+    for (const item of allHistory) {
+      for (const ex of item.exercises) {
+        if (!seen.has(ex.exercise_id)) {
+          seen.add(ex.exercise_id);
+          list.push({ id: ex.exercise_id, name: ex.exercise_name });
+        }
+      }
+    }
+    return list;
+  }, [allHistory]);
+
+  const [maxWeight, setMaxWeight] = useState<MaxWeightOut | null>(null);
+  const [maxWeightLoading, setMaxWeightLoading] = useState(false);
+  const [maxWeightError, setMaxWeightError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (exerciseId == null) return;
+    let cancelled = false;
+    setMaxWeightLoading(true);
+    setMaxWeightError(null);
+    fetchMaxWeight(token, exerciseId)
+      .then(data => { if (!cancelled) setMaxWeight(data); })
+      .catch(e => { if (!cancelled) setMaxWeightError(e instanceof ApiError ? e.detail : '読み込みに失敗しました'); })
+      .finally(() => { if (!cancelled) setMaxWeightLoading(false); });
+    return () => { cancelled = true; };
+  }, [token, exerciseId]);
+
+  const wtData = useMemo(() => {
+    if (!maxWeight) return [];
+    return maxWeight.points.map(p => {
+      const v = toNum(p.max_weight_kg);
+      return { value: v, label: mdLabel(p.session_date), dataPointText: String(v) };
+    });
+  }, [maxWeight]);
+
+  const hasWtData = wtData.length > 0;
+  const latestWt = hasWtData ? wtData[wtData.length - 1].value : 0;
+  const firstWt  = hasWtData ? wtData[0].value : 0;
+  const wtDiff   = hasWtData ? +(latestWt - firstWt).toFixed(1) : 0;
+  const wtMin    = hasWtData ? Math.min(...wtData.map(d => d.value)) : 0;
   const wtBase   = Math.max(0, Math.floor((wtMin - 8) / 5) * 5);
 
-  const filteredHistory = useMemo(
-    () => applyHistFilter(HISTORY, histPeriod, histMuscles),
-    [histPeriod, histMuscles],
-  );
+  // ── 筋トレ履歴（期間ごとに再取得、部位はクライアント側で絞り込み）──
+  const [histPeriod,    setHistPeriod]    = useState<HistPeriod>('全期間');
+  const [histMuscles,   setHistMuscles]   = useState<string[]>([]);
+  const [histModalOpen, setHistModalOpen] = useState(false);
+  const [periodHistory, setPeriodHistory] = useState<HistoryItem[] | null>(null);
+  const [periodHistoryLoading, setPeriodHistoryLoading] = useState(true);
+  const [periodHistoryError, setPeriodHistoryError] = useState<string | null>(null);
+
+  const loadPeriodHistory = useCallback(async () => {
+    setPeriodHistoryLoading(true);
+    setPeriodHistoryError(null);
+    try {
+      const data = await fetchHistory(token, HIST_PERIOD_TO_KEY[histPeriod]);
+      setPeriodHistory(data);
+    } catch (e) {
+      setPeriodHistoryError(e instanceof ApiError ? e.detail : '読み込みに失敗しました');
+    } finally {
+      setPeriodHistoryLoading(false);
+    }
+  }, [token, histPeriod]);
+
+  useEffect(() => { loadPeriodHistory(); }, [loadPeriodHistory]);
+  useFocusEffect(useCallback(() => { loadPeriodHistory(); }, [loadPeriodHistory]));
+
+  const filteredHistory = useMemo(() => {
+    if (!periodHistory) return [];
+    if (histMuscles.length === 0) return periodHistory;
+    return periodHistory
+      .map(item => ({ ...item, exercises: item.exercises.filter(ex => histMuscles.includes(ex.muscle_group_name)) }))
+      .filter(item => item.exercises.length > 0);
+  }, [periodHistory, histMuscles]);
 
   const toggleMuscle = (m: string) =>
     setHistMuscles(prev =>
@@ -372,13 +432,37 @@ export default function RecordsScreen() {
   const previewHistory = filteredHistory.slice(0, 3);
   const hasMore = filteredHistory.length > 3;
 
+  // 筋トレ履歴のカードをタップ→そのセッションの過去のAIレポートを取得して表示。
+  const [openingSessionId, setOpeningSessionId] = useState<number | null>(null);
+  const handleOpenReport = async (item: HistoryItem) => {
+    if (openingSessionId != null) return;
+    setOpeningSessionId(item.session_id);
+    try {
+      const report = await fetchWorkoutReport(token, item.session_id);
+      const weekday = item.scheduled_date ? weekdayLabel(item.scheduled_date) : null;
+      const dateLabel = item.scheduled_date
+        ? `${mdLabel(item.scheduled_date)}${weekday ? `（${weekday}）` : ''}`
+        : undefined;
+      router.push({
+        pathname: '/(screens)/workout-report-result',
+        params: { reportJson: JSON.stringify(report), ...(dateLabel ? { dateLabel } : {}) },
+      });
+    } catch (e) {
+      Alert.alert(
+        'レポートを取得できませんでした',
+        e instanceof ApiError ? e.detail : '時間をおいて再度お試しください',
+      );
+    } finally {
+      setOpeningSessionId(null);
+    }
+  };
+
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
 
       {/* ── ヘッダー ─────────────────────────── */}
-      <View style={s.header}>
-        <Text style={s.headerTitle}>記録</Text>
-      </View>
+      <AppHeader onBellPress={() => setShowNotifModal(true)} />
+      <PageTitleBar title="記録" />
 
       <ScrollView
         contentContainerStyle={s.scroll}
@@ -398,7 +482,7 @@ export default function RecordsScreen() {
           ))}
         </View>
 
-        {/* ── AIトレーナー（仮実装） ─────── */}
+        {/* ── AIトレーナー（実測データによる決定的コメント） ─── */}
         <View style={s.aiCard}>
           <View style={s.aiHeaderRow}>
             <TrainerAvatar size={36} />
@@ -411,17 +495,23 @@ export default function RecordsScreen() {
               </Text>
             </View>
           </View>
-          <Text style={s.aiComment}>{aiComment(graphPeriod, volData, summary)}</Text>
+          {volumeLoading ? (
+            <ActivityIndicator color={Colors.primaryDark} />
+          ) : volumeError ? (
+            <Text style={s.errorInlineText}>{volumeError}</Text>
+          ) : (
+            <Text style={s.aiComment}>{aiComment(graphPeriod, volData, summaryCount)}</Text>
+          )}
         </View>
 
         {/* ── サマリー ──────────────────────── */}
         <View style={s.summaryRow}>
           <View style={s.summaryCard}>
-            <Text style={s.summaryVal}>{summary.count}</Text>
-            <Text style={s.summaryLbl}>{summary.label}</Text>
+            <Text style={s.summaryVal}>{summaryCount}</Text>
+            <Text style={s.summaryLbl}>{summaryLabel}</Text>
           </View>
           <View style={s.summaryCard}>
-            <Text style={s.summaryVal}>{fmtVol(summary.volume)}</Text>
+            <Text style={s.summaryVal}>{fmtVol(summaryVolume)}</Text>
             <Text style={s.summaryLbl}>kg ボリューム</Text>
           </View>
         </View>
@@ -432,22 +522,28 @@ export default function RecordsScreen() {
           <Text style={s.cardSub}>
             {graphPeriod === '週' && '今週の日別ボリューム (重量 × 回数)'}
             {graphPeriod === '月' && '今月の週別ボリューム (重量 × 回数)'}
-            {graphPeriod === '年' && '最新12ヶ月のボリューム — 1年超は年ナビゲーションで確認'}
+            {graphPeriod === '年' && '今年の月別ボリューム (重量 × 回数)'}
           </Text>
-          <LineChart
-            areaChart curved isAnimated
-            data={volData}
-            width={CHART_W} height={150}
-            spacing={spacing(volData.length)} initialSpacing={16}
-            color={Colors.primary} thickness={2.5}
-            startFillColor={Colors.primarySubtle} endFillColor={Colors.bgCard}
-            startOpacity={0.5} endOpacity={0}
-            noOfSections={4}
-            rulesColor={Colors.divider} rulesType="dashed"
-            xAxisColor={Colors.border} yAxisColor="transparent"
-            xAxisLabelTextStyle={AXIS_TEXT} yAxisTextStyle={AXIS_TEXT}
-            dataPointsColor={Colors.primaryDark} dataPointsRadius={4}
-          />
+          {volumeLoading && !volumeSummary ? (
+            <View style={s.chartLoading}><ActivityIndicator color={Colors.primaryDark} /></View>
+          ) : volumeError ? (
+            <View style={s.chartLoading}><Text style={s.errorInlineText}>{volumeError}</Text></View>
+          ) : (
+            <LineChart
+              areaChart isAnimated
+              data={volData}
+              width={CHART_W} height={150}
+              spacing={spacing(volData.length)} initialSpacing={16}
+              color={Colors.primary} thickness={2.5}
+              startFillColor={Colors.primarySubtle} endFillColor={Colors.bgCard}
+              startOpacity={0.5} endOpacity={0}
+              noOfSections={4}
+              rulesColor={Colors.divider} rulesType="dashed"
+              xAxisColor={Colors.border} yAxisColor="transparent"
+              xAxisLabelTextStyle={AXIS_TEXT} yAxisTextStyle={AXIS_TEXT}
+              dataPointsColor={Colors.primaryDark} dataPointsRadius={4}
+            />
+          )}
         </View>
 
         {/* ── 種目別最大重量 ────────────────── */}
@@ -455,52 +551,72 @@ export default function RecordsScreen() {
           <Text style={s.cardTitle}>種目別 最大重量</Text>
           <View style={{ height: Space[3] }} />
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}
-            style={s.exScroll} contentContainerStyle={s.exContent}>
-            {EXERCISES.map(ex => (
-              <TouchableOpacity
-                key={ex}
-                style={[s.exChip, exercise === ex && s.exChipActive]}
-                onPress={() => setExercise(ex)}
-                activeOpacity={0.75}>
-                <Text style={[s.exChipText, exercise === ex && s.exChipTextActive]}>{ex}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          {allHistoryLoading && !allHistory ? (
+            <View style={s.chartLoading}><ActivityIndicator color={Colors.primaryDark} /></View>
+          ) : allHistoryError ? (
+            <View style={s.chartLoading}><Text style={s.errorInlineText}>{allHistoryError}</Text></View>
+          ) : exerciseOptions.length === 0 ? (
+            <View style={s.chartLoading}><Text style={s.emptyHistoryText}>まだ記録がありません</Text></View>
+          ) : (
+            <>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}
+                style={s.exScroll} contentContainerStyle={s.exContent}>
+                {exerciseOptions.map(ex => (
+                  <TouchableOpacity
+                    key={ex.id}
+                    style={[s.exChip, exerciseId === ex.id && s.exChipActive]}
+                    onPress={() => setExerciseId(ex.id)}
+                    activeOpacity={0.75}>
+                    <Text style={[s.exChipText, exerciseId === ex.id && s.exChipTextActive]}>{ex.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
 
-          <View style={s.weightRow}>
-            <View>
-              <View style={s.weightValRow}>
-                <Text style={s.weightVal}>{latestWt}</Text>
-                <Text style={s.weightUnit}> kg</Text>
-              </View>
-              <Text style={s.weightLbl}>現在の最大重量</Text>
-            </View>
-            {wtDiff !== 0 && (
-              <View style={[s.diffBadge, wtDiff > 0 && s.diffBadgeUp]}>
-                <Text style={[s.diffText, wtDiff > 0 && s.diffTextUp]}>
-                  {wtDiff > 0 ? '▲' : '▼'} {Math.abs(wtDiff)} kg
-                </Text>
-              </View>
-            )}
-          </View>
+              {maxWeightLoading && !maxWeight ? (
+                <View style={s.chartLoading}><ActivityIndicator color={Colors.primaryDark} /></View>
+              ) : maxWeightError ? (
+                <View style={s.chartLoading}><Text style={s.errorInlineText}>{maxWeightError}</Text></View>
+              ) : !hasWtData ? (
+                <View style={s.chartLoading}><Text style={s.emptyHistoryText}>重量の記録がありません</Text></View>
+              ) : (
+                <>
+                  <View style={s.weightRow}>
+                    <View>
+                      <View style={s.weightValRow}>
+                        <Text style={s.weightVal}>{latestWt}</Text>
+                        <Text style={s.weightUnit}> kg</Text>
+                      </View>
+                      <Text style={s.weightLbl}>現在の最大重量</Text>
+                    </View>
+                    {wtDiff !== 0 && (
+                      <View style={[s.diffBadge, wtDiff > 0 && s.diffBadgeUp]}>
+                        <Text style={[s.diffText, wtDiff > 0 && s.diffTextUp]}>
+                          {wtDiff > 0 ? '▲' : '▼'} {Math.abs(wtDiff)} kg
+                        </Text>
+                      </View>
+                    )}
+                  </View>
 
-          <LineChart
-            areaChart curved isAnimated
-            data={wtData}
-            width={CHART_W} height={130}
-            spacing={spacing(wtData.length)} initialSpacing={16}
-            color={Colors.primaryDark} thickness={2.5}
-            startFillColor={Colors.primarySubtle} endFillColor={Colors.bgCard}
-            startOpacity={0.4} endOpacity={0}
-            noOfSections={3} yAxisOffset={wtBase}
-            rulesColor={Colors.divider} rulesType="dashed"
-            xAxisColor={Colors.border} yAxisColor="transparent"
-            xAxisLabelTextStyle={AXIS_TEXT} yAxisTextStyle={AXIS_TEXT}
-            dataPointsColor={Colors.primaryDark} dataPointsRadius={5}
-            textFontSize={11} textColor={Colors.primaryDark}
-            textShiftY={-10} textShiftX={-4}
-          />
+                  <LineChart
+                    areaChart curved isAnimated
+                    data={wtData}
+                    width={CHART_W} height={130}
+                    spacing={spacing(wtData.length)} initialSpacing={16}
+                    color={Colors.primaryDark} thickness={2.5}
+                    startFillColor={Colors.primarySubtle} endFillColor={Colors.bgCard}
+                    startOpacity={0.4} endOpacity={0}
+                    noOfSections={3} yAxisOffset={wtBase}
+                    rulesColor={Colors.divider} rulesType="dashed"
+                    xAxisColor={Colors.border} yAxisColor="transparent"
+                    xAxisLabelTextStyle={AXIS_TEXT} yAxisTextStyle={AXIS_TEXT}
+                    dataPointsColor={Colors.primaryDark} dataPointsRadius={5}
+                    textFontSize={11} textColor={Colors.primaryDark}
+                    textShiftY={-10} textShiftX={-4}
+                  />
+                </>
+              )}
+            </>
+          )}
         </View>
 
         {/* ── 筋トレ履歴 ───────────────────── */}
@@ -513,17 +629,29 @@ export default function RecordsScreen() {
         <FilterBar
           histPeriod={histPeriod}
           histMuscles={histMuscles}
+          muscleOptions={muscleOptions}
           onPeriod={setHistPeriod}
           onToggleMuscle={toggleMuscle}
         />
 
         {/* 履歴カード（最大3件） */}
-        {filteredHistory.length === 0 ? (
+        {periodHistoryLoading && !periodHistory ? (
+          <View style={s.emptyHistory}><ActivityIndicator color={Colors.primaryDark} /></View>
+        ) : periodHistoryError ? (
+          <View style={s.emptyHistory}><Text style={s.errorInlineText}>{periodHistoryError}</Text></View>
+        ) : filteredHistory.length === 0 ? (
           <View style={s.emptyHistory}>
             <Text style={s.emptyHistoryText}>該当するトレーニングがありません</Text>
           </View>
         ) : (
-          previewHistory.map((entry, i) => <HistoryCard key={i} entry={entry} />)
+          previewHistory.map(item => (
+            <HistoryCard
+              key={item.session_id}
+              item={item}
+              onPress={() => handleOpenReport(item)}
+              loading={openingSessionId === item.session_id}
+            />
+          ))
         )}
 
         {/* もっと見るボタン */}
@@ -569,6 +697,7 @@ export default function RecordsScreen() {
               <FilterBar
                 histPeriod={histPeriod}
                 histMuscles={histMuscles}
+                muscleOptions={muscleOptions}
                 onPeriod={setHistPeriod}
                 onToggleMuscle={toggleMuscle}
               />
@@ -586,7 +715,14 @@ export default function RecordsScreen() {
                   contentContainerStyle={m.listContent}
                   showsVerticalScrollIndicator={false}
                   keyboardShouldPersistTaps="handled">
-                  {filteredHistory.map((entry, i) => <HistoryCard key={i} entry={entry} />)}
+                  {filteredHistory.map(item => (
+                    <HistoryCard
+                      key={item.session_id}
+                      item={item}
+                      onPress={() => handleOpenReport(item)}
+                      loading={openingSessionId === item.session_id}
+                    />
+                  ))}
                   <View style={{ height: Space[4] }} />
                 </ScrollView>
               )}
@@ -594,6 +730,8 @@ export default function RecordsScreen() {
           </View>
         </View>
       </Modal>
+
+      <NotificationsModal visible={showNotifModal} onClose={() => setShowNotifModal(false)} />
     </SafeAreaView>
   );
 }
@@ -602,16 +740,6 @@ export default function RecordsScreen() {
 
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgScreen },
-
-  header: {
-    paddingHorizontal: H_PAD,
-    paddingTop: Space[4],
-    paddingBottom: Space[3],
-    backgroundColor: Colors.bgCard,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  headerTitle: { fontSize: FontSize.lg, fontWeight: FontWeight.bold, color: Colors.textPrimary },
 
   scroll: { paddingHorizontal: H_PAD, paddingTop: Space[4] },
 
@@ -628,7 +756,7 @@ const s = StyleSheet.create({
   periodText:      { fontSize: FontSize.sm, fontWeight: FontWeight.semibold, color: Colors.textSecondary },
   periodTextActive:{ color: Colors.textOnPrimary },
 
-  // ── AIトレーナーカード（仮実装）
+  // ── AIトレーナーカード
   aiCard: {
     backgroundColor: Colors.primarySubtle,
     borderRadius: Radius.lg,
@@ -642,6 +770,7 @@ const s = StyleSheet.create({
   aiTitle:    { fontSize: FontSize.base, fontWeight: FontWeight.bold, color: Colors.textPrimary },
   aiSubtitle: { fontSize: FontSize.xs, color: Colors.textHint, marginTop: 1 },
   aiComment:  { fontSize: FontSize.sm, color: Colors.textSecondary, lineHeight: FontSize.sm * 1.6 },
+  errorInlineText: { fontSize: FontSize.sm, color: Colors.error },
 
   summaryRow: { flexDirection: 'row', gap: Space[3], marginBottom: Space[4] },
   summaryCard: {
@@ -665,6 +794,7 @@ const s = StyleSheet.create({
   },
   cardTitle: { fontSize: FontSize.base, fontWeight: FontWeight.bold, color: Colors.textPrimary, marginBottom: 2 },
   cardSub:   { fontSize: FontSize.xs,   color: Colors.textHint,      marginBottom: Space[4] },
+  chartLoading: { paddingVertical: Space[8], alignItems: 'center', justifyContent: 'center' },
 
   exScroll:       { marginBottom: Space[4] },
   exContent:      { gap: Space[2] },

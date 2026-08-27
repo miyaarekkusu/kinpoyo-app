@@ -1,15 +1,23 @@
 kinpoyo backend 起動コマンド（コピペ用メモ）
 詳細・背景はAGENTS.md / DATABASE.mdを参照。
 
+【重要】venvはプロジェクト内（backend-core\venv）ではなく C:\venvs\kinpoyo-backend-core
+に置いている。プロジェクトパスに日本語（HAL名古屋）が含まれており、mediapipeの
+legacy API（mp.solutions.pose、model-studioと同じもの）が内部の.binarypbファイルを
+venv自身のパスから読み込む際に非ASCII文字でFileNotFoundErrorになるため。
+venvを作り直す場合も必ずASCIIのみのパスに作ること。
+
 # 1. DB起動（リポジトリルート kinpoyo/ で実行）
 docker compose up -d db
 
 # 2. venv有効化 + マイグレーション適用（backend-core/ で実行）
-.\venv\Scripts\Activate.ps1
+C:\venvs\kinpoyo-backend-core\Scripts\Activate.ps1
 alembic upgrade head
 
 # 3. APIサーバー起動
-uvicorn main:app --reload    
+# --host 0.0.0.0が必須（省略すると127.0.0.1のみになりスマホ実機から接続できない。
+# フロントは Expo devサーバーのLAN IP経由で http://<LAN IP>:8000 にアクセスするため）
+uvicorn main:app --reload --host 0.0.0.0
 
 # 確認
 http://localhost:8000/docs

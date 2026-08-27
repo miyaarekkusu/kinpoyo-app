@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 .env
 .DS_Store
+
+# AI回数カウント：初回起動時に自動ダウンロードされるMediaPipeモデル（app/core/pose.py）
+ml_assets/
+
+# AI回数カウント：model-studioとの結果比較検証用に一時保存するアップロード動画
+# （実装確認用のみ、恒久的な保存はしない）
+debug_uploads/

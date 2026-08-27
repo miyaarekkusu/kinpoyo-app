@@ -1,7 +1,13 @@
+from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
-from app.models.exercise import Exercise
+from app.models.exercise import Exercise, RepCountModel
 from app.schemas.exercise import ExerciseOut
+
+
+def get_rep_count_model(db: Session, exercise_id: int) -> Optional[RepCountModel]:
+    stmt = select(RepCountModel).where(RepCountModel.exercise_id == exercise_id)
+    return db.scalars(stmt).first()
 
 
 def list_exercises(db: Session) -> list[Exercise]:

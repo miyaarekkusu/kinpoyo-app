@@ -214,12 +214,45 @@ uvicorn main:app --reload
 └────────────────────────┘
 ```
 
-### AI レビュー領域 (変更なし・触れないこと)
+### AI レビュー領域
+
+> `pose_records`（フレーム単位の生データ・MediaPipe AI処理担当者の領域）は
+> 引き続き変更禁止。それ以外（`ai_reviews`とその周辺）は2026-08-24時点で
+> 設計を担当者本人が兼任しているため、以下の追加テーブル・カラムを新設した。
 
 ```
 ┌──────────────────┐  1     1  ┌──────────────┐
 │ session_exercises│──────────►│  ai_reviews  │
 └──────────────────┘           └──────────────┘
+
+┌──────────┐
+│ exercises│ (FK、NULL可＝種目共通パーツ)
+└────┬─────┘
+     ▼
+┌───────────────────────────┐
+│  ai_review_prompt_parts   │ （新規：レビュー文生成用の差し替えパーツ）
+└───────────────────────────┘
+
+┌──────────────┐
+│ session_sets │ ── rep_cycles_json （新規カラム：count-repsのサイクル内訳を要約保存）
+└──────────────┘
+
+┌──────────────────┐  1     1  ┌──────────────────────────┐
+│ workout_sessions │──────────►│ workout_session_reports  │ （セッション全体の
+└──────────────────┘           │  AIレビュー＋実績レポート。2026-08-24実装済み）
+                                └──────────────────────────┘
+```
+
+### AI回数カウント領域（新規・pose_records/ai_reviewsとは別・変更禁止対象外）
+
+> model-studio（別プロジェクト・変更禁止）で較正した回数カウント設定の移植先。
+> フレーム単位のデータ（pose_records相当）はここには持たず、種目ごとに1件の
+> 設定JSONのみを保存する。
+
+```
+┌──────────┐  1     1  ┌───────────────────┐
+│ exercises│──────────►│  rep_count_models │
+└──────────┘           └───────────────────┘
 ```
 
 ### コミュニティー領域
@@ -775,7 +808,7 @@ CREATE INDEX idx_session_exercises_exercise_id ON session_exercises(exercise_id)
 | exercise_id       | INTEGER     | FK(exercises), NOT NULL       | 種目参照                    |
 | order_index       | SMALLINT    | NOT NULL, DEFAULT 0           | セッション内の実施順          |
 | target_sets       | SMALLINT    |                               | 目標セット数                 |
-| rest_interval_sec | INTEGER     |                               | セット間インターバル (秒)      |
+| rest_interval_sec | INTEGER     |                               | （2026-08-24非推奨。後方互換のため列は残すが、新規登録では書き込まない。代わりに`session_sets.rest_after_sec`でセットごとに休憩時間を持たせる）種目単位の一律インターバル (秒) |
 | memo              | TEXT        |                               | 種目メモ                     |
 | created_at        | TIMESTAMPTZ | NOT NULL                      | 作成日時                     |
 
@@ -796,6 +829,8 @@ CREATE TABLE session_sets (
     duration_sec         INTEGER,
     is_warmup            BOOLEAN      NOT NULL DEFAULT FALSE,
     ai_counted_reps      SMALLINT,
+    rep_cycles_json      JSONB,
+    rest_after_sec       INTEGER,
     completed_at         TIMESTAMPTZ,
     created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
@@ -814,6 +849,8 @@ CREATE INDEX idx_session_sets_session_exercise_id ON session_sets(session_exerci
 | duration_sec       | INTEGER       |                               | 継続時間（有酸素種目用）           |
 | is_warmup          | BOOLEAN       | NOT NULL, DEFAULT FALSE       | ウォームアップセットフラグ         |
 | ai_counted_reps    | SMALLINT      |                               | MediaPipe AI カウント回数        |
+| rep_cycles_json    | JSONB         |                               | count-repsのサイクル内訳を要約保存（`RepCycleJson`の配列：start/end/counted/form_quality/distance/bottom_deg/top_deg/period_sec）。AIレビュー生成時の判定材料として使う。フレーム単位の生データではなく、セットあたり数件のサイクル要約のみ |
+| rest_after_sec     | INTEGER       |                               | このセットの後に取る休憩時間（秒）。2026-08-24追加。セットごとにカスタムな休憩を挟めるようにするため`session_exercises.rest_interval_sec`（種目単位・一律）から移行 |
 | completed_at       | TIMESTAMPTZ   |                               | セット完了日時                    |
 | created_at         | TIMESTAMPTZ   | NOT NULL                      | 作成日時                         |
 
@@ -852,21 +889,23 @@ CREATE INDEX idx_pose_records_recorded_at    ON pose_records(recorded_at);
 
 ### 4.10 ai_reviews — Claude API フォームレビュー
 
-> **AI処理テーブル — 変更禁止**
+> **AI処理テーブル — `pose_records`とは異なり、担当者本人が設計・実装を兼任
+> しているため2026-08-24に`matched_part_codes_json`カラムを追加した。**
 
 ```sql
 CREATE TABLE ai_reviews (
-    id                   SERIAL       PRIMARY KEY,
-    session_exercise_id  INTEGER      NOT NULL UNIQUE REFERENCES session_exercises(id) ON DELETE CASCADE,
-    model_version        VARCHAR(50)  NOT NULL DEFAULT 'claude-sonnet-4-6',
-    prompt_tokens        INTEGER,
-    completion_tokens    INTEGER,
-    overall_score        SMALLINT,
-    feedback_text        TEXT         NOT NULL,
-    strengths_json       JSONB,
-    improvements_json    JSONB,
-    injury_risk_level    VARCHAR(10),   -- 'low' | 'medium' | 'high' (AI出力値のため文字列のまま保持)
-    generated_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    id                     SERIAL       PRIMARY KEY,
+    session_exercise_id    INTEGER      NOT NULL UNIQUE REFERENCES session_exercises(id) ON DELETE CASCADE,
+    model_version          VARCHAR(50)  NOT NULL DEFAULT 'claude-sonnet-4-6',
+    prompt_tokens          INTEGER,
+    completion_tokens      INTEGER,
+    overall_score          SMALLINT,
+    feedback_text          TEXT         NOT NULL,
+    strengths_json         JSONB,
+    improvements_json      JSONB,
+    injury_risk_level      VARCHAR(10),   -- 'low' | 'medium' | 'high' (AI出力値のため文字列のまま保持)
+    matched_part_codes_json JSONB,
+    generated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
 CREATE UNIQUE INDEX uq_ai_reviews_session_exercise_id ON ai_reviews(session_exercise_id);
@@ -885,6 +924,7 @@ CREATE INDEX idx_ai_reviews_generated_at ON ai_reviews(generated_at);
 | strengths_json     | JSONB        |                               | 良かった点リスト                     |
 | improvements_json  | JSONB        |                               | 改善点リスト                         |
 | injury_risk_level  | VARCHAR(10)  |                               | 怪我リスクレベル（AI出力値）         |
+| matched_part_codes_json | JSONB   |                               | このレビュー生成時に選ばれた`ai_review_prompt_parts.code`の配列（デバッグ・追跡用。例：`["squat_depth_shallow","squat_tempo_fast"]`） |
 | generated_at       | TIMESTAMPTZ  | NOT NULL                      | 生成日時                             |
 
 ---
@@ -1091,6 +1131,121 @@ CREATE UNIQUE INDEX uq_follows_pair  ON follows(follower_id, followee_id);
 CREATE INDEX idx_follows_follower_id ON follows(follower_id);
 CREATE INDEX idx_follows_followee_id ON follows(followee_id);
 ```
+
+---
+
+### 4.18 rep_count_models — 種目ごとの回数カウント設定（AI回数カウント機能）
+
+> **model-studio（変更禁止・別プロジェクト）で較正した `RepModel.config_json` の移植先。**
+> `pose_records` / `ai_reviews` とは別テーブルのため、AI処理テーブルの変更禁止ルール
+> （AGENTS.md）の対象外。現状はシンプル版（ヒステリシス状態機械の閾値のみ）を想定。
+
+```sql
+CREATE TABLE rep_count_models (
+    id                SERIAL       PRIMARY KEY,
+    exercise_id       INTEGER      NOT NULL UNIQUE REFERENCES exercises(id) ON DELETE CASCADE,
+    config_json       JSONB        NOT NULL,
+    source            VARCHAR(20)  NOT NULL DEFAULT 'model-studio',
+    mae               NUMERIC(5,2),
+    exact_match_rate  NUMERIC(4,3),
+    session_count     INTEGER,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX uq_rep_count_models_exercise_id ON rep_count_models(exercise_id);
+CREATE INDEX idx_rep_count_models_exercise_id        ON rep_count_models(exercise_id);
+```
+
+| カラム名          | 型           | 制約                       | 説明                                            |
+|------------------|--------------|----------------------------|-------------------------------------------------|
+| id               | SERIAL       | PK                         | 自動採番                                         |
+| exercise_id      | INTEGER      | FK(exercises), UNIQUE, NOT NULL | 種目参照（1種目につき1設定）                |
+| config_json      | JSONB        | NOT NULL                   | ヒステリシス状態機械の閾値（smoothWindow・enterRatio・exitRatio・minPeriodFrames・minRomDeg・maxGapFrames・maxStepDeg等。frontend/lib/repCount.tsのRepConfigにそのまま渡せる形） |
+| source           | VARCHAR(20)  | NOT NULL, DEFAULT 'model-studio' | 設定の由来（現状は常にmodel-studio由来）    |
+| mae              | NUMERIC(5,2) |                            | 較正時の平均絶対誤差（model-studio由来の参考値）  |
+| exact_match_rate | NUMERIC(4,3) |                            | 較正時の完全一致率（model-studio由来の参考値）    |
+| session_count    | INTEGER      |                            | 較正に使ったセッション数（model-studio由来の参考値）|
+| created_at       | TIMESTAMPTZ  | NOT NULL                   | 作成日時                                         |
+| updated_at       | TIMESTAMPTZ  | NOT NULL                   | 更新日時                                         |
+
+---
+
+### 4.19 ai_review_prompt_parts — AIレビュー用の差し替えパーツ（新規・AIレビュー機能）
+
+> `notes/ai-review-design-memo.txt`で合意した「ベース＋パーツ差し替え方式」の
+> パーツ本体を保存するテーブル。ベースプロンプトは固定・共通（コード内定数）で、
+> 観点ごとの差し替え文言だけをここで管理する。`ai_reviews`と同じAI処理領域だが、
+> 担当者本人が設計・実装を兼任しているため変更禁止の対象外。
+
+```sql
+CREATE TABLE ai_review_prompt_parts (
+    id              SERIAL       PRIMARY KEY,
+    code            VARCHAR(50)  NOT NULL UNIQUE,
+    exercise_id     INTEGER      REFERENCES exercises(id) ON DELETE CASCADE,
+    label_ja        VARCHAR(100) NOT NULL,
+    prompt_fragment TEXT         NOT NULL,
+    is_active       BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX uq_ai_review_prompt_parts_code ON ai_review_prompt_parts(code);
+CREATE INDEX idx_ai_review_prompt_parts_exercise_id ON ai_review_prompt_parts(exercise_id);
+```
+
+| カラム名        | 型            | 制約              | 説明                                                       |
+|----------------|---------------|-------------------|-------------------------------------------------------------|
+| id             | SERIAL        | PK                | 自動採番                                                     |
+| code           | VARCHAR(50)   | NOT NULL, UNIQUE  | パーツの識別コード（例：`squat_depth_shallow`）。判定ロジックがこのコードで選択する |
+| exercise_id    | INTEGER       | FK(exercises)     | 種目固有パーツならその種目、NULLなら種目共通パーツ              |
+| label_ja       | VARCHAR(100)  | NOT NULL          | 管理・デバッグ用の表示名（AIには渡さない）                      |
+| prompt_fragment| TEXT          | NOT NULL          | ベースプロンプトに差し込む文言の雛形（完成文そのものではない）  |
+| is_active      | BOOLEAN       | NOT NULL, DEFAULT TRUE | 無効化フラグ（削除せず一時的に使わない場合に使う）        |
+| created_at     | TIMESTAMPTZ   | NOT NULL          | 作成日時                                                     |
+| updated_at     | TIMESTAMPTZ   | NOT NULL          | 更新日時                                                     |
+
+---
+
+### 4.20 workout_session_reports — 筋トレ全体のAIレビュー・実績レポート（2026-08-24実装済み）
+
+> 2026-08-24、筋トレフロー刷新で追加・実装。「筋トレを終了する」ボタン押下時に
+> 生成する、セッション全体（複数種目にまたがる）のAIレビュー＋実績サマリー。
+> 種目ごとの`ai_reviews`（4.10）とは別テーブル。`ai_reviews`と同じくAI処理領域
+> だが、担当者本人が設計・実装を兼任しているため変更禁止の対象外。
+> Alembicマイグレーション: `85523731a0b2_add_workout_session_reports.py`
+> （`963b8002fa04`の次）。`alembic upgrade head`適用済み・エンドツーエンド
+> テスト済み（`POST /workouts/{id}/generate-report`）。
+
+```sql
+CREATE TABLE workout_session_reports (
+    id                      SERIAL       PRIMARY KEY,
+    workout_session_id     INTEGER      NOT NULL UNIQUE REFERENCES workout_sessions(id) ON DELETE CASCADE,
+    feedback_text           TEXT         NOT NULL,
+    matched_part_codes_json JSONB,
+    planned_vs_actual_json  JSONB,
+    compared_session_id     INTEGER      REFERENCES workout_sessions(id) ON DELETE SET NULL,
+    model_version            VARCHAR(50)  NOT NULL DEFAULT 'deepseek-chat',
+    prompt_tokens            INTEGER,
+    completion_tokens        INTEGER,
+    generated_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX uq_workout_session_reports_session_id ON workout_session_reports(workout_session_id);
+```
+
+| カラム名                | 型            | 制約                          | 説明                                                       |
+|------------------------|---------------|-------------------------------|--------------------------------------------------------------|
+| id                     | SERIAL        | PK                            | 自動採番                                                       |
+| workout_session_id     | INTEGER       | FK(workout_sessions), UNIQUE  | セッション参照（1セッションに1レポート）                          |
+| feedback_text          | TEXT          | NOT NULL                      | AIによるセッション全体のレビュー本文                              |
+| matched_part_codes_json| JSONB         |                               | 生成時に選ばれた`ai_review_prompt_parts.code`の配列（`session_`プレフィックスのもの。追跡用） |
+| planned_vs_actual_json | JSONB         |                               | 種目ごとの`target_sets`対実績セット数・達成率、および重量・レップ数・RPEの平均値と前回の同じ種目との比較（決定的ロジックで計算。AIには判定させない。2026-08-24、総ボリューム比較から変更。`app/core/session_report_judge.py`の`ExerciseComparison`参照） |
+| compared_session_id    | INTEGER       | FK(workout_sessions)、NULL可   | 比較対象にした「同じ種目構成の直近の完了済みセッション」。見つからなければNULL |
+| model_version           | VARCHAR(50)   | NOT NULL                      | 使用したモデルID（`deepseek-chat`）                              |
+| prompt_tokens           | INTEGER       |                               | プロンプトトークン数（コスト管理用）                              |
+| completion_tokens       | INTEGER       |                               | 補完トークン数（コスト管理用）                                    |
+| generated_at            | TIMESTAMPTZ   | NOT NULL                      | 生成日時                                                       |
 
 ---
 

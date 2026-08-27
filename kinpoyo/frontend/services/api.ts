@@ -13,6 +13,13 @@ function resolveApiBaseUrl(): string {
 
 export const API_BASE_URL = resolveApiBaseUrl();
 
+// バックエンドが返す相対パス（例: /uploads/posts/xxx.jpg）を、表示用の絶対URLにする。
+// 既に絶対URLの場合はそのまま返す。
+export function toAbsoluteMediaUrl(path: string): string {
+  if (/^https?:\/\//.test(path)) return path;
+  return `${API_BASE_URL}${path}`;
+}
+
 // トークン付きリクエストが401（期限切れ・無効）になった時にAuthProviderへ通知するためのフック。
 // api.ts はReactの外にあるモジュールなので、use-auth.tsx側でこの関数にsignOut相当の処理を登録する。
 let unauthorizedHandler: (() => void) | null = null;

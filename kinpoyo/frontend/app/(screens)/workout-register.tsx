@@ -35,8 +35,14 @@ const MOVEMENT_LABELS: Record<Movement, string> = {
   legs: 'レッグ',
 };
 
-type SetInput = { key: string; weight: string; reps: string };
-type SessionExerciseInput = { key: string; exercise: ExerciseOut; sets: SetInput[] };
+// セット行と休憩行を好きな順番に積み重ねられるようにする（セットごとにカスタムな
+// 休憩を挟めるように。2026-08-24変更：種目単位の一律restSecから移行）。
+type SetItem = { key: string; type: 'set'; weight: string; reps: string };
+// 「○分○秒」の2つの入力欄で休憩時間を組み立てる（2026-08-24、秒/分タグ切り替え
+// から変更。タグ選択よりも直感的という判断）。
+type RestItem = { key: string; type: 'rest'; minutes: string; seconds: string };
+type ExerciseItem = SetItem | RestItem;
+type SessionExerciseInput = { key: string; exercise: ExerciseOut; items: ExerciseItem[] };
 
 function resolveTargetDate(params: { year?: string; month?: string; date?: string }): Date {
   const { year, month, date } = params;
@@ -112,7 +118,7 @@ export default function WorkoutRegisterScreen() {
     if (addedExerciseIds.has(exercise.id)) return;
     setSessionExercises(prev => [
       ...prev,
-      { key: nextKey(), exercise, sets: [{ key: nextKey(), weight: '', reps: '' }] },
+      { key: nextKey(), exercise, items: [{ key: nextKey(), type: 'set', weight: '', reps: '' }] },
     ]);
   };
 
@@ -120,32 +126,61 @@ export default function WorkoutRegisterScreen() {
     setSessionExercises(prev => prev.filter(se => se.key !== key));
   };
 
-  const addSetRow = (exerciseKey: string) => {
+  const addSetItem = (exerciseKey: string) => {
     setSessionExercises(prev =>
       prev.map(se =>
         se.key === exerciseKey
-          ? { ...se, sets: [...se.sets, { key: nextKey(), weight: '', reps: '' }] }
+          ? { ...se, items: [...se.items, { key: nextKey(), type: 'set', weight: '', reps: '' }] }
           : se
       )
     );
   };
 
-  const removeSetRow = (exerciseKey: string, setKey: string) => {
+  // 休憩を追加：直前が既に休憩なら何もしない（休憩の連続を防ぐ）。
+  const addRestItem = (exerciseKey: string) => {
     setSessionExercises(prev =>
-      prev.map(se =>
-        se.key === exerciseKey ? { ...se, sets: se.sets.filter(s => s.key !== setKey) } : se
-      )
+      prev.map(se => {
+        if (se.key !== exerciseKey) return se;
+        const last = se.items[se.items.length - 1];
+        if (last?.type === 'rest') return se;
+        return { ...se, items: [...se.items, { key: nextKey(), type: 'rest', minutes: '', seconds: '' }] };
+      })
     );
   };
 
-  const updateSetRow = (exerciseKey: string, setKey: string, field: 'weight' | 'reps', value: string) => {
+  const removeItem = (exerciseKey: string, itemKey: string) => {
+    setSessionExercises(prev =>
+      prev.map(se => {
+        if (se.key !== exerciseKey) return se;
+        const target = se.items.find(it => it.key === itemKey);
+        // 最低1セットは残す（0セットのままだと「目標セット数」が0になり、
+        // 筋トレフローの完了判定が録画前から成立してしまうため）
+        if (target?.type === 'set' && se.items.filter(it => it.type === 'set').length <= 1) {
+          return se;
+        }
+        return { ...se, items: se.items.filter(it => it.key !== itemKey) };
+      })
+    );
+  };
+
+  const updateSetField = (exerciseKey: string, itemKey: string, field: 'weight' | 'reps', value: string) => {
     setSessionExercises(prev =>
       prev.map(se =>
         se.key === exerciseKey
           ? {
               ...se,
-              sets: se.sets.map(s => (s.key === setKey ? { ...s, [field]: value } : s)),
+              items: se.items.map(it => (it.key === itemKey && it.type === 'set' ? { ...it, [field]: value } : it)),
             }
+          : se
+      )
+    );
+  };
+
+  const updateRestField = (exerciseKey: string, itemKey: string, field: 'minutes' | 'seconds', value: string) => {
+    setSessionExercises(prev =>
+      prev.map(se =>
+        se.key === exerciseKey
+          ? { ...se, items: se.items.map(it => (it.key === itemKey && it.type === 'rest' ? { ...it, [field]: value } : it)) }
           : se
       )
     );
@@ -165,15 +200,30 @@ export default function WorkoutRegisterScreen() {
     try {
       await createWorkout(token, {
         scheduled_date: toIsoDate(targetDate),
-        exercises: sessionExercises.map(se => ({
-          exercise_id: se.exercise.id,
-          sets: se.sets.map(s => {
-            const set: { weight_kg?: number; reps?: number } = {};
-            if (s.weight.trim() !== '') set.weight_kg = Number(s.weight);
-            if (s.reps.trim() !== '') set.reps = Number(s.reps);
-            return set;
-          }),
-        })),
+        exercises: sessionExercises.map(se => {
+          // items（セット・休憩が好きな順で並ぶ）を、セットごとに直後の休憩時間を
+          // 持たせたsets配列へ変換する（AGENTS.md『新しいセットごとのフロー』参照）。
+          const sets: { weight_kg?: number; reps?: number; rest_after_sec?: number }[] = [];
+          for (const item of se.items) {
+            if (item.type === 'set') {
+              const set: { weight_kg?: number; reps?: number; rest_after_sec?: number } = {};
+              if (item.weight.trim() !== '') set.weight_kg = Number(item.weight);
+              if (item.reps.trim() !== '') set.reps = Number(item.reps);
+              sets.push(set);
+            } else if ((item.minutes.trim() !== '' || item.seconds.trim() !== '') && sets.length > 0) {
+              const mins = item.minutes.trim() !== '' ? Number(item.minutes) : 0;
+              const secs = item.seconds.trim() !== '' ? Number(item.seconds) : 0;
+              sets[sets.length - 1].rest_after_sec = mins * 60 + secs;
+            }
+          }
+          return {
+            exercise_id: se.exercise.id,
+            // target_sets = 登録したセット数（「何セットやる予定か」）。AI回数カウント
+            // 側（workout-camera.tsx）はこれを「あと何セット録ればいいか」の目標に使う。
+            target_sets: sets.length,
+            sets,
+          };
+        }),
       });
       router.back();
     } catch (e) {
@@ -240,38 +290,86 @@ export default function WorkoutRegisterScreen() {
                 <View style={styles.setColAction} />
               </View>
 
-              {se.sets.map((s, idx) => (
-                <View key={s.key} style={styles.setRow}>
-                  <Text style={[styles.setRowText, styles.setColSet]}>{idx + 1}</Text>
-                  <TextInput
-                    style={[styles.setInput, styles.setColInput]}
-                    keyboardType="numeric"
-                    placeholder="0"
-                    placeholderTextColor={Colors.textHint}
-                    value={s.weight}
-                    onChangeText={v => updateSetRow(se.key, s.key, 'weight', v)}
-                  />
-                  <TextInput
-                    style={[styles.setInput, styles.setColInput]}
-                    keyboardType="numeric"
-                    placeholder="0"
-                    placeholderTextColor={Colors.textHint}
-                    value={s.reps}
-                    onChangeText={v => updateSetRow(se.key, s.key, 'reps', v)}
-                  />
-                  <TouchableOpacity
-                    style={styles.setColAction}
-                    onPress={() => removeSetRow(se.key, s.key)}
-                    hitSlop={8}>
-                    <IconSymbol name="xmark" size={16} color={Colors.textHint} />
-                  </TouchableOpacity>
-                </View>
-              ))}
+              {(() => {
+                let setIdx = 0;
+                return se.items.map(item => {
+                  if (item.type === 'set') {
+                    setIdx += 1;
+                    return (
+                      <View key={item.key} style={styles.setRow}>
+                        <Text style={[styles.setRowText, styles.setColSet]}>{setIdx}</Text>
+                        <TextInput
+                          style={[styles.setInput, styles.setColInput]}
+                          keyboardType="numeric"
+                          placeholder="0"
+                          placeholderTextColor={Colors.textHint}
+                          value={item.weight}
+                          onChangeText={v => updateSetField(se.key, item.key, 'weight', v)}
+                        />
+                        <TextInput
+                          style={[styles.setInput, styles.setColInput]}
+                          keyboardType="numeric"
+                          placeholder="0"
+                          placeholderTextColor={Colors.textHint}
+                          value={item.reps}
+                          onChangeText={v => updateSetField(se.key, item.key, 'reps', v)}
+                        />
+                        <TouchableOpacity
+                          style={styles.setColAction}
+                          onPress={() => removeItem(se.key, item.key)}
+                          hitSlop={8}>
+                          <IconSymbol name="xmark" size={16} color={Colors.textHint} />
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  }
+                  return (
+                    <View key={item.key} style={styles.restRow}>
+                      <IconSymbol name="clock" size={14} color={Colors.primaryDark} />
+                      <Text style={styles.restLabel}>休憩</Text>
+                      <TextInput
+                        style={styles.restInput}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor={Colors.textHint}
+                        value={item.minutes}
+                        onChangeText={v => updateRestField(se.key, item.key, 'minutes', v)}
+                      />
+                      <Text style={styles.restUnitLabel}>分</Text>
+                      <TextInput
+                        style={styles.restInput}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor={Colors.textHint}
+                        value={item.seconds}
+                        onChangeText={v => updateRestField(se.key, item.key, 'seconds', v)}
+                      />
+                      <Text style={styles.restUnitLabel}>秒</Text>
+                      <TouchableOpacity
+                        style={styles.setColAction}
+                        onPress={() => removeItem(se.key, item.key)}
+                        hitSlop={8}>
+                        <IconSymbol name="xmark" size={16} color={Colors.textHint} />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                });
+              })()}
 
-              <TouchableOpacity style={styles.addSetBtn} onPress={() => addSetRow(se.key)} activeOpacity={0.75}>
-                <IconSymbol name="plus" size={14} color={Colors.primaryDark} />
-                <Text style={styles.addSetBtnText}>セットを追加</Text>
-              </TouchableOpacity>
+              <View style={styles.itemAddRow}>
+                <TouchableOpacity style={styles.addSetBtn} onPress={() => addSetItem(se.key)} activeOpacity={0.75}>
+                  <IconSymbol name="plus" size={14} color={Colors.primaryDark} />
+                  <Text style={styles.addSetBtnText}>セットを追加</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.addRestBtn, se.items[se.items.length - 1]?.type === 'rest' && styles.addRestBtnDisabled]}
+                  onPress={() => addRestItem(se.key)}
+                  disabled={se.items[se.items.length - 1]?.type === 'rest'}
+                  activeOpacity={0.75}>
+                  <IconSymbol name="clock" size={14} color={Colors.primaryDark} />
+                  <Text style={styles.addSetBtnText}>休憩を追加</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ))
         )}
@@ -512,6 +610,7 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
   },
   addSetBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -523,6 +622,44 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primarySubtle,
   },
   addSetBtnText: { fontSize: FontSize.sm, fontWeight: FontWeight.medium, color: Colors.primaryDark },
+  itemAddRow: { flexDirection: 'row', gap: Space[2] },
+  restRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space[2],
+    marginBottom: Space[2],
+    paddingVertical: Space[2],
+    paddingHorizontal: Space[2],
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.primarySubtle,
+  },
+  restLabel: { fontSize: FontSize.sm, fontWeight: FontWeight.medium, color: Colors.primaryDark },
+  restInput: {
+    width: 48,
+    height: 36,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.bgCard,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Space[1],
+    textAlign: 'center',
+    fontSize: FontSize.sm,
+    color: Colors.textPrimary,
+  },
+  restUnitLabel: { fontSize: FontSize.sm, color: Colors.textSecondary },
+  addRestBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Space[1],
+    paddingVertical: Space[2],
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.primaryBorder,
+    backgroundColor: Colors.primarySubtle,
+  },
+  addRestBtnDisabled: { opacity: 0.4 },
   addExerciseBtn: {
     flexDirection: 'row',
     alignItems: 'center',

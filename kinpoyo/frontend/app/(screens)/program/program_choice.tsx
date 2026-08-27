@@ -19,18 +19,28 @@ import { ProgramExerciseCreate, createProgram, joinProgram } from '@/services/pr
 import { SessionExerciseCreate, cancelWorkout, createWorkout, fetchWorkout } from '@/services/workout';
 import { formatDecimal } from '@/utils/format';
 
-// 1セット分の構造を定義 (重量、レップ数、RPE)
-interface SetRow {
+// セット行と休憩行を好きな順番に積み重ねられるようにする（セットごとにカスタムな
+// 休憩を挟められるように。2026-08-24変更：種目単位の一律restSecから移行）。
+interface SetItem {
+  type: 'set';
   weight: string;
   reps: string;
   rpe: string;
 }
+// 「○分○秒」の2つの入力欄で休憩時間を組み立てる（2026-08-24、秒/分タグ切り替え
+// から変更。タグ選択よりも直感的という判断）。
+interface RestItem {
+  type: 'rest';
+  minutes: string;
+  seconds: string;
+}
+type ExerciseItem = SetItem | RestItem;
 
 // 種目ごとの設定構造
 interface ExerciseSetting {
   name: string;
   exerciseId?: number;
-  sets: SetRow[];
+  items: ExerciseItem[];
 }
 
 export default function ProgramChoiceScreen() {
@@ -55,12 +65,12 @@ export default function ProgramChoiceScreen() {
       return (parsed as { id: number; name: string }[]).map(e => ({
         name: e.name,
         exerciseId: e.id,
-        sets: [{ weight: '60', reps: '10', rpe: '8' }],
+        items: [{ type: 'set', weight: '60', reps: '10', rpe: '8' }],
       }));
     }
     return (parsed as string[]).map(name => ({
       name,
-      sets: [{ weight: '60', reps: '10', rpe: '8' }],
+      items: [{ type: 'set', weight: '60', reps: '10', rpe: '8' }],
     }));
   })();
 
@@ -87,18 +97,29 @@ export default function ProgramChoiceScreen() {
         if (cancelled) return;
         setScheduledDate(session.scheduled_date);
         setExerciseSettings(
-          session.exercises.map(ex => ({
-            name: ex.exercise_name,
-            exerciseId: ex.exercise_id,
-            sets:
+          session.exercises.map(ex => {
+            const items: ExerciseItem[] =
               ex.sets.length > 0
-                ? ex.sets.map(s => ({
-                    weight: formatDecimal(s.weight_kg) ?? '',
-                    reps: s.reps != null ? String(s.reps) : '',
-                    rpe: formatDecimal(s.rpe) ?? '',
-                  }))
-                : [{ weight: '', reps: '', rpe: '' }],
-          }))
+                ? ex.sets.flatMap((s): ExerciseItem[] => {
+                    const setItem: ExerciseItem = {
+                      type: 'set',
+                      weight: formatDecimal(s.weight_kg) ?? '',
+                      reps: s.reps != null ? String(s.reps) : '',
+                      rpe: formatDecimal(s.rpe) ?? '',
+                    };
+                    if (s.rest_after_sec != null) {
+                      const mins = Math.floor(s.rest_after_sec / 60);
+                      const secs = s.rest_after_sec % 60;
+                      return [
+                        setItem,
+                        { type: 'rest', minutes: mins > 0 ? String(mins) : '', seconds: secs > 0 ? String(secs) : '' },
+                      ];
+                    }
+                    return [setItem];
+                  })
+                : [{ type: 'set', weight: '', reps: '', rpe: '' }];
+            return { name: ex.exercise_name, exerciseId: ex.exercise_id, items };
+          })
         );
       })
       .catch(e => {
@@ -118,33 +139,60 @@ export default function ProgramChoiceScreen() {
     setExerciseSettings(prev => prev.filter((_, i) => i !== exerciseIndex));
   };
 
-  // セットを追加する
-  const addSet = (exerciseIndex: number) => {
+  // セットを追加する（直前のセットの重量・レップ・RPEを引き継ぐ）
+  const addSetItem = (exerciseIndex: number) => {
     setExerciseSettings(prev => {
       const next = [...prev];
-      const currentSets = next[exerciseIndex].sets;
-      const lastSet = currentSets[currentSets.length - 1] || { weight: '60', reps: '10', rpe: '8' };
-      next[exerciseIndex].sets = [...currentSets, { ...lastSet }];
+      const items = next[exerciseIndex].items;
+      const lastSet = [...items].reverse().find((it): it is SetItem => it.type === 'set')
+        ?? { type: 'set' as const, weight: '60', reps: '10', rpe: '8' };
+      next[exerciseIndex] = { ...next[exerciseIndex], items: [...items, { ...lastSet }] };
       return next;
     });
   };
 
-  // セットを削除する
-  const removeSet = (exerciseIndex: number, setIndex: number) => {
+  // 休憩を追加する（直前が既に休憩なら何もしない＝休憩の連続を防ぐ）
+  const addRestItem = (exerciseIndex: number) => {
     setExerciseSettings(prev => {
       const next = [...prev];
-      if (next[exerciseIndex].sets.length > 1) {
-        next[exerciseIndex].sets = next[exerciseIndex].sets.filter((_, i) => i !== setIndex);
+      const items = next[exerciseIndex].items;
+      if (items[items.length - 1]?.type === 'rest') return prev;
+      next[exerciseIndex] = { ...next[exerciseIndex], items: [...items, { type: 'rest', minutes: '', seconds: '' }] };
+      return next;
+    });
+  };
+
+  // セット・休憩の行を削除する（最低1セットは残す）
+  const removeItem = (exerciseIndex: number, itemIndex: number) => {
+    setExerciseSettings(prev => {
+      const next = [...prev];
+      const items = next[exerciseIndex].items;
+      const target = items[itemIndex];
+      if (target.type === 'set' && items.filter(it => it.type === 'set').length <= 1) {
+        return prev;
       }
+      next[exerciseIndex] = { ...next[exerciseIndex], items: items.filter((_, i) => i !== itemIndex) };
       return next;
     });
   };
 
-  // 入力値（重量、レップ数、RPE）を変更する
+  // 休憩時間（分・秒）を変更する
+  const updateRestField = (exerciseIndex: number, itemIndex: number, field: 'minutes' | 'seconds', value: string) => {
+    setExerciseSettings(prev => {
+      const next = [...prev];
+      next[exerciseIndex] = {
+        ...next[exerciseIndex],
+        items: next[exerciseIndex].items.map((it, i) => (i === itemIndex && it.type === 'rest' ? { ...it, [field]: value } : it)),
+      };
+      return next;
+    });
+  };
+
+  // 入力値（重量、レップ数、RPE）を変更する（itemIndexはitems配列上の位置）
   const updateSetValue = (
-    exerciseIndex: number, 
-    setIndex: number, 
-    field: 'weight' | 'reps' | 'rpe', 
+    exerciseIndex: number,
+    itemIndex: number,
+    field: 'weight' | 'reps' | 'rpe',
     value: string
   ) => {
     if (field === 'rpe') {
@@ -156,7 +204,10 @@ export default function ProgramChoiceScreen() {
 
     setExerciseSettings(prev => {
       const next = [...prev];
-      next[exerciseIndex].sets[setIndex][field] = value;
+      next[exerciseIndex] = {
+        ...next[exerciseIndex],
+        items: next[exerciseIndex].items.map((it, i) => (i === itemIndex && it.type === 'set' ? { ...it, [field]: value } : it)),
+      };
       return next;
     });
   };
@@ -170,17 +221,30 @@ export default function ProgramChoiceScreen() {
       try {
         await cancelWorkout(token, Number(sessionId));
         if (exerciseSettings.length > 0 && scheduledDate) {
-          const exercisesPayload: SessionExerciseCreate[] = exerciseSettings.map((es, idx) => ({
-            exercise_id: es.exerciseId!,
-            order_index: idx,
-            sets: es.sets.map(s => {
-              const set: { weight_kg?: number; reps?: number; rpe?: number } = {};
-              if (s.weight.trim() !== '') set.weight_kg = Number(s.weight);
-              if (s.reps.trim() !== '') set.reps = Number(s.reps);
-              if (s.rpe.trim() !== '') set.rpe = Number(s.rpe);
-              return set;
-            }),
-          }));
+          // items（セット・休憩が好きな順で並ぶ）を、セットごとに直後の休憩時間を
+          // 持たせたsets配列へ変換する（AGENTS.md『新しいセットごとのフロー』参照）。
+          const exercisesPayload: SessionExerciseCreate[] = exerciseSettings.map((es, idx) => {
+            const sets: { weight_kg?: number; reps?: number; rpe?: number; rest_after_sec?: number }[] = [];
+            for (const item of es.items) {
+              if (item.type === 'set') {
+                const set: { weight_kg?: number; reps?: number; rpe?: number; rest_after_sec?: number } = {};
+                if (item.weight.trim() !== '') set.weight_kg = Number(item.weight);
+                if (item.reps.trim() !== '') set.reps = Number(item.reps);
+                if (item.rpe.trim() !== '') set.rpe = Number(item.rpe);
+                sets.push(set);
+              } else if ((item.minutes.trim() !== '' || item.seconds.trim() !== '') && sets.length > 0) {
+                const mins = item.minutes.trim() !== '' ? Number(item.minutes) : 0;
+                const secs = item.seconds.trim() !== '' ? Number(item.seconds) : 0;
+                sets[sets.length - 1].rest_after_sec = mins * 60 + secs;
+              }
+            }
+            return {
+              exercise_id: es.exerciseId!,
+              order_index: idx,
+              target_sets: sets.length,
+              sets,
+            };
+          });
           await createWorkout(token, { scheduled_date: scheduledDate, exercises: exercisesPayload });
         }
         router.back();
@@ -208,7 +272,8 @@ export default function ProgramChoiceScreen() {
     setIsSubmitting(true);
     try {
       const exercisesPayload: ProgramExerciseCreate[] = exerciseSettings.map(es => {
-        const firstSet = es.sets[0];
+        const setItems = es.items.filter((it): it is SetItem => it.type === 'set');
+        const firstSet = setItems[0];
         const reps = firstSet && firstSet.reps.trim() !== '' ? Number(firstSet.reps) : undefined;
         const note =
           firstSet && (firstSet.weight.trim() !== '' || firstSet.rpe.trim() !== '')
@@ -216,7 +281,7 @@ export default function ProgramChoiceScreen() {
             : undefined;
         return {
           exercise_id: es.exerciseId!,
-          sets: es.sets.length,
+          sets: setItems.length,
           reps_min: reps,
           reps_max: reps,
           note,
@@ -322,60 +387,105 @@ export default function ProgramChoiceScreen() {
                   <Text style={[styles.headerCell, { flex: 1 }]}></Text>
                 </View>
 
-                {/* セットごとの入力行 */}
-                {item.sets.map((set, setIdx) => (
-                  <View key={setIdx} style={styles.tableRow}>
-                    <Text style={[styles.setLabel, { flex: 1 }]}>{setIdx + 1}</Text>
-                    
-                    {/* 重量入力 */}
-                    <View style={[styles.inputContainer, { flex: 2 }]}>
-                      <TextInput
-                        style={styles.input}
-                        keyboardType="numeric"
-                        value={set.weight}
-                        onChangeText={(val) => updateSetValue(exIdx, setIdx, 'weight', val)}
-                      />
-                    </View>
+                {/* セット・休憩の入力行（好きな順で並ぶ） */}
+                {(() => {
+                  let setLabel = 0;
+                  return item.items.map((it, itemIdx) => {
+                    if (it.type === 'set') {
+                      setLabel += 1;
+                      const isOnlySet = item.items.filter(x => x.type === 'set').length === 1;
+                      return (
+                        <View key={itemIdx} style={styles.tableRow}>
+                          <Text style={[styles.setLabel, { flex: 1 }]}>{setLabel}</Text>
 
-                    {/* レップ数入力 */}
-                    <View style={[styles.inputContainer, { flex: 2 }]}>
-                      <TextInput
-                        style={styles.input}
-                        keyboardType="numeric"
-                        value={set.reps}
-                        onChangeText={(val) => updateSetValue(exIdx, setIdx, 'reps', val)}
-                      />
-                    </View>
+                          {/* 重量入力 */}
+                          <View style={[styles.inputContainer, { flex: 2 }]}>
+                            <TextInput
+                              style={styles.input}
+                              keyboardType="numeric"
+                              value={it.weight}
+                              onChangeText={(val) => updateSetValue(exIdx, itemIdx, 'weight', val)}
+                            />
+                          </View>
 
-                    {/* RPE入力 (1〜10) */}
-                    <View style={[styles.inputContainer, { flex: 1.5 }]}>
-                      <TextInput
-                        style={[styles.input, styles.rpeInput]}
-                        keyboardType="numeric"
-                        placeholder="1-10"
-                        value={set.rpe}
-                        onChangeText={(val) => updateSetValue(exIdx, setIdx, 'rpe', val)}
-                        maxLength={2}
-                      />
-                    </View>
+                          {/* レップ数入力 */}
+                          <View style={[styles.inputContainer, { flex: 2 }]}>
+                            <TextInput
+                              style={styles.input}
+                              keyboardType="numeric"
+                              value={it.reps}
+                              onChangeText={(val) => updateSetValue(exIdx, itemIdx, 'reps', val)}
+                            />
+                          </View>
 
-                    {/* 各セット削除ボタン */}
-                    <TouchableOpacity 
-                      style={[styles.removeButton, item.sets.length === 1 && styles.removeButtonDisabled]} 
-                      disabled={item.sets.length === 1}
-                      onPress={() => removeSet(exIdx, setIdx)}
-                      hitSlop={4}
-                    >
-                      <IconSymbol name="xmark" size={14} color={item.sets.length === 1 ? Colors.border : '#FF3B30'} />
-                    </TouchableOpacity>
-                  </View>
-                ))}
+                          {/* RPE入力 (1〜10) */}
+                          <View style={[styles.inputContainer, { flex: 1.5 }]}>
+                            <TextInput
+                              style={[styles.input, styles.rpeInput]}
+                              keyboardType="numeric"
+                              placeholder="1-10"
+                              value={it.rpe}
+                              onChangeText={(val) => updateSetValue(exIdx, itemIdx, 'rpe', val)}
+                              maxLength={2}
+                            />
+                          </View>
 
-                {/* セット追加ボタン */}
-                <TouchableOpacity style={styles.addSetButton} onPress={() => addSet(exIdx)} activeOpacity={0.7}>
-                  <IconSymbol name="plus" size={14} color={Colors.primaryDark} />
-                  <Text style={styles.addSetText}>セットを追加</Text>
-                </TouchableOpacity>
+                          {/* 各セット削除ボタン */}
+                          <TouchableOpacity
+                            style={[styles.removeButton, isOnlySet && styles.removeButtonDisabled]}
+                            disabled={isOnlySet}
+                            onPress={() => removeItem(exIdx, itemIdx)}
+                            hitSlop={4}
+                          >
+                            <IconSymbol name="xmark" size={14} color={isOnlySet ? Colors.border : '#FF3B30'} />
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    }
+                    return (
+                      <View key={itemIdx} style={styles.restRow}>
+                        <IconSymbol name="clock" size={14} color={Colors.primaryDark} />
+                        <Text style={styles.restLabel}>休憩</Text>
+                        <TextInput
+                          style={styles.restInput}
+                          keyboardType="numeric"
+                          placeholder="0"
+                          placeholderTextColor={Colors.textHint}
+                          value={it.minutes}
+                          onChangeText={v => updateRestField(exIdx, itemIdx, 'minutes', v)}
+                        />
+                        <Text style={styles.restUnitLabel}>分</Text>
+                        <TextInput
+                          style={styles.restInput}
+                          keyboardType="numeric"
+                          placeholder="0"
+                          placeholderTextColor={Colors.textHint}
+                          value={it.seconds}
+                          onChangeText={v => updateRestField(exIdx, itemIdx, 'seconds', v)}
+                        />
+                        <Text style={styles.restUnitLabel}>秒</Text>
+                        <TouchableOpacity onPress={() => removeItem(exIdx, itemIdx)} hitSlop={4}>
+                          <IconSymbol name="xmark" size={14} color={Colors.textHint} />
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  });
+                })()}
+
+                <View style={styles.itemAddRow}>
+                  <TouchableOpacity style={styles.addSetButton} onPress={() => addSetItem(exIdx)} activeOpacity={0.7}>
+                    <IconSymbol name="plus" size={14} color={Colors.primaryDark} />
+                    <Text style={styles.addSetText}>セットを追加</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.addRestButton, item.items[item.items.length - 1]?.type === 'rest' && styles.addRestButtonDisabled]}
+                    onPress={() => addRestItem(exIdx)}
+                    disabled={item.items[item.items.length - 1]?.type === 'rest'}
+                    activeOpacity={0.7}>
+                    <IconSymbol name="clock" size={14} color={Colors.primaryDark} />
+                    <Text style={styles.addSetText}>休憩を追加</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ))
           ) : (
@@ -606,12 +716,13 @@ const styles = StyleSheet.create({
   removeButtonDisabled: {
     opacity: 0.4,
   },
+  itemAddRow: { flexDirection: 'row', gap: Space[2], marginTop: Space[2] },
   addSetButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: Space[2],
-    marginTop: Space[2],
     borderWidth: 1,
     borderColor: Colors.primaryBorder,
     borderRadius: Radius.sm,
@@ -623,6 +734,43 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.bold,
     color: Colors.primaryDark,
   },
+  addRestButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Space[2],
+    borderWidth: 1,
+    borderColor: Colors.primaryBorder,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.primarySubtle,
+    gap: Space[1],
+  },
+  addRestButtonDisabled: { opacity: 0.4 },
+  restRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space[2],
+    marginBottom: Space[2],
+    paddingVertical: Space[2],
+    paddingHorizontal: Space[2],
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.primarySubtle,
+  },
+  restLabel: { fontSize: FontSize.sm, fontWeight: FontWeight.medium, color: Colors.primaryDark },
+  restInput: {
+    width: 48,
+    height: 36,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.bgCard,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Space[1],
+    textAlign: 'center',
+    fontSize: FontSize.sm,
+    color: Colors.textPrimary,
+  },
+  restUnitLabel: { fontSize: FontSize.sm, color: Colors.textSecondary },
   emptyCard: {
     backgroundColor: Colors.bgCard,
     borderRadius: Radius.md,
