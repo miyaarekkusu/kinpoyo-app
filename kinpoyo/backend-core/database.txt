@@ -309,9 +309,16 @@ Alembic でマイグレーションを実行して初めて DB に反映され�
   │                    UserProgramStatus, PostType, WorkoutSessionStatus
   ├── user.py        → User, UserProfile
   ├── body.py        → BodyGoal（体重目標）
-  ├── exercise.py    → exercise_secondary_muscles（中間Table）, Exercise
+  ├── exercise.py    → exercise_secondary_muscles（中間Table）, Exercise,
+  │                    RepCountModel（AI回数カウント設定。model-studio由来）
+  │                    AiReviewPromptPart（AIレビュー用差し替えパーツ。実装済み）
   ├── workout.py     → WorkoutSession, SessionExercise, SessionSet
-  │                    PoseRecord（AI用・変更禁止）, AiReview（AI用・変更禁止）
+  │                    PoseRecord（AI用・変更禁止、MediaPipe担当者の領域）
+  │                    AiReview（AI用。ただしAIレビュー担当者が設計・実装を
+  │                    兼任しているため変更禁止の対象外。2026-08-24に
+  │                    matched_part_codes_json追加）
+  │                    WorkoutSessionReport（筋トレ全体のAIレビュー＋
+  │                    実績レポート。2026-08-24実装済み。DATABASE.md 4.20参照）
   ├── program.py     → Program, ProgramExercise, UserProgram
   ├── community.py   → Post, PostLike, PostComment, Follow
   └── __init__.py    → 全モデルをまとめてエクスポート（Alembic用）

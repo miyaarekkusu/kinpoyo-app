@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -11,6 +12,7 @@ from app.schemas.workout import (
     SessionExerciseOut,
     SessionSetCreate,
     SessionSetOut,
+    SessionSetUpdate,
     WorkoutSessionCreate,
     WorkoutSessionOut,
     WorkoutSessionUpdate,
@@ -30,6 +32,20 @@ _SESSION_LOAD_OPTIONS = (
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def set_to_out(s: SessionSet) -> SessionSetOut:
+    """rep_cycles_json のスキーマを変更した際、変更前に保存済みの行が新しい
+    バリデーションに通らず該当セット1件だけでなくセッション全体の取得が
+    500になる事象を2026-08-24に2回踏んだ（AGENTS.md参照）。個別セットの
+    rep_cycles_jsonが古い形式で壊れていても、そのセット単体だけ
+    rep_cycles_json=Noneにフォールバックし、セッション全体の取得は
+    失敗させない。"""
+    try:
+        return SessionSetOut.model_validate(s)
+    except ValidationError:
+        s.rep_cycles_json = None
+        return SessionSetOut.model_validate(s)
 
 
 def session_to_out(session: WorkoutSession) -> WorkoutSessionOut:
@@ -53,7 +69,7 @@ def session_to_out(session: WorkoutSession) -> WorkoutSessionOut:
                 target_sets=se.target_sets,
                 rest_interval_sec=se.rest_interval_sec,
                 memo=se.memo,
-                sets=[SessionSetOut.model_validate(s) for s in se.sets],
+                sets=[set_to_out(s) for s in sorted(se.sets, key=lambda x: x.set_number)],
             )
             for se in sorted(session.session_exercises, key=lambda x: x.order_index)
         ],
@@ -112,6 +128,7 @@ def create_session(db: Session, user_id: int, data: WorkoutSessionCreate) -> Wor
                     rpe=set_in.rpe,
                     duration_sec=set_in.duration_sec,
                     is_warmup=set_in.is_warmup,
+                    rest_after_sec=set_in.rest_after_sec,
                 )
             )
 
@@ -181,6 +198,7 @@ def add_exercise(db: Session, session_id: int, data: SessionExerciseCreate) -> S
                 rpe=set_in.rpe,
                 duration_sec=set_in.duration_sec,
                 is_warmup=set_in.is_warmup,
+                rest_after_sec=set_in.rest_after_sec,
             )
         )
     db.commit()
@@ -206,8 +224,42 @@ def add_set(db: Session, session_exercise: SessionExercise, data: SessionSetCrea
         rpe=data.rpe,
         duration_sec=data.duration_sec,
         is_warmup=data.is_warmup,
+        ai_counted_reps=data.ai_counted_reps,
+        rep_cycles_json=(
+            [c.model_dump() for c in data.rep_cycles_json]
+            if data.rep_cycles_json is not None
+            else None
+        ),
+        rest_after_sec=data.rest_after_sec,
     )
     db.add(session_set)
+    db.commit()
+    db.refresh(session_set)
+    return session_set
+
+
+def get_set(db: Session, session_exercise_id: int, set_id: int) -> Optional[SessionSet]:
+    stmt = select(SessionSet).where(
+        SessionSet.id == set_id,
+        SessionSet.session_exercise_id == session_exercise_id,
+    )
+    return db.scalars(stmt).first()
+
+
+def update_set(db: Session, session_set: SessionSet, data: SessionSetUpdate) -> SessionSet:
+    """録画リトライ時、新規セットを作らずこのセットを上書きするための部分更新。
+    AGENTS.md『現状の問題（今回の発端）』参照：以前はリトライのたびにadd_setで
+    セットが際限なく増えるバグがあった。"""
+    updates = data.model_dump(exclude_unset=True)
+    if "rep_cycles_json" in updates:
+        raw = updates.pop("rep_cycles_json")
+        session_set.rep_cycles_json = (
+            [c.model_dump() for c in data.rep_cycles_json]
+            if data.rep_cycles_json is not None
+            else None
+        )
+    for field, value in updates.items():
+        setattr(session_set, field, value)
     db.commit()
     db.refresh(session_set)
     return session_set

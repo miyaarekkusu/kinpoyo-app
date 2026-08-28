@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +12,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 
+import { NotificationsModal } from '@/components/notifications-modal';
+import { AppHeader, PageTitleBar } from '@/components/ui/app-header';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
   Colors,
@@ -23,14 +26,30 @@ import {
 } from '@/constants/theme';
 import { useAuth } from '@/hooks/use-auth';
 import { ApiError } from '@/services/api';
+import { fetchRepModel } from '@/services/exercises';
 import {
+  SessionExerciseOut,
   WorkoutSessionOut,
+  cancelWorkout,
   endWorkout,
   fetchWorkoutsByDate,
+  generateWorkoutReport,
   startWorkout,
   toIsoDate,
 } from '@/services/workout';
 import { formatDecimal } from '@/utils/format';
+
+// AI回数カウント：今日の種目の中で、model-studioで較正済みの設定（rep_count_models）が
+// 登録されているものを先頭から探す。無ければ null（＝カメラ計測はまだ使えない）。
+async function findAiReadyExercise(
+  exercises: SessionExerciseOut[]
+): Promise<SessionExerciseOut | null> {
+  for (const ex of exercises) {
+    const model = await fetchRepModel(ex.exercise_id);
+    if (model) return ex;
+  }
+  return null;
+}
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
@@ -41,6 +60,7 @@ export default function WorkoutScreen() {
   const dateLabel = `${today.getMonth() + 1}月${today.getDate()}日（${dow}）`;
 
   // ── 今日のセッション取得 ──────────────────────
+  const [showNotifModal, setShowNotifModal] = useState(false);
   const [todaySessions, setTodaySessions] = useState<WorkoutSessionOut[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -50,7 +70,10 @@ export default function WorkoutScreen() {
     setLoadError(null);
     try {
       const sessions = await fetchWorkoutsByDate(token, toIsoDate(today));
-      setTodaySessions(sessions.filter(s => s.status_code !== 'cancelled'));
+      // 終了済み（completed）のセッションは「今日のメニュー」としては表示しない
+      // （終了後にまた同じ画面を開くと「予定済みのセッションのみ開始できます」エラーに
+      // なっていたバグの修正。終了したら今日の画面はまっさらに戻る）。
+      setTodaySessions(sessions.filter(s => s.status_code !== 'cancelled' && s.status_code !== 'completed'));
     } catch (e) {
       setLoadError(e instanceof ApiError ? e.detail : '読み込みに失敗しました');
     } finally {
@@ -80,6 +103,37 @@ export default function WorkoutScreen() {
   const hasWorkout = todayExercises.length > 0;
   const activeSession = todaySessions[0] ?? null;
 
+  // ── 「筋トレを終了する」ボタンは全セット終わってから ─────
+  // AI回数カウント対応種目（AIレビュー用のcalibrated modelがある種目）は
+  // target_sets分のai_counted_reps記録が全て埋まって初めて「完了」とみなす。
+  // 対応外の種目（AI計測の仕組みがそもそも無い）は判定対象外＝常に完了扱い。
+  const [workoutAllDone, setWorkoutAllDone] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!activeSession || activeSession.status_code !== 'in_progress') {
+        setWorkoutAllDone(false);
+        return;
+      }
+      try {
+        const uniqueIds = Array.from(new Set(activeSession.exercises.map(e => e.exercise_id)));
+        const models = await Promise.all(uniqueIds.map(id => fetchRepModel(id)));
+        const aiReadyIds = new Set(uniqueIds.filter((_, i) => models[i] != null));
+        const allDone = activeSession.exercises.every(ex => {
+          if (!aiReadyIds.has(ex.exercise_id)) return true;
+          const target = ex.target_sets ?? ex.sets.length;
+          const recorded = ex.sets.filter(s => s.ai_counted_reps != null).length;
+          return target > 0 ? recorded >= target : true;
+        });
+        if (!cancelled) setWorkoutAllDone(allDone);
+      } catch (e) {
+        console.log('[workout] 完了判定チェックに失敗', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeSession]);
+
   const handleEditMenu = () => {
     if (!activeSession) return;
     router.push({
@@ -95,14 +149,47 @@ export default function WorkoutScreen() {
   // ── 開始/終了ライフサイクル ────────────────────
   const [isLifecycleBusy, setIsLifecycleBusy] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+  const [aiNotice, setAiNotice] = useState<string | null>(null);
+  const [cancelModalVisible, setCancelModalVisible] = useState(false);
+
+  const goToAiExerciseOrNotice = async (session: WorkoutSessionOut) => {
+    // AI回数カウント：較正済みの種目があればカメラ計測画面へ、無ければ未登録の旨を表示。
+    // このチェックが失敗しても「開始」自体は成功しているので、別のtry/catchで囲み
+    // lifecycleErrorを上書きしないようにする。
+    try {
+      const aiExercise = await findAiReadyExercise(session.exercises);
+      if (aiExercise) {
+        router.push({
+          pathname: '/(screens)/workout-camera',
+          params: {
+            exerciseId: String(aiExercise.exercise_id),
+            exerciseName: aiExercise.exercise_name,
+            sessionId: String(session.id),
+            sessionExerciseId: String(aiExercise.id),
+          },
+        });
+      } else {
+        setAiNotice('AI回数カウントに対応した種目はまだ登録されていません');
+      }
+    } catch (e) {
+      console.log('[workout] AI回数カウント対応種目のチェックに失敗', e);
+    }
+  };
 
   const handleStart = async () => {
     if (!activeSession) return;
     setLifecycleError(null);
+    setAiNotice(null);
     setIsLifecycleBusy(true);
     try {
-      const updated = await startWorkout(token, activeSession.id);
+      // 既にin_progress（「停止」からの再開）の場合はstartWorkoutを呼ばず、
+      // そのままカメラ画面へ再突入する（AGENTS.md『「停止」＝一時中断』参照）。
+      // 「次に録るべきセット」の判断はworkout-camera.tsx側でfetchWorkoutして行う。
+      const updated = activeSession.status_code === 'in_progress'
+        ? activeSession
+        : await startWorkout(token, activeSession.id);
       setTodaySessions([updated]);
+      await goToAiExerciseOrNotice(updated);
     } catch (e) {
       setLifecycleError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
     } finally {
@@ -117,6 +204,34 @@ export default function WorkoutScreen() {
     try {
       const updated = await endWorkout(token, activeSession.id);
       setTodaySessions([updated]);
+
+      // 筋トレレポート自動生成→レポート画面へ（AGENTS.md『筋トレ全体のレポート』参照）。
+      // 生成に失敗しても終了自体は完了しているので、別のtry/catchで囲む。
+      try {
+        const report = await generateWorkoutReport(token, updated.id);
+        router.push({
+          pathname: '/(screens)/workout-report-result',
+          params: { reportJson: JSON.stringify(report) },
+        });
+      } catch (e) {
+        console.log('[workout] 筋トレレポート生成に失敗', e);
+        setLifecycleError('筋トレは終了しましたが、レポートの生成に失敗しました');
+      }
+    } catch (e) {
+      setLifecycleError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
+    } finally {
+      setIsLifecycleBusy(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!activeSession) return;
+    setCancelModalVisible(false);
+    setLifecycleError(null);
+    setIsLifecycleBusy(true);
+    try {
+      await cancelWorkout(token, activeSession.id);
+      await loadToday();
     } catch (e) {
       setLifecycleError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
     } finally {
@@ -127,10 +242,8 @@ export default function WorkoutScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* ── ヘッダー ───────────────────────────── */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>筋トレ開始</Text>
-        <Text style={styles.headerDate}>{dateLabel}</Text>
-      </View>
+      <AppHeader onBellPress={() => setShowNotifModal(true)} />
+      <PageTitleBar title="筋トレ開始" subtitle={dateLabel} />
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {isLoading ? (
@@ -156,6 +269,11 @@ export default function WorkoutScreen() {
             {lifecycleError && (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{lifecycleError}</Text>
+              </View>
+            )}
+            {aiNotice && (
+              <View style={styles.infoBox}>
+                <Text style={styles.infoText}>{aiNotice}</Text>
               </View>
             )}
 
@@ -205,9 +323,34 @@ export default function WorkoutScreen() {
               </>
             )}
           </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.cancelBtn}
+            activeOpacity={0.7}
+            disabled={isLifecycleBusy}
+            onPress={() => setCancelModalVisible(true)}>
+            <Text style={styles.cancelBtnText}>この筋トレをキャンセル</Text>
+          </TouchableOpacity>
         </View>
       )}
-      {hasWorkout && activeSession?.status_code === 'in_progress' && (
+      {hasWorkout && activeSession?.status_code === 'in_progress' && !workoutAllDone && (
+        <View style={styles.bottomBar}>
+          <TouchableOpacity
+            style={[styles.startBtn, isLifecycleBusy && styles.startBtnDisabled]}
+            activeOpacity={0.85}
+            disabled={isLifecycleBusy}
+            onPress={handleStart}>
+            {isLifecycleBusy ? (
+              <ActivityIndicator color={Colors.textOnPrimary} />
+            ) : (
+              <>
+                <IconSymbol name="dumbbell.fill" size={22} color={Colors.textOnPrimary} />
+                <Text style={styles.startBtnText}>筋トレを再開する</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+      {hasWorkout && activeSession?.status_code === 'in_progress' && workoutAllDone && (
         <View style={styles.bottomBar}>
           <TouchableOpacity
             style={[styles.startBtn, styles.endBtn, isLifecycleBusy && styles.startBtnDisabled]}
@@ -223,6 +366,37 @@ export default function WorkoutScreen() {
         </View>
       )}
 
+      {/* ── 筋トレキャンセル確認モーダル ─────────── */}
+      <Modal
+        visible={cancelModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCancelModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalDialog}>
+            <Text style={styles.modalTitle}>筋トレをキャンセルしますか？</Text>
+            <Text style={styles.modalBody}>
+              今日のトレーニングメニューの登録がキャンセルされます。この操作は取り消せません。
+            </Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                activeOpacity={0.7}
+                onPress={() => setCancelModalVisible(false)}>
+                <Text style={styles.modalCancelBtnText}>戻る</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalConfirmBtn}
+                activeOpacity={0.85}
+                onPress={handleCancel}>
+                <Text style={styles.modalConfirmBtnText}>キャンセルする</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <NotificationsModal visible={showNotifModal} onClose={() => setShowNotifModal(false)} />
     </SafeAreaView>
   );
 }
@@ -231,26 +405,6 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: Colors.bgScreen,
-  },
-
-  // ── ヘッダー
-  header: {
-    paddingHorizontal: Layout.screenPaddingH,
-    paddingTop: Space[4],
-    paddingBottom: Space[3],
-    backgroundColor: Colors.bgCard,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  headerTitle: {
-    fontSize: FontSize.lg,
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
-  },
-  headerDate: {
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    marginTop: 2,
   },
 
   // ── スクロール
@@ -346,6 +500,16 @@ const styles = StyleSheet.create({
     marginBottom: Space[4],
   },
   errorText: { fontSize: FontSize.sm, color: Colors.error },
+  infoBox: {
+    borderRadius: Radius.md,
+    backgroundColor: Colors.bgCard,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingVertical: Space[3],
+    paddingHorizontal: Space[4],
+    marginBottom: Space[4],
+  },
+  infoText: { fontSize: FontSize.sm, color: Colors.textSecondary },
   retryBtn: {
     paddingHorizontal: Space[4],
     paddingVertical: Space[2],
@@ -397,4 +561,63 @@ const styles = StyleSheet.create({
     color: Colors.textOnPrimary,
     letterSpacing: 0.5,
   },
+  cancelBtn: {
+    alignItems: 'center',
+    paddingVertical: Space[3],
+  },
+  cancelBtnText: {
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
+    color: Colors.error,
+  },
+
+  // ── キャンセル確認モーダル
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.bgOverlay,
+    paddingHorizontal: Space[5],
+  },
+  modalDialog: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.xl,
+    width: '100%',
+    padding: Space[5],
+    gap: Space[2],
+    ...Shadow.md,
+  },
+  modalTitle: {
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+  },
+  modalBody: {
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+    marginBottom: Space[2],
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: Space[3],
+  },
+  modalCancelBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Space[3],
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  modalCancelBtnText: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
+  modalConfirmBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Space[3],
+    borderRadius: Radius.md,
+    backgroundColor: Colors.error,
+  },
+  modalConfirmBtnText: { color: Colors.textOnPrimary, fontWeight: FontWeight.bold },
 });

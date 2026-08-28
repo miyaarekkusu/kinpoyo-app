@@ -12,5 +12,24 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  # AI回数カウントの検証用：model-studio（Azure App Service Linux）と同じLinux環境で
+  # MediaPipeを動かし、Windowsローカル実行との結果差を切り分けるためのサービス。
+  # 通常のAPI提供はWindows側のvenv（C:\venvs\kinpoyo-backend-core）で行っており、
+  # こちらは比較検証専用（起動する場合は同じ8000番ポートを使うローカルuvicornを
+  # 止めてから使うこと）。
+  backend-core:
+    build: ./backend-core
+    container_name: kinpoyo_backend_core
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql+psycopg://kinpoyo:kinpoyo@db:5432/kinpoyo
+    env_file:
+      - ./backend-core/.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend-core:/app
+
 volumes:
   postgres_data:

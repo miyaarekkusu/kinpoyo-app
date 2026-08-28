@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Modal,
@@ -15,237 +16,198 @@ import {
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import QRCode from 'react-native-qrcode-svg';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { NotificationsModal } from '@/components/notifications-modal';
+import { AppHeader, PageTitleBar } from '@/components/ui/app-header';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
   Colors, FontSize, FontWeight, Layout, Radius, Shadow, Space,
 } from '@/constants/theme';
+import { useAuth } from '@/hooks/use-auth';
+import { ApiError, toAbsoluteMediaUrl } from '@/services/api';
+import { fetchMe, type UserOut } from '@/services/auth';
+import {
+  CommentOut,
+  PostAuthor,
+  PostOut,
+  PostTypeKey,
+  addComment,
+  createPost,
+  deletePost,
+  fetchComments,
+  fetchPosts,
+  likePost,
+  unlikePost,
+  updatePost,
+  uploadPostImages,
+} from '@/services/community';
+import {
+  UserSearchResult,
+  followUser,
+  searchUsers,
+  unfollowUser,
+} from '@/services/user';
 
 // ─── Types ────────────────────────────────────────────────────
 
-type TabKey = 'follow' | 'feed' | 'qa' | 'news';
+type TabKey = 'follow' | 'feed' | 'qa';
 
-interface CommentItem {
-  id: string;
-  user: string;
-  userInitial: string;
-  text: string;
-  isAuthor?: boolean;
-  isPro?: boolean;
+// ─── ユーティリティ ───────────────────────────────────────────
+
+function initialOf(author: PostAuthor): string {
+  return (author.display_name || author.username).charAt(0).toUpperCase();
 }
-
-interface FeedItem {
-  id: string;
-  type: 'feed' | 'qa' | 'news';
-  user: string;
-  userInitial: string;
-  isAdmin?: boolean;
-  timeAgo: string;
-  title: string;
-  body: string;
-  imageCount?: number;
-  images?: string[];
-  likes: number;
-  commentCount: number;
-  comments?: CommentItem[];
+function nameOf(author: PostAuthor): string {
+  return author.display_name || author.username;
 }
-
-// ─── Mock Data ────────────────────────────────────────────────
-
-const FEED_DATA: FeedItem[] = [
-  {
-    id: 'f1',
-    type: 'feed',
-    user: '연하아빠 🇰🇷',
-    userInitial: '연',
-    timeAgo: '1時間前',
-    title: '2026-06-06 等運動',
-    body: '운동을 공유했어요 💪',
-    imageCount: 1,
-    likes: 0,
-    commentCount: 0,
-    comments: [],
-  },
-  {
-    id: 'f2',
-    type: 'feed',
-    user: 'たろ 🇯🇵',
-    userInitial: 'た',
-    timeAgo: '3時間前',
-    title: '2026年6月6日 腕 トレーニング',
-    body: '今日からリストカール始めてみたけど上手くできない。どうやって上手くやるんだろ',
-    imageCount: 3,
-    likes: 2,
-    commentCount: 1,
-    comments: [
-      {
-        id: 'c1',
-        user: 'ヤマダ',
-        userInitial: 'ヤ',
-        text: 'リストを固定して、肘を動かさないのがコツですよ！',
-      },
-    ],
-  },
-  {
-    id: 'f3',
-    type: 'feed',
-    user: 'みき 🇯🇵',
-    userInitial: 'み',
-    timeAgo: '5時間前',
-    title: '今日もお疲れ様でした！',
-    body: '久しぶりに脚トレ。スクワットのフォームを見直したらしっくりきた気がする。明日は筋肉痛かな〜',
-    likes: 1,
-    commentCount: 0,
-    comments: [],
-  },
-];
-
-const QA_DATA: FeedItem[] = [
-  {
-    id: 'q1',
-    type: 'qa',
-    user: 'よねむ一。🇯🇵',
-    userInitial: 'よ',
-    timeAgo: '2日前',
-    title: '[質問] ベンチプレスなどのプッシュ系？の時に左の肘が痛みます。',
-    body: '左の肘の痛みでベンチプレスの重量が伸びません。\nベンチの姿勢もよくわかっていないままちから任せにしてしまったせいなのか、、、\n安静にして、痛みが消えても、再開したらまたすぐに痛みます。対処法はありませんかね、、、',
-    likes: 0,
-    commentCount: 2,
-    comments: [
-      {
-        id: 'c1',
-        user: '덤벨수집가',
-        userInitial: '덤',
-        text: 'もしグリップが狭すぎるのではないでしょうか？それとも手首が折れすぎる場合も、肘に痛みが行くと言いました。',
-      },
-      {
-        id: 'c2',
-        user: 'よねむ一。🇯🇵',
-        userInitial: 'よ',
-        isAuthor: true,
-        text: '気をつけて次はやってみます！',
-      },
-    ],
-  },
-  {
-    id: 'q2',
-    type: 'qa',
-    user: 'tsukii 🇯🇵',
-    userInitial: 'ts',
-    timeAgo: '4日前',
-    title: '[質問] Drax Roman Chairの調節方法',
-    body: 'どなたかDrax製のRoman Chairの調節方法をご存知の方いらっしゃいますか？😅\n\nDoes anyone know how to adjust Drax Roman Chair? 😭',
-    likes: 1,
-    commentCount: 0,
-    comments: [],
-  },
-];
-
-const NEWS_DATA: FeedItem[] = [
-  {
-    id: 'n1',
-    type: 'news',
-    user: 'Admin',
-    userInitial: 'A',
-    isAdmin: true,
-    timeAgo: '2ヶ月前',
-    title: '[お知らせ] 📌 kinpoyoコミュニティ利用規約およびエチケットのご案内',
-    body: 'kinpoyoコミュニティは、すべてのユーザーが自身のワークアウト記録を共有し、互いにモチベーションを高め合う大切な空間です。\n皆様が快適かつ健康的にコミュニケーションを取れるよう、以下のコミュニティ利用ガイドラインを必ずご確認ください。\n\n1. 互いを尊重し、配慮し合う文化を作りましょう。\n自由な意見交換や有益な情報共有はいつでも歓迎します。しかし、他者への誹謗中傷、暴言、嫌悪表現など、不快感を与える投稿やコメントは厳しく禁止されています。\n\n2. 商業目的の宣伝やスパム行為を禁止します。\n個人の商品販売や外部リンクへの誘導など、商業的な目的が明らかな投稿は、コミュニティ本来の目的を損なう恐れがあるため、発見次第直ちに削除させていただきます。\n\n3. 快適なコミュニティ環境を共に守りましょう。\nスパム投稿、性的または不快感を与える画像など、健全なコミュニケーションを阻害するすべての活動はペナルティの対象となります。',
-    likes: 3,
-    commentCount: 0,
-    comments: [],
-  },
-  {
-    id: 'n2',
-    type: 'news',
-    user: 'Admin',
-    userInitial: 'A',
-    isAdmin: true,
-    timeAgo: '8日前',
-    title: '[お知らせ] 🆕 kinpoyo「今日」タブ 新規アップデート',
-    body: '今日一日の運動を一度に確認できる「今日」タブが新しくオープンしました！✨\n\n🕯 新しくなった「今日」タブ、ここが変わりました！\n記録をひと目で確認！「ウィークリー記録表示」',
-    likes: 5,
-    commentCount: 2,
-    comments: [],
-  },
-];
+// ImagePickerが返すローカルURI（file://等）か、バックエンドが返した相対URLかを判別
+function isLocalUri(uri: string): boolean {
+  return !uri.startsWith('/') && !uri.startsWith('http');
+}
+function displayImageUri(uri: string): string {
+  return isLocalUri(uri) ? uri : toAbsoluteMediaUrl(uri);
+}
+function timeAgoJa(iso: string): string {
+  const diffSec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (diffSec < 60) return '今';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}分前`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}時間前`;
+  const diffDay = Math.floor(diffHour / 24);
+  if (diffDay < 30) return `${diffDay}日前`;
+  const diffMonth = Math.floor(diffDay / 30);
+  if (diffMonth < 12) return `${diffMonth}ヶ月前`;
+  return `${Math.floor(diffMonth / 12)}年前`;
+}
 
 // ─── Main Screen ──────────────────────────────────────────────
 
 export default function CommunityScreen() {
   const router = useRouter();
+  const { token } = useAuth();
+
   const [activeTab, setActiveTab] = useState<TabKey>('follow');
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedPost, setSelectedPost] = useState<FeedItem | null>(null);
+  const [selectedPost, setSelectedPost] = useState<PostOut | null>(null);
   const [showFollowModal, setShowFollowModal] = useState(false);
   const [followSearch, setFollowSearch] = useState('');
   const [showQrModal, setShowQrModal] = useState(false);
   const [showNotifModal, setShowNotifModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editingPost, setEditingPost] = useState<FeedItem | null>(null);
+  const [editingPost, setEditingPost] = useState<PostOut | null>(null);
   const [postModalKey, setPostModalKey] = useState(0);
-  const [deletingPost, setDeletingPost] = useState<FeedItem | null>(null);
-  const [feedData, setFeedData] = useState<FeedItem[]>(FEED_DATA);
-  const [qaData, setQaData] = useState<FeedItem[]>(QA_DATA);
+  const [deletingPost, setDeletingPost] = useState<PostOut | null>(null);
+
+  const [me, setMe] = useState<UserOut | null>(null);
+  const [feedPosts, setFeedPosts] = useState<PostOut[]>([]);
+  const [qaPosts, setQaPosts] = useState<PostOut[]>([]);
+  const [followingPosts, setFollowingPosts] = useState<PostOut[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadAll = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [meOut, feed, qa, following] = await Promise.all([
+        fetchMe(token),
+        fetchPosts(token, 'feed', 'all'),
+        fetchPosts(token, 'qa', 'all'),
+        fetchPosts(token, 'feed', 'following'),
+      ]);
+      setMe(meOut);
+      setFeedPosts(feed);
+      setQaPosts(qa);
+      setFollowingPosts(following);
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.detail : '読み込みに失敗しました');
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useFocusEffect(useCallback(() => { loadAll(); }, [loadAll]));
+
+  const myInitial = me ? me.username.charAt(0).toUpperCase() : 'K';
 
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'follow', label: 'フォロー中' },
     { key: 'feed',   label: 'フィード' },
     { key: 'qa',     label: 'Q&A' },
-    { key: 'news',   label: 'お知らせ' },
   ];
 
-  const handleCreatePost = (type: 'feed' | 'qa', title: string, body: string, images: string[]) => {
-    const newPost: FeedItem = {
-      id: `${type}-${Date.now()}`,
-      type,
-      user: 'あなた',
-      userInitial: 'あ',
-      timeAgo: '今',
-      title,
-      body,
-      ...(images.length > 0 ? { images, imageCount: images.length } : {}),
-      likes: 0,
-      commentCount: 0,
-      comments: [],
-    };
-    if (type === 'feed') {
-      setFeedData(prev => [newPost, ...prev]);
-      setActiveTab('feed');
-    } else {
-      setQaData(prev => [newPost, ...prev]);
-      setActiveTab('qa');
+  // 投稿の更新を、表示中の全リスト＋詳細画面に反映する
+  const applyPostUpdate = (updated: PostOut) => {
+    const patch = (list: PostOut[]) => list.map(p => (p.id === updated.id ? updated : p));
+    setFeedPosts(patch);
+    setQaPosts(patch);
+    setFollowingPosts(patch);
+    setSelectedPost(prev => (prev && prev.id === updated.id ? updated : prev));
+  };
+
+  const bumpCommentCount = (postId: number) => {
+    const patch = (list: PostOut[]) =>
+      list.map(p => (p.id === postId ? { ...p, comments_count: p.comments_count + 1 } : p));
+    setFeedPosts(patch);
+    setQaPosts(patch);
+    setFollowingPosts(patch);
+    setSelectedPost(prev => (prev && prev.id === postId ? { ...prev, comments_count: prev.comments_count + 1 } : prev));
+  };
+
+  const handleToggleLike = async (post: PostOut) => {
+    try {
+      const updated = post.liked_by_me ? await unlikePost(token, post.id) : await likePost(token, post.id);
+      applyPostUpdate(updated);
+    } catch (e) {
+      Alert.alert('エラー', e instanceof ApiError ? e.detail : 'いいねに失敗しました');
     }
+  };
+
+  // ローカルで選んだ画像だけアップロードし、既存の（アップロード済み）URLと
+  // 元の並び順を保ったままマージする
+  const resolveImageUrls = async (images: string[]): Promise<string[]> => {
+    const localUris = images.filter(isLocalUri);
+    const uploaded = localUris.length > 0 ? await uploadPostImages(token, localUris) : [];
+    let j = 0;
+    return images.map(uri => (isLocalUri(uri) ? uploaded[j++] : uri));
+  };
+
+  const handleCreatePost = async (type: PostTypeKey, title: string, body: string, images: string[]) => {
+    const imageUrls = await resolveImageUrls(images);
+    const created = await createPost(token, { post_type: type, title: title || null, body, image_urls: imageUrls });
+    if (type === 'feed') {
+      setFeedPosts(prev => [created, ...prev]);
+    } else {
+      setQaPosts(prev => [created, ...prev]);
+    }
+    setActiveTab(type);
     setShowCreateModal(false);
   };
 
-  const handleUpdatePost = (type: 'feed' | 'qa', title: string, body: string, images: string[]) => {
+  const handleUpdatePost = async (_type: PostTypeKey, title: string, body: string, images: string[]) => {
     if (!editingPost) return;
-    const updated: FeedItem = {
-      ...editingPost,
-      title,
-      body,
-      images: images.length > 0 ? images : undefined,
-      imageCount: images.length > 0 ? images.length : undefined,
-    };
-    if (type === 'feed') {
-      setFeedData(prev => prev.map(p => (p.id === editingPost.id ? updated : p)));
-    } else {
-      setQaData(prev => prev.map(p => (p.id === editingPost.id ? updated : p)));
-    }
+    const imageUrls = await resolveImageUrls(images);
+    const updated = await updatePost(token, editingPost.id, { title: title || null, body, image_urls: imageUrls });
+    applyPostUpdate(updated);
     setEditingPost(null);
   };
 
-  const handleDeletePost = (post: FeedItem) => {
-    if (post.type === 'feed') {
-      setFeedData(prev => prev.filter(p => p.id !== post.id));
-    } else {
-      setQaData(prev => prev.filter(p => p.id !== post.id));
+  const handleDeletePost = async (post: PostOut) => {
+    try {
+      await deletePost(token, post.id);
+      const remove = (list: PostOut[]) => list.filter(p => p.id !== post.id);
+      setFeedPosts(remove);
+      setQaPosts(remove);
+      setFollowingPosts(remove);
+      setSelectedPost(null);
+    } catch (e) {
+      Alert.alert('エラー', e instanceof ApiError ? e.detail : '削除に失敗しました');
     }
-    setSelectedPost(null);
   };
 
   const openCreateModal = () => {
@@ -253,7 +215,7 @@ export default function CommunityScreen() {
     setShowCreateModal(true);
   };
 
-  const openEditModal = (post: FeedItem) => {
+  const openEditModal = (post: PostOut) => {
     setSelectedPost(null);
     setPostModalKey(k => k + 1);
     setEditingPost(post);
@@ -266,46 +228,83 @@ export default function CommunityScreen() {
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
 
-  const filterByQuery = (data: FeedItem[]) => {
+  const filterByQuery = (data: PostOut[]) => {
     if (!normalizedQuery) return data;
     return data.filter(item =>
-      item.title.toLowerCase().includes(normalizedQuery)
+      (item.title ?? '').toLowerCase().includes(normalizedQuery)
       || item.body.toLowerCase().includes(normalizedQuery)
-      || item.user.toLowerCase().includes(normalizedQuery)
+      || nameOf(item.author).toLowerCase().includes(normalizedQuery)
     );
   };
 
-  const filteredFeedData = filterByQuery(feedData);
-  const filteredQaData = filterByQuery(qaData);
-  const filteredNewsData = filterByQuery(NEWS_DATA);
+  const filteredFeedData = filterByQuery(feedPosts);
+  const filteredQaData = filterByQuery(qaPosts);
   const searchEmptyMessage = normalizedQuery ? '一致する投稿が見つかりませんでした' : undefined;
+
+  // ── ユーザー検索・フォロー ──────────────────────
+  const [followResults, setFollowResults] = useState<UserSearchResult[]>([]);
+  const [followSearchLoading, setFollowSearchLoading] = useState(false);
+
+  useEffect(() => {
+    const q = followSearch.trim();
+    if (!q) {
+      setFollowResults([]);
+      return;
+    }
+    let cancelled = false;
+    setFollowSearchLoading(true);
+    const timer = setTimeout(() => {
+      searchUsers(token, q)
+        .then(res => { if (!cancelled) setFollowResults(res); })
+        .catch(() => { if (!cancelled) setFollowResults([]); })
+        .finally(() => { if (!cancelled) setFollowSearchLoading(false); });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [followSearch, token]);
+
+  const handleToggleFollow = async (user: UserSearchResult) => {
+    try {
+      if (user.is_following) {
+        await unfollowUser(token, user.id);
+      } else {
+        await followUser(token, user.id);
+      }
+      setFollowResults(prev =>
+        prev.map(u => (u.id === user.id ? { ...u, is_following: !u.is_following } : u))
+      );
+      const posts = await fetchPosts(token, 'feed', 'following');
+      setFollowingPosts(posts);
+    } catch (e) {
+      Alert.alert('エラー', e instanceof ApiError ? e.detail : '処理に失敗しました');
+    }
+  };
 
   return (
     <SafeAreaView style={s.safe}>
       {/* Header */}
-      <View style={s.header}>
-        <Text style={s.headerTitle}>コミュニティー</Text>
-        <View style={s.headerRight}>
-          <TouchableOpacity style={s.headerBtn} onPress={toggleSearch} hitSlop={8}>
-            <IconSymbol
-              name={searchVisible ? 'xmark' : 'magnifyingglass'}
-              size={22}
-              color={Colors.textPrimary}
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => setShowNotifModal(true)}
-            hitSlop={8}
-            style={s.notifBtn}>
-            <IconSymbol name="bell.fill" size={22} color={Colors.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/profile')}>
-            <View style={s.avatar}>
-              <Text style={s.avatarText}>K</Text>
-            </View>
-          </TouchableOpacity>
-        </View>
-      </View>
+      <AppHeader onBellPress={() => setShowNotifModal(true)} />
+      <PageTitleBar
+        title="コミュニティー"
+        right={
+          <View style={s.headerRight}>
+            <TouchableOpacity style={s.headerBtn} onPress={toggleSearch} hitSlop={8}>
+              <IconSymbol
+                name={searchVisible ? 'xmark' : 'magnifyingglass'}
+                size={22}
+                color={Colors.textPrimary}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/profile')}>
+              <View style={s.avatar}>
+                <Text style={s.avatarText}>{myInitial}</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        }
+      />
 
       {/* Search Bar */}
       {searchVisible && (
@@ -345,30 +344,71 @@ export default function CommunityScreen() {
 
       {/* Tab Content */}
       <View style={{ flex: 1 }}>
-        {activeTab === 'follow' && (
-          <FollowTab onSearchPress={() => setShowFollowModal(true)} />
+        {loading && (
+          <View style={s.centerBox}>
+            <ActivityIndicator color={Colors.primaryDark} />
+          </View>
         )}
-        {activeTab === 'feed' && (
-          <FeedTab data={filteredFeedData} emptyMessage={searchEmptyMessage} onPostPress={setSelectedPost} onEdit={openEditModal} onDelete={setDeletingPost} />
+        {!loading && loadError && (
+          <View style={s.centerBox}>
+            <View style={s.errorBox}>
+              <Text style={s.errorText}>{loadError}</Text>
+            </View>
+            <TouchableOpacity style={s.retryBtn} onPress={loadAll}>
+              <Text style={s.retryBtnText}>再読み込み</Text>
+            </TouchableOpacity>
+          </View>
         )}
-        {activeTab === 'qa' && (
-          <FeedTab data={filteredQaData} emptyMessage={searchEmptyMessage} onPostPress={setSelectedPost} onEdit={openEditModal} onDelete={setDeletingPost} />
-        )}
-        {activeTab === 'news' && (
-          <FeedTab data={filteredNewsData} emptyMessage={searchEmptyMessage} onPostPress={setSelectedPost} onEdit={openEditModal} onDelete={setDeletingPost} />
+        {!loading && !loadError && (
+          <>
+            {activeTab === 'follow' && (
+              followingPosts.length === 0 ? (
+                <FollowTab onSearchPress={() => setShowFollowModal(true)} />
+              ) : (
+                <FeedTab
+                  data={followingPosts}
+                  meId={me?.id ?? null}
+                  onPostPress={setSelectedPost}
+                  onEdit={openEditModal}
+                  onDelete={setDeletingPost}
+                  onToggleLike={handleToggleLike}
+                />
+              )
+            )}
+            {activeTab === 'feed' && (
+              <FeedTab
+                data={filteredFeedData}
+                emptyMessage={searchEmptyMessage}
+                meId={me?.id ?? null}
+                onPostPress={setSelectedPost}
+                onEdit={openEditModal}
+                onDelete={setDeletingPost}
+                onToggleLike={handleToggleLike}
+              />
+            )}
+            {activeTab === 'qa' && (
+              <FeedTab
+                data={filteredQaData}
+                emptyMessage={searchEmptyMessage}
+                meId={me?.id ?? null}
+                onPostPress={setSelectedPost}
+                onEdit={openEditModal}
+                onDelete={setDeletingPost}
+                onToggleLike={handleToggleLike}
+              />
+            )}
+          </>
         )}
       </View>
 
-      {/* FAB (フォロー中・フィード・Q&A のみ) */}
-      {activeTab !== 'news' && (
-        <TouchableOpacity
-          style={s.fab}
-          activeOpacity={0.85}
-          onPress={openCreateModal}
-        >
-          <MaterialIcons name="edit" size={24} color="#fff" />
-        </TouchableOpacity>
-      )}
+      {/* FAB */}
+      <TouchableOpacity
+        style={s.fab}
+        activeOpacity={0.85}
+        onPress={openCreateModal}
+      >
+        <MaterialIcons name="edit" size={24} color="#fff" />
+      </TouchableOpacity>
 
       {/* ── ユーザー検索 Modal ───────────────────────────────── */}
       <Modal
@@ -404,9 +444,9 @@ export default function CommunityScreen() {
           {showQrModal ? (
             <View style={s.qrContainer}>
               <View style={s.qrCodeBox}>
-                <QRCode value="user_kinpoyo" size={220} />
+                <QRCode value={me?.username ?? 'kinpoyo'} size={220} />
               </View>
-              <Text style={s.qrIdText}>ID: user_kinpoyo</Text>
+              <Text style={s.qrIdText}>ID: {me?.username ?? '-'}</Text>
             </View>
           ) : (
             <ScrollView contentContainerStyle={s.modalBody}>
@@ -421,20 +461,53 @@ export default function CommunityScreen() {
                 />
               </View>
 
-              {/* My ID Card */}
-              <View style={s.userIdCard}>
-                <View style={[s.avatar, { backgroundColor: Colors.error }]}>
-                  <Text style={s.avatarText}>K</Text>
+              {followSearch.trim() ? (
+                followSearchLoading ? (
+                  <View style={s.searchResultLoading}>
+                    <ActivityIndicator color={Colors.primaryDark} />
+                  </View>
+                ) : followResults.length === 0 ? (
+                  <View style={s.searchResultLoading}>
+                    <Text style={s.emptyText}>ユーザーが見つかりませんでした</Text>
+                  </View>
+                ) : (
+                  followResults.map(u => (
+                    <View key={u.id} style={s.followResultRow}>
+                      <View style={s.avatar}>
+                        <Text style={s.avatarText}>
+                          {(u.display_name || u.username).charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={s.followResultInfo}>
+                        <Text style={s.followResultName}>{u.display_name || u.username}</Text>
+                        <Text style={s.followResultUsername}>@{u.username}</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={[s.followToggleBtn, u.is_following && s.followToggleBtnActive]}
+                        onPress={() => handleToggleFollow(u)}
+                      >
+                        <Text style={[s.followToggleBtnText, u.is_following && s.followToggleBtnTextActive]}>
+                          {u.is_following ? 'フォロー中' : 'フォロー'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )
+              ) : (
+                /* My ID Card */
+                <View style={s.userIdCard}>
+                  <View style={[s.avatar, { backgroundColor: Colors.error }]}>
+                    <Text style={s.avatarText}>{myInitial}</Text>
+                  </View>
+                  <Text style={s.userIdText}>ID: {me?.username ?? '-'}</Text>
+                  <TouchableOpacity style={s.shareBtn} onPress={() => setShowQrModal(true)}>
+                    <MaterialIcons name="qr-code-2" size={20} color={Colors.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.shareBtn}>
+                    <MaterialIcons name="share" size={20} color={Colors.textSecondary} />
+                  </TouchableOpacity>
                 </View>
-                <Text style={s.userIdText}>ID: user_kinpoyo</Text>
-                <TouchableOpacity style={s.shareBtn} onPress={() => setShowQrModal(true)}>
-                  <MaterialIcons name="qr-code-2" size={20} color={Colors.textSecondary} />
-                </TouchableOpacity>
-                <TouchableOpacity style={s.shareBtn}>
-                  <MaterialIcons name="share" size={20} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-
+              )}
             </ScrollView>
           )}
         </SafeAreaView>
@@ -450,9 +523,13 @@ export default function CommunityScreen() {
         {selectedPost && (
           <PostDetailScreen
             post={selectedPost}
+            meId={me?.id ?? null}
+            token={token}
             onClose={() => setSelectedPost(null)}
             onEdit={openEditModal}
             onDelete={handleDeletePost}
+            onToggleLike={handleToggleLike}
+            onCommentAdded={bumpCommentCount}
           />
         )}
       </Modal>
@@ -481,8 +558,9 @@ export default function CommunityScreen() {
           <DeleteConfirmDialog
             onCancel={() => setDeletingPost(null)}
             onConfirm={() => {
-              handleDeletePost(deletingPost);
+              const target = deletingPost;
               setDeletingPost(null);
+              handleDeletePost(target);
             }}
           />
         )}
@@ -494,7 +572,7 @@ export default function CommunityScreen() {
   );
 }
 
-// ─── フォロー中タブ ────────────────────────────────────────────
+// ─── フォロー中タブ（空状態） ──────────────────────────────────
 
 function FollowTab({ onSearchPress }: { onSearchPress: () => void }) {
   return (
@@ -508,32 +586,25 @@ function FollowTab({ onSearchPress }: { onSearchPress: () => void }) {
   );
 }
 
-// ─── フィード / Q&A / お知らせ タブ ──────────────────────────
+// ─── フィード / Q&A タブ ──────────────────────────────────────
 
 function FeedTab({
   data,
   emptyMessage,
+  meId,
   onPostPress,
   onEdit,
   onDelete,
+  onToggleLike,
 }: {
-  data: FeedItem[];
+  data: PostOut[];
   emptyMessage?: string;
-  onPostPress: (p: FeedItem) => void;
-  onEdit: (post: FeedItem) => void;
-  onDelete: (post: FeedItem) => void;
+  meId: number | null;
+  onPostPress: (p: PostOut) => void;
+  onEdit: (post: PostOut) => void;
+  onDelete: (post: PostOut) => void;
+  onToggleLike: (post: PostOut) => void;
 }) {
-  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
-
-  const toggleLike = (id: string) => {
-    setLikedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   if (data.length === 0 && emptyMessage) {
     return (
       <View style={s.searchEmptyState}>
@@ -546,44 +617,42 @@ function FeedTab({
   return (
     <ScrollView contentContainerStyle={s.feedList} showsVerticalScrollIndicator={false}>
       {data.map(item => {
-        const liked = likedIds.has(item.id);
+        const isOwn = item.author.id === meId;
         return (
           <View key={item.id} style={s.postCard}>
             {/* ユーザー行＋タイトル・本文: タップで詳細へ */}
             <TouchableOpacity onPress={() => onPostPress(item)} activeOpacity={0.85}>
               <View style={s.postUserRow}>
-                <View style={[s.smallAvatar, item.isAdmin && s.adminAvatar]}>
-                  <Text style={s.smallAvatarText}>{item.userInitial}</Text>
+                <View style={s.smallAvatar}>
+                  <Text style={s.smallAvatarText}>{initialOf(item.author)}</Text>
                 </View>
-                <Text style={s.postUser}>{item.user}</Text>
-                <Text style={s.postTime}> · {item.timeAgo}</Text>
+                <Text style={s.postUser}>{nameOf(item.author)}</Text>
+                <Text style={s.postTime}> · {timeAgoJa(item.created_at)}</Text>
               </View>
-              <Text style={s.postTitle} numberOfLines={2}>{item.title}</Text>
+              {!!item.title && (
+                <Text style={s.postTitle} numberOfLines={2}>{item.title}</Text>
+              )}
               <Text style={s.postBody} numberOfLines={3}>{item.body}</Text>
             </TouchableOpacity>
 
             {/* 画像: 独立した横スクロール */}
-            {!!item.imageCount && (
+            {item.image_urls.length > 0 && (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={s.mediaScrollContent}
                 style={s.mediaScroll}
               >
-                {item.images
-                  ? item.images.map((uri, i) => (
-                      <Image key={i} source={{ uri }} style={s.mediaSquare} contentFit="cover" />
-                    ))
-                  : Array.from({ length: item.imageCount }).map((_, i) => (
-                      <View key={i} style={s.mediaSquare} />
-                    ))}
+                {item.image_urls.map((uri, i) => (
+                  <Image key={i} source={{ uri: toAbsoluteMediaUrl(uri) }} style={s.mediaSquare} contentFit="cover" />
+                ))}
               </ScrollView>
             )}
 
             {/* アクション行: 自分の投稿は編集・削除、いいねとコメントは右側 */}
             <View style={s.postActions}>
               <View style={s.postActionsLeft}>
-                {item.user === 'あなた' && (
+                {isOwn && (
                   <>
                     <TouchableOpacity onPress={() => onEdit(item)}>
                       <Text style={s.textActionBtn}>編集</Text>
@@ -597,20 +666,21 @@ function FeedTab({
               <View style={s.postActionsRight}>
                 <TouchableOpacity
                   style={s.actionBtn}
-                  onPress={() => toggleLike(item.id)}
+                  onPress={() => onToggleLike(item)}
                 >
                   <MaterialIcons
-                    name={liked ? 'thumb-up' : 'thumb-up-off-alt'}
+                    name={item.liked_by_me ? 'thumb-up' : 'thumb-up-off-alt'}
                     size={20}
-                    color={liked ? Colors.primary : Colors.textHint}
+                    color={item.liked_by_me ? Colors.primary : Colors.textHint}
                   />
+                  <Text style={s.actionCount}> {item.likes_count}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={s.actionBtn}
                   onPress={() => onPostPress(item)}
                 >
                   <MaterialIcons name="chat-bubble-outline" size={20} color={Colors.textHint} />
-                  <Text style={s.actionCount}> {item.commentCount}</Text>
+                  <Text style={s.actionCount}> {item.comments_count}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -625,39 +695,65 @@ function FeedTab({
 
 function PostDetailScreen({
   post,
+  meId,
+  token,
   onClose,
   onEdit,
   onDelete,
+  onToggleLike,
+  onCommentAdded,
 }: {
-  post: FeedItem;
+  post: PostOut;
+  meId: number | null;
+  token: string | null;
   onClose: () => void;
-  onEdit: (post: FeedItem) => void;
-  onDelete: (post: FeedItem) => void;
+  onEdit: (post: PostOut) => void;
+  onDelete: (post: PostOut) => void;
+  onToggleLike: (post: PostOut) => void;
+  onCommentAdded: (postId: number) => void;
 }) {
-  const [liked, setLiked] = useState(false);
   const [bookmarked, setBookmarked] = useState(false);
   const [commentText, setCommentText] = useState('');
-  const [comments, setComments] = useState<CommentItem[]>(post.comments ?? []);
+  const [comments, setComments] = useState<CommentOut[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(true);
+  const [sending, setSending] = useState(false);
   const [sortBy, setSortBy] = useState<'recent' | 'popular'>('recent');
   const [mainImageIndex, setMainImageIndex] = useState(0);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const isOwnPost = post.user === 'あなた';
+  const isOwnPost = post.author.id === meId;
 
-  const handleSend = () => {
-    if (!commentText.trim()) return;
-    setComments(prev => [
-      ...prev,
-      {
-        id: Date.now().toString(),
-        user: 'あなた',
-        userInitial: 'あ',
-        text: commentText.trim(),
-      },
-    ]);
-    setCommentText('');
+  useEffect(() => {
+    let cancelled = false;
+    setCommentsLoading(true);
+    fetchComments(token, post.id)
+      .then(list => { if (!cancelled) setComments(list); })
+      .catch(() => { if (!cancelled) setComments([]); })
+      .finally(() => { if (!cancelled) setCommentsLoading(false); });
+    return () => { cancelled = true; };
+  }, [token, post.id]);
+
+  const sortedComments = sortBy === 'popular'
+    ? [...comments].sort((a, b) => b.likes_count - a.likes_count)
+    : comments;
+
+  const handleSend = async () => {
+    const text = commentText.trim();
+    if (!text || sending) return;
+    setSending(true);
+    try {
+      const created = await addComment(token, post.id, text);
+      setComments(prev => [...prev, created]);
+      setCommentText('');
+      onCommentAdded(post.id);
+    } catch (e) {
+      Alert.alert('エラー', e instanceof ApiError ? e.detail : 'コメントの送信に失敗しました');
+    } finally {
+      setSending(false);
+    }
   };
 
   const insets = useSafeAreaInsets();
+  const isEdited = post.updated_at !== post.created_at;
 
   return (
     <View style={s.safe}>
@@ -689,33 +785,27 @@ function PostDetailScreen({
           keyboardShouldPersistTaps="handled"
         >
           {/* 画像（複数ある場合はmain画像＋サムネイル一覧） */}
-          {!!post.imageCount && (
+          {post.image_urls.length > 0 && (
             <View style={s.detailImageSection}>
-              {post.images ? (
-                <Image source={{ uri: post.images[mainImageIndex] }} style={s.detailImagePlaceholder} contentFit="cover" />
-              ) : (
-                <View style={s.detailImagePlaceholder}>
-                  <Text style={s.detailImageLabel}>{mainImageIndex + 1}</Text>
-                </View>
-              )}
-              {post.imageCount > 1 && (
+              <Image
+                source={{ uri: toAbsoluteMediaUrl(post.image_urls[mainImageIndex]) }}
+                style={s.detailImagePlaceholder}
+                contentFit="cover"
+              />
+              {post.image_urls.length > 1 && (
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={s.detailThumbRow}
                 >
-                  {Array.from({ length: post.imageCount }).map((_, i) => (
+                  {post.image_urls.map((uri, i) => (
                     i !== mainImageIndex && (
                       <TouchableOpacity
                         key={i}
                         onPress={() => setMainImageIndex(i)}
                         style={s.detailThumb}
                       >
-                        {post.images ? (
-                          <Image source={{ uri: post.images[i] }} style={StyleSheet.absoluteFill} contentFit="cover" />
-                        ) : (
-                          <Text style={s.detailImageLabel}>{i + 1}</Text>
-                        )}
+                        <Image source={{ uri: toAbsoluteMediaUrl(uri) }} style={StyleSheet.absoluteFill} contentFit="cover" />
                       </TouchableOpacity>
                     )
                   ))}
@@ -724,18 +814,18 @@ function PostDetailScreen({
             </View>
           )}
 
-          {/* Q&A・お知らせ: タイトル先頭表示 */}
-          {post.type !== 'feed' && (
+          {/* Q&A: タイトル先頭表示 */}
+          {post.post_type !== 'feed' && !!post.title && (
             <Text style={s.detailTitle}>{post.title}</Text>
           )}
 
           {/* 投稿者行 */}
           <View style={[s.postUserRow, { marginTop: Space[2] }]}>
-            <View style={[s.smallAvatar, post.isAdmin && s.adminAvatar]}>
-              <Text style={s.smallAvatarText}>{post.userInitial}</Text>
+            <View style={s.smallAvatar}>
+              <Text style={s.smallAvatarText}>{initialOf(post.author)}</Text>
             </View>
-            <Text style={s.postUser}>{post.user}</Text>
-            {post.isAdmin && <Text style={s.editedTag}> · 編集済み</Text>}
+            <Text style={s.postUser}>{nameOf(post.author)}</Text>
+            {isEdited && <Text style={s.editedTag}> · 編集済み</Text>}
           </View>
 
           {/* 本文 */}
@@ -743,12 +833,13 @@ function PostDetailScreen({
 
           {/* いいね・ブックマーク */}
           <View style={s.detailActions}>
-            <TouchableOpacity onPress={() => setLiked(p => !p)} style={s.actionBtn}>
+            <TouchableOpacity onPress={() => onToggleLike(post)} style={s.actionBtn}>
               <MaterialIcons
-                name={liked ? 'thumb-up' : 'thumb-up-off-alt'}
+                name={post.liked_by_me ? 'thumb-up' : 'thumb-up-off-alt'}
                 size={24}
-                color={liked ? Colors.primary : Colors.textHint}
+                color={post.liked_by_me ? Colors.primary : Colors.textHint}
               />
+              <Text style={s.actionCount}> {post.likes_count}</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setBookmarked(p => !p)} style={s.actionBtn}>
               <MaterialIcons
@@ -776,27 +867,27 @@ function PostDetailScreen({
           </View>
 
           {/* コメント一覧 */}
-          {comments.map(c => (
-            <View key={c.id} style={[s.commentItem, c.isAuthor && s.commentAuthorBg]}>
-              <View style={s.smallAvatar}>
-                <Text style={s.smallAvatarText}>{c.userInitial}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.commentUser}>
-                  {c.user}
-                  {c.isPro && <Text style={s.proBadge}> PRO</Text>}
-                  {c.isAuthor && <Text style={s.authorBadge}> 主</Text>}
-                </Text>
-                <Text style={s.commentText}>{c.text}</Text>
-                <View style={s.commentActions}>
-                  <MaterialIcons name="thumb-up-off-alt" size={16} color={Colors.textHint} />
-                  <MaterialIcons name="edit" size={16} color={Colors.textHint} style={{ marginLeft: Space[2] }} />
-                  <MaterialIcons name="block" size={16} color={Colors.textHint} style={{ marginLeft: Space[2] }} />
-                  <MaterialIcons name="error-outline" size={16} color={Colors.textHint} style={{ marginLeft: Space[2] }} />
+          {commentsLoading ? (
+            <ActivityIndicator color={Colors.primaryDark} />
+          ) : (
+            sortedComments.map(c => {
+              const isAuthorReply = c.author.id === post.author.id;
+              return (
+                <View key={c.id} style={[s.commentItem, isAuthorReply && s.commentAuthorBg]}>
+                  <View style={s.smallAvatar}>
+                    <Text style={s.smallAvatarText}>{initialOf(c.author)}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.commentUser}>
+                      {nameOf(c.author)}
+                      {isAuthorReply && <Text style={s.authorBadge}> 主</Text>}
+                    </Text>
+                    <Text style={s.commentText}>{c.body}</Text>
+                  </View>
                 </View>
-              </View>
-            </View>
-          ))}
+              );
+            })
+          )}
         </ScrollView>
 
         {/* コメント入力バー: ホームインジケーター分を paddingBottom で確保 */}
@@ -809,11 +900,16 @@ function PostDetailScreen({
             style={s.commentInput}
             returnKeyType="send"
             onSubmitEditing={handleSend}
+            editable={!sending}
           />
-          <TouchableOpacity onPress={handleSend}>
-            <Text style={[s.sendBtn, !commentText.trim() && { color: Colors.textHint }]}>
-              送信
-            </Text>
+          <TouchableOpacity onPress={handleSend} disabled={sending}>
+            {sending ? (
+              <ActivityIndicator color={Colors.primary} size="small" />
+            ) : (
+              <Text style={[s.sendBtn, !commentText.trim() && { color: Colors.textHint }]}>
+                送信
+              </Text>
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -863,17 +959,18 @@ function PostCreateScreen({
   onClose,
   onSubmit,
 }: {
-  initialPost?: FeedItem | null;
+  initialPost?: PostOut | null;
   onClose: () => void;
-  onSubmit: (type: 'feed' | 'qa', title: string, body: string, images: string[]) => void;
+  onSubmit: (type: PostTypeKey, title: string, body: string, images: string[]) => Promise<void>;
 }) {
   const isEditing = !!initialPost;
-  const [type, setType] = useState<'feed' | 'qa'>(initialPost?.type === 'qa' ? 'qa' : 'feed');
+  const [type, setType] = useState<PostTypeKey>(initialPost?.post_type === 'qa' ? 'qa' : 'feed');
   const [title, setTitle] = useState(initialPost?.title ?? '');
   const [body, setBody] = useState(initialPost?.body ?? '');
-  const [images, setImages] = useState<string[]>(initialPost?.images ?? []);
+  const [images, setImages] = useState<string[]>(initialPost?.image_urls ?? []);
+  const [submitting, setSubmitting] = useState(false);
 
-  const canSubmit = title.trim().length > 0 && body.trim().length > 0;
+  const canSubmit = title.trim().length > 0 && body.trim().length > 0 && !submitting;
 
   const addImage = async () => {
     if (images.length >= 5) return;
@@ -896,9 +993,16 @@ function PostCreateScreen({
     setImages(prev => prev.filter(i => i !== uri));
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!canSubmit) return;
-    onSubmit(type, title.trim(), body.trim(), images);
+    setSubmitting(true);
+    try {
+      await onSubmit(type, title.trim(), body.trim(), images);
+    } catch (e) {
+      Alert.alert('エラー', e instanceof ApiError ? e.detail : '投稿に失敗しました');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -909,9 +1013,13 @@ function PostCreateScreen({
         </TouchableOpacity>
         <Text style={s.modalTitle}>{isEditing ? '投稿を編集' : '投稿を作成'}</Text>
         <TouchableOpacity onPress={handleSubmit} disabled={!canSubmit} style={[s.iconBtn, s.postSubmitBtn]}>
-          <Text style={[s.postSubmitText, !canSubmit && s.postSubmitTextDisabled]}>
-            {isEditing ? '更新' : '投稿'}
-          </Text>
+          {submitting ? (
+            <ActivityIndicator color={Colors.primary} size="small" />
+          ) : (
+            <Text style={[s.postSubmitText, !canSubmit && s.postSubmitTextDisabled]}>
+              {isEditing ? '更新' : '投稿'}
+            </Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -973,7 +1081,7 @@ function PostCreateScreen({
             >
               {images.map(uri => (
                 <View key={uri} style={s.createImagePreview}>
-                  <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                  <Image source={{ uri: displayImageUri(uri) }} style={StyleSheet.absoluteFill} contentFit="cover" />
                   <TouchableOpacity onPress={() => removeImage(uri)} style={s.createImageRemoveBtn}>
                     <MaterialIcons name="close" size={16} color="#fff" />
                   </TouchableOpacity>
@@ -998,29 +1106,8 @@ const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgScreen },
 
   // ── Header ────────────────────────────────────────────────
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Layout.screenPaddingH,
-    paddingVertical: Space[3],
-  },
-  headerTitle: {
-    flex: 1,
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
-  },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: Space[2] },
   headerBtn: { padding: Space[1] },
-  notifBtn: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: Radius.full,
-    backgroundColor: Colors.bgCard,
-    ...Shadow.sm,
-  },
   avatar: {
     width: 32, height: 32, borderRadius: Radius.full,
     backgroundColor: Colors.primary,
@@ -1031,6 +1118,23 @@ const s = StyleSheet.create({
     fontSize: FontSize.sm,
     fontWeight: FontWeight.bold,
   },
+
+  // ── ローディング／エラー ───────────────────────────────────
+  centerBox: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Space[3], paddingHorizontal: Space[8] },
+  errorBox: {
+    borderRadius: Radius.md,
+    backgroundColor: Colors.errorSubtle,
+    paddingVertical: Space[3],
+    paddingHorizontal: Space[4],
+  },
+  errorText: { fontSize: FontSize.sm, color: Colors.error },
+  retryBtn: {
+    paddingHorizontal: Space[4],
+    paddingVertical: Space[2],
+    borderRadius: Radius.md,
+    backgroundColor: Colors.primaryDark,
+  },
+  retryBtnText: { color: Colors.textOnPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
 
   // ── Search Bar ────────────────────────────────────────────
   searchBarContainer: {
@@ -1132,7 +1236,6 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     marginRight: Space[2],
   },
-  adminAvatar: { backgroundColor: Colors.info },
   smallAvatarText: {
     fontSize: FontSize.xs,
     fontWeight: FontWeight.bold,
@@ -1298,6 +1401,29 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   searchInput: { fontSize: FontSize.base, color: Colors.textPrimary },
+  searchResultLoading: { paddingVertical: Space[8], alignItems: 'center' },
+  followResultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space[3],
+    paddingVertical: Space[3],
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
+  },
+  followResultInfo: { flex: 1 },
+  followResultName: { fontSize: FontSize.base, fontWeight: FontWeight.semibold, color: Colors.textPrimary },
+  followResultUsername: { fontSize: FontSize.xs, color: Colors.textHint, marginTop: 1 },
+  followToggleBtn: {
+    paddingHorizontal: Space[3],
+    paddingVertical: Space[2],
+    borderRadius: Radius.full,
+    borderWidth: 1.5,
+    borderColor: Colors.primaryDark,
+    backgroundColor: Colors.primaryDark,
+  },
+  followToggleBtnActive: { backgroundColor: Colors.bgScreen, borderColor: Colors.border },
+  followToggleBtnText: { fontSize: FontSize.sm, fontWeight: FontWeight.bold, color: Colors.textOnPrimary },
+  followToggleBtnTextActive: { color: Colors.textSecondary },
   userIdCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1339,26 +1465,6 @@ const s = StyleSheet.create({
     fontSize: FontSize.base,
     fontWeight: FontWeight.medium,
     color: Colors.textPrimary,
-  },
-  inviteCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Space[3],
-    backgroundColor: Colors.infoSubtle,
-    padding: Space[3],
-    borderRadius: Radius.md,
-  },
-  inviteTitle: {
-    fontSize: FontSize.base,
-    fontWeight: FontWeight.semibold,
-    color: Colors.textPrimary,
-  },
-  inviteSub: { fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 2 },
-  inviteBtn: { flexDirection: 'row', alignItems: 'center' },
-  inviteBtnText: {
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.semibold,
-    color: Colors.info,
   },
 
   // ── 投稿詳細 Modal ─────────────────────────────────────────
@@ -1437,11 +1543,6 @@ const s = StyleSheet.create({
     backgroundColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  detailImageLabel: {
-    fontSize: FontSize.lg,
-    fontWeight: FontWeight.bold,
-    color: Colors.textSecondary,
   },
   detailThumbRow: {
     flexDirection: 'row',
@@ -1524,12 +1625,6 @@ const s = StyleSheet.create({
     fontSize: FontSize.sm,
     color: Colors.textSecondary,
     lineHeight: 20,
-  },
-  commentActions: { flexDirection: 'row', marginTop: Space[1] },
-  proBadge: {
-    fontSize: FontSize.xs,
-    color: Colors.info,
-    fontWeight: FontWeight.bold,
   },
   authorBadge: {
     fontSize: FontSize.xs,

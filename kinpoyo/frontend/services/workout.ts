@@ -1,5 +1,23 @@
 import { apiFetch } from './api';
 
+// AI回数カウント：1レップサイクルの判定内訳（デバッグ・レビュー生成用）。
+// period_secはcount-repsレスポンスのcycles[].period（フレーム数）をfpsで割って
+// 秒に変換したもの（呼び出し側で変換すること）。
+// 2026-08-24変更：「カウント」と「フォーム評価」を分離。counted=falseは
+// 測定不能（短すぎる）な場合のみで、フォーム品質はcounted=trueのレップにのみ
+// form_qualityで付与される。
+export type RepCycleJson = {
+  start: number;
+  end: number;
+  counted: boolean;
+  form_quality: 'good' | 'needs_improvement' | null;
+  distance: number | null;
+  bottom_deg: number | null;
+  top_deg: number | null;
+  period_sec: number | null;
+  invalid: boolean;
+  invalid_reason: 'movement' | 'posture' | null;
+};
 export type SessionSetCreate = {
   set_number?: number;
   weight_kg?: number;
@@ -7,11 +25,18 @@ export type SessionSetCreate = {
   rpe?: number;
   duration_sec?: number;
   is_warmup?: boolean;
+  ai_counted_reps?: number;
+  rep_cycles_json?: RepCycleJson[];
+  // このセットの後に取る休憩時間(秒)。2026-08-24、セットごとにカスタムな休憩を
+  // 挟められるようにするためsession_exercises.rest_interval_secから移行。
+  rest_after_sec?: number;
 };
+// リトライ時に新しいセットを作らず上書きするための部分更新（未指定フィールドは変更しない）。
+export type SessionSetUpdate = Partial<SessionSetCreate>;
 export type SessionSetOut = {
   id: number; set_number: number; weight_kg: string | number | null; reps: number | null;
   rpe: string | number | null; duration_sec: number | null; is_warmup: boolean;
-  ai_counted_reps: number | null; completed_at: string | null;
+  ai_counted_reps: number | null; rest_after_sec: number | null; completed_at: string | null;
 };
 export type SessionExerciseCreate = {
   exercise_id: number; order_index?: number; target_sets?: number;
@@ -57,8 +82,114 @@ export function endWorkout(token: string | null, id: number): Promise<WorkoutSes
 export function fetchWorkout(token: string | null, id: number): Promise<WorkoutSessionOut> {
   return apiFetch<WorkoutSessionOut>(`/workouts/${id}`, { token });
 }
+// セッション内の特定の種目（session_exercise）に1セットを追加する。
+// AI回数カウント（workout-camera.tsx）から、計測結果を`ai_counted_reps`/`rep_cycles_json`
+// として保存する用途で使う。
+export function addSessionSet(
+  token: string | null,
+  sessionId: number,
+  sessionExerciseId: number,
+  data: SessionSetCreate,
+): Promise<SessionSetOut> {
+  return apiFetch<SessionSetOut>(`/workouts/${sessionId}/exercises/${sessionExerciseId}/sets`, {
+    method: 'POST',
+    body: data,
+    token,
+  });
+}
+
+// AIレビュー：保存済みの計測データ（rep_cycles_json等）をもとに、AIトレーナーの
+// フォームレビューをbackend側（DeepSeek API連携）で生成する。リクエストボディなし。
+export type AiReviewOut = {
+  id: number;
+  session_exercise_id: number;
+  model_version: string;
+  feedback_text: string;
+  matched_part_codes_json: string[] | null;
+  generated_at: string;
+};
+// 2026-08-28変更：setIdを渡すと、その1セットのみのレビューになる（以前は
+// その種目の全セットをまとめて評価していた）。
+export function generateAiReview(
+  token: string | null,
+  sessionId: number,
+  sessionExerciseId: number,
+  setId: number,
+): Promise<AiReviewOut> {
+  return apiFetch<AiReviewOut>(
+    `/workouts/${sessionId}/exercises/${sessionExerciseId}/generate-review?set_id=${setId}`,
+    { method: 'POST', token },
+  );
+}
 export function cancelWorkout(token: string | null, id: number): Promise<void> {
   return apiFetch<void>(`/workouts/${id}`, { method: 'DELETE', token });
+}
+// 録画リトライ時、直前に作ったセットを上書きするための更新（AGENTS.md『現状の
+// 問題（今回の発端）』参照：以前はリトライのたびにセットが際限なく増えていた）。
+export function updateSessionSet(
+  token: string | null,
+  sessionId: number,
+  sessionExerciseId: number,
+  setId: number,
+  data: SessionSetUpdate,
+): Promise<SessionSetOut> {
+  return apiFetch<SessionSetOut>(
+    `/workouts/${sessionId}/exercises/${sessionExerciseId}/sets/${setId}`,
+    { method: 'PUT', body: data, token },
+  );
+}
+
+// 筋トレレポート：セッション全体（複数種目）の実績サマリー＋AIレビュー。
+// 「筋トレを終了する」ボタン押下→endWorkout成功後に自動で呼ぶ想定。
+export type WorkoutSessionReportOut = {
+  id: number;
+  workout_session_id: number;
+  feedback_text: string;
+  matched_part_codes_json: string[] | null;
+  planned_vs_actual_json: {
+    exercises: {
+      exercise_id: number;
+      exercise_name: string;
+      target_sets: number | null;
+      actual_sets: number;
+      achievement_pct: number | null;
+      avg_weight_kg: number | null;
+      avg_reps: number | null;
+      avg_rpe: number | null;
+      prev_avg_weight_kg: number | null;
+      prev_avg_reps: number | null;
+      prev_avg_rpe: number | null;
+      weight_change_pct: number | null;
+      // 2026-08-28追加：セットごとの実測値（前回の同じ種目と1セットずつ比較表示
+      // するため）。avg_*系はAIレビュー文面の生成に引き続き使われるが、画面上の
+      // 種目カードはこちらを使う（「平均はいらない、実際の値を出して比較したい」
+      // というフィードバックにより、平均表示から置き換え）。
+      sets: { set_number: number; weight_kg: number | null; reps: number | null; rpe: number | null }[];
+      prev_sets: { set_number: number; weight_kg: number | null; reps: number | null; rpe: number | null }[];
+      // 2026-08-25追加：自己ベスト推定1RMからの予測RPEと実測との差、停滞判定。
+      // AIレビューmatched_part_codes_json経由でフィードバック文には反映されるが、
+      // 専用UIはまだ無い（フロントは今のところ表示していない）。
+      predicted_rpe: number | null;
+      rpe_deviation: number | null;
+      is_plateaued: boolean;
+    }[];
+    overall_achievement_pct: number | null;
+    has_comparison: boolean;
+  } | null;
+  compared_session_id: number | null;
+  model_version: string;
+  generated_at: string;
+};
+export function generateWorkoutReport(token: string | null, sessionId: number): Promise<WorkoutSessionReportOut> {
+  return apiFetch<WorkoutSessionReportOut>(`/workouts/${sessionId}/generate-report`, {
+    method: 'POST',
+    token,
+  });
+}
+// 過去に生成済みのレポートを取得する（再生成はしない）。記録タブの筋トレ履歴から
+// タップして見る用途。生成前（通常は無いはずだが念のため）は404になる。
+export function fetchWorkoutReport(token: string | null, sessionId: number): Promise<WorkoutSessionReportOut> {
+  return apiFetch<WorkoutSessionReportOut>(`/workouts/${sessionId}/report`, { token });
 }
 export function toIsoDate(d: Date): string {
   const y = d.getFullYear();

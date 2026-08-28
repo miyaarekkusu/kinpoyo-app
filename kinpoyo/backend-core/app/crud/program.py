@@ -121,6 +121,21 @@ def get_user_program(db: Session, user_program_id: int) -> Optional[UserProgram]
     return db.scalars(stmt).first()
 
 
+def get_active_user_program(db: Session, user_id: int) -> Optional[UserProgram]:
+    """筋トレレポートのAIレビュープロンプトにプログラム文脈を渡すために使う
+    （2026-08-25、AGENTS.md『プログラム連携』参照）。参加中(active)のプログラムが
+    複数ある想定はしていない（join_program側でSTATUS_ACTIVEの重複を許可していない）。"""
+    stmt = (
+        select(UserProgram)
+        .where(UserProgram.user_id == user_id, UserProgram.status_id == STATUS_ACTIVE)
+        .options(
+            selectinload(UserProgram.program).selectinload(Program.category),
+            selectinload(UserProgram.program).selectinload(Program.difficulty_level),
+        )
+    )
+    return db.scalars(stmt).first()
+
+
 def join_program(db: Session, user_id: int, program_id: int) -> UserProgram:
     existing = db.scalars(
         select(UserProgram).where(

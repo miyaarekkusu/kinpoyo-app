@@ -16,23 +16,28 @@
 
 ## ⚠️ AI処理テーブル — 絶対に触れないこと
 
-> **以下の2テーブルは別担当者がAI設計を進めており、現在は仮実装の状態です。**
+> **以下のテーブルは別担当者がAI設計を進めており、現在は仮実装の状態です。**
 > **コード・マイグレーション・シードデータ、いかなる変更も禁止します。**
 > **誤ってデータを投入したり構造を変更すると、統合時に深刻な競合が発生します。**
 
 | テーブル       | ファイル                | 禁止理由                       |
 | -------------- | ----------------------- | ------------------------------ |
 | `pose_records` | `app/models/workout.py` | MediaPipe AI処理担当者が設計中 |
-| `ai_reviews`   | `app/models/workout.py` | Claude API連携担当者が設計中   |
 
-**禁止事項（厳守）:**
+**禁止事項（厳守・`pose_records`のみ対象）:**
 
 - モデルクラスの編集禁止
 - マイグレーションでのカラム追加・削除・変更禁止
 - シードスクリプトでのデータ投入禁止
-- これらのテーブルへの INSERT / UPDATE / DELETE 禁止
+- このテーブルへの INSERT / UPDATE / DELETE 禁止
 
 統合時は必ず担当者と確認・合意の上で作業すること。
+
+> **`ai_reviews`について（2026-08-24更新）**: 従来はClaude API連携担当者が別途設計中として
+> 上記と同様に変更禁止だったが、AIレビュー機能の設計・実装を担当者本人（ユーザー）が兼任する
+> ことになったため、上記の禁止対象から外れた。`session_sets.rep_cycles_json`・
+> `ai_reviews.matched_part_codes_json`・新規`ai_review_prompt_parts`テーブルを含め、
+> 通常のテーブルと同様に変更・実装してよい（詳細は`backend-core/DATABASE.md`のAIレビュー領域節）。
 
 ---
 
@@ -194,6 +199,7 @@ kinpoyo/
 │   │   ├── exercises.ts      # GET /exercises
 │   │   ├── workout.ts        # POST/GET /workouts系・start/end
 │   │   └── program.ts        # プログラム一覧/参加/次メニュー提案/advance
+│   │       # exercises.ts に countRepsFromVideo（AI回数カウント：動画アップロード）も含む
 │   ├── styles/        # CSSテンプレート
 │   ├── package.json
 │   └── ...
@@ -201,9 +207,11 @@ kinpoyo/
     ├── main.py            # エントリーポイント
     ├── requirements.txt   # 依存パッケージ一覧
     ├── DATABASE.md        # DB設計書（テーブル定義・ER図・設計方針）
+    ├── ml_assets/         # AI回数カウント用MediaPipeモデルの自動ダウンロード先（.gitignore済み・手動配置不要）
     ├── scripts/
     │   ├── seed_masters.py    # マスターデータ投入スクリプト
-    │   └── seed_demo_program.py  # デモ用BIG3プログラム投入（動作確認用）
+    │   ├── seed_demo_program.py  # デモ用BIG3プログラム投入（動作確認用）
+    │   └── import_rep_model.py   # model-studioから較正済みAI回数カウント設定を取り込む
     └── app/
         ├── database.py        # Engine・セッション設定
         ├── models/
@@ -212,7 +220,7 @@ kinpoyo/
         │   ├── master.py      # マスター11テーブル
         │   ├── user.py        # User・UserProfile
         │   ├── body.py        # BodyGoal
-        │   ├── exercise.py    # Exercise・ExerciseSecondaryMuscle
+        │   ├── exercise.py    # Exercise・ExerciseSecondaryMuscle・RepCountModel（AI回数カウント設定）
         │   ├── workout.py     # WorkoutSession・SessionExercise・SessionSet
         │   ├── program.py     # Program・ProgramExercise・UserProgram
         │   └── community.py   # Post・PostLike・PostComment・Follow
@@ -226,7 +234,7 @@ kinpoyo/
         ├── routers/           # APIルーター（エンドポイント定義）
         │   ├── auth.py
         │   ├── users.py
-        │   ├── exercises.py
+        │   ├── exercises.py   # 種目一覧・AI回数カウント（rep-model取得・count-reps動画解析）
         │   ├── workouts.py
         │   ├── records.py
         │   ├── programs.py
@@ -234,14 +242,17 @@ kinpoyo/
         │   └── masters.py
         ├── crud/              # DB操作ロジック
         │   ├── user.py
-        │   ├── exercise.py
+        │   ├── exercise.py    # RepCountModel取得を含む
         │   ├── workout.py
         │   ├── program.py
         │   └── community.py
         └── core/
-            ├── config.py      # 環境変数管理（DATABASE_URL等）
-            ├── security.py    # JWT・パスワードハッシュ（python-jose/passlib）
-            └── deps.py        # 依存性注入（get_db, get_current_user）
+            ├── config.py         # 環境変数管理（DATABASE_URL等）
+            ├── security.py       # JWT・パスワードハッシュ（python-jose/passlib）
+            ├── deps.py           # 依存性注入（get_db, get_current_user）
+            ├── pose.py           # AI回数カウント：1フレーム→ポーズランドマーク抽出（MediaPipe Tasks API）
+            ├── pose_analysis.py  # AI回数カウント：ランドマーク→関節角度計算
+            └── rep_model.py      # AI回数カウント：録画動画からの回数判定（テンプレート照合＋統計ゲート、推論のみ）
 ```
 
 > **Expo Router ルートグループについて**
@@ -264,6 +275,7 @@ kinpoyo/
 | 完了アニメーション     | `(auth)/success.tsx`                   | ✅ 実装済み（モック）   | チェックマークのスケール+フェードアニメーション（reanimated）→自動でログインへ遷移                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ホーム                 | `(tabs)/index.tsx`                     | ✅ 実装済み（結合済み） | 月表示カレンダー（旧`calendar.tsx`を統合）・選択日の「本日のトレーニングメニュー」カード（登録済みなら実績、未登録＋参加中プログラムありなら次メニュー提案、両方無ければ空状態）・統計グリッド（未結合）・プログラムカード・トレーニング知識セクション。「筋トレ登録」ボタンは削除（登録は筋トレ開始タブのみ）                                                                                                                                                                                                             |
 | 筋トレ登録             | `(screens)/workout-register.tsx`       | ✅ 実装済み（結合済み） | `GET /exercises`から取得した実データで種目選択モーダル（pageSheet、Push/Pull/Legs・部位別フィルター）。セットごとの重量/回数入力→`POST /workouts`で保存                                                                                                                                                                                                                                                                                                                                                 |
+| AI回数カウント（動画録画・解析） | `(screens)/workout-camera.tsx`   | ✅ 実装済み・DB保存済み・実機テスト済み | 筋トレ開始タブの「筋トレを開始する」から、較正済み種目（現状スクワットのみ）があれば自動遷移。「録画開始」→「終了」で動画を録画し、`POST /exercises/{id}/count-reps`へアップロード、backend側でまとめて解析した回数を結果画面に表示（バッチ方式。リアルタイムWebSocket版は2026-08-24に精度・遅延の問題で削除済み）。計測結果は`session_sets`へ自動保存され、「AIレビューを見る」ボタンからAIトレーナーのフォームレビューを生成できる。未対応種目の場合は遷移せず開始タブ側に通知を表示。**既知の制約：今日の種目に較正済みモデルが複数含まれていても、最初に見つかった1種目にしかカメラは起動しない**（2種目目以降の対応は保留）。**セット管理フロー（休憩・複数セット・全体レポート）は設計のみで未実装**（下記「筋トレフロー刷新」節参照） |
 | プログラム一覧         | `(screens)/program/index.tsx`          | ✅ 実装済み             | BIG3強化・ボディウェイトの2プログラムカード                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | BIG3プログラム詳細     | `(screens)/program/big3.tsx`           | ✅ 実装済み             | ヒーロー・概要グリッド・週スケジュール・3種目・開始ボタン                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ボディウェイト詳細     | `(screens)/program/bodyweight.tsx`     | ✅ 実装済み             | ヒーロー・概要グリッド・週スケジュール・6種目・開始ボタン                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -321,17 +333,44 @@ kinpoyo/
 - `completed`: 完了サマリー（`duration_sec`/`total_volume`表示）
 - 登録なし: 「今日のメニューは登録されていません」の空状態 + **その場で登録できるフォーム**（`program_choice.tsx`を参考にしたセット/重量(kg)/レップ数/RPEのテーブルUI、種目追加は`workout-register.tsx`と同じ`GET /exercises`ピッカー）。保存すると画面遷移せずそのまま登録済み表示に切り替わる
 - **開始ボタンはナビのタブが唯一のエントリーポイント**（ホームに開始ボタンは置かない）
+- 「筋トレを開始する」押下時、今日の種目にAI回数カウント較正済みのもの（現状スクワットのみ）があれば`workout-camera.tsx`へ自動遷移してカメラ計測、無ければ未登録の通知を表示（詳細は「AI回数カウント機能」セクション参照）
 
-### 記録タブの構成（実装済み）
+### 記録タブの構成（2026-08-25、実データ接続済み）
 
-- グラフ期間セレクター（週/月/年）
-- AIトレーナーカード（モック）: TrainerAvatar + 週/月/年ごとのレビューコメント（ボリューム推移から簡易判定）。Claude API連携は今後実装予定
-- サマリーカード: 筋トレ回数・ボリューム(kg)
-- ボリューム推移折れ線グラフ（areaChart + curved）
-- 種目別最大重量グラフ（種目チップで切替・yAxisOffsetでズームイン）
-- 筋トレ履歴: 期間（全期間/今月/今週）× 部位（色分けチップ）絞り込み
+2026-08-25までは全データがハードコードされたモックだったが、既存の`/records`系
+バックエンドAPI（実装済みだったが未接続だった）に接続し、`frontend/services/records.ts`
+を新設して実データを流すようにした。
+
+- グラフ期間セレクター（週/月/年 ↔ API `period=week|month|year`）→ `GET /records/summary`
+- AIトレーナーカード: 実データ（`total_sessions`・ボリューム推移）を使った決定的
+  ヒューリスティックのコメント（`aiComment()`、期間集計に対する本物のAI生成レビューは
+  まだ無い。DeepSeek連携は将来やるなら新規エンドポイントが必要）
+- サマリーカード: `total_sessions`・`total_volume`（選択期間の実績）
+- ボリューム推移折れ線グラフ：`points[].period_start`からラベルを算出
+  （週=曜日、月=`{週番号}週`（配列の並び順そのまま利用）、年=`{月}月`）
+- 種目別最大重量グラフ：`GET /records/history?period=all`の結果から実際に記録の
+  ある種目一覧を作って種目チップにする（種目マスター全件ではなく「やったことが
+  ある種目」だけ表示）。選択した種目IDで`GET /records/max-weight?exercise_id=`を呼ぶ
+- 筋トレ履歴: 期間（全期間/今月/今週 ↔ API `period=all|month|week`）は`GET
+  /records/history`で毎回サーバー側フィルタ。**部位の絞り込みは複数選択UIだが
+  APIの`muscle_group_id`は単一値のみ対応**のため、`period=all`で取得した全履歴
+  から部位の選択肢一覧（色・名前）を作り、複数選択の絞り込み自体はクライアント側で
+  行う（`histMuscles`配列でフィルタ）
   - メイン: 最新3件表示 → 「もっと見る」で中央ダイアログモーダル展開
   - モーダル: calendar.tsx の筋トレ修正と同一スタイル（fade・中央・Radius.xl）
+- **バックエンド側の修正**：`app/crud/record.py`の3関数（`get_volume_summary`/
+  `get_max_weight`/`get_history`）は元々`status_id != CANCELLED`（予定済み・実施中
+  セッションも含む）でフィルタしていたため、開始前/実施中のセッションが実績として
+  混入するバグがあった。`status_id == COMPLETED`に修正済み（実機接続時に発覚）
+- **筋トレ履歴カードから過去のAIレポートを閲覧可能（2026-08-25追加）**：
+  `HistoryItem`に`duration_sec`を追加（`WorkoutSession.duration_sec`をそのまま
+  露出。カードに「6/6（土）· 52分」のように表示、`fmtDuration()`で分/時間分に整形。
+  0秒以下は非表示）。カードをタップすると`GET /workouts/{id}/report`（新設、
+  `generate-report`とは別の読み取り専用エンドポイント。再生成はしない）で
+  そのセッションの`WorkoutSessionReportOut`を取得し、`workout-report-result.tsx`
+  （筋トレ終了直後と同じ画面）へ`reportJson`＋`dateLabel`パラメータで遷移する。
+  レポート未生成のセッションは404（通常は`/end`成功時に自動生成されるので
+  基本発生しない想定。発生時は`Alert.alert`でエラー表示）
 
 ### ホーム画面に**含めないもの**（設計方針）
 
@@ -342,7 +381,820 @@ kinpoyo/
 
 ---
 
-## 環境情報
+## プロフィール画面（2026-08-25、Phase 1実装済み）
+
+以前は完全にモック（`useAuth().signOut()`以外はAPIを一切呼ばない静的UI）だった
+`profile.tsx`を実データ接続した。ユーザーから「①実データ接続（既存API中心）→
+②新規サブシステム（BIG3の1RM登録・My筋トレテンプレート）」の2フェーズで進める
+方針を確認済み。**今回実装したのはPhase 1のみ**。
+
+### Phase 1（実装済み）
+
+- **ユーザーカード**：`GET /auth/me`（`fetchMe`、既存）＋`GET /users/me/profile`
+  （新規`frontend/services/user.ts`）から表示名（無ければusername）を表示
+- **実績スタッツ**：新規`GET /records/achievements`（`app/crud/record.py`の
+  `get_achievements`）で全期間累計の「トレーニング時間・総ボリューム・合計
+  ワークアウト数・週間ストリーク」を返す。`status_id == COMPLETED`のセッションのみ
+  対象（records機能全体の既存方針と統一）
+  - 週間ストリークの定義（ユーザー確認済み）：ISO週単位で「今週を含めて連続で
+    完了済みワークアウトが1回以上あった週の数」。`_compute_weekly_streak()`が
+    `date.isocalendar()`/`date.fromisocalendar()`で年またぎも正しく処理する
+- **最近の身体情報**：`UserProfileOut`の現在値（体重/筋肉量/体脂肪率）をそのまま
+  表示。**履歴機能ではなく単一スナップショット**（DBに時系列テーブルが無いため。
+  「最近の」＝「直近に更新した値」という扱い）
+- **参加プログラム（新規セクション）**：`GET /user-programs/me`から`status_code
+  === 'active'`のものを表示し、`current_week`/`current_day`の進捗と「プログラムを
+  やめる」ボタン（既存の`leaveProgram`をそのまま利用）を出す。元のモックUIには
+  無かったセクションを新規追加
+- **ユーザー情報変更**：新規画面`frontend/app/(screens)/profile-edit.tsx`。
+  ヘッダーの歯車アイコン（元々onPressが無かった）と「最近の身体情報」カードの
+  タップで遷移。編集対象はプロフィール画面に実際に表示されているフィールドのみ
+  （表示名・体重・筋肉量・体脂肪率）に絞った（`UserProfileOut`の他フィールド
+  〔身長・性別・生年月日・bio・アバター〕は今回のUIに出ていないため対象外）
+- **ログアウト**：`useAuth().signOut()`は元から実装済みでそのまま維持
+
+### 表示順（2026-08-26変更）
+
+`profile.tsx`のセクション表示順は、ユーザーカードの直下に「最近の身体情報」を
+配置する順に変更済み：ユーザーカード → **最近の身体情報** → 実績スタッツ →
+BIG3の合計(1RM) → 参加プログラム → My筋トレ → ログアウト（変更前は実績スタッツ・
+BIG3の後だった）。
+
+### Phase 2（2026-08-25実装済み）
+
+- **BIG3の合計(1RM)**：自動計算＋手入力登録の両方に対応（ユーザー確認済み）。
+  - 新規テーブル`user_exercise_maxes`（`user_id, exercise_id, weight_kg,
+    recorded_at`）に手入力値を保存（マイグレーション`3a7c9e1f5b02`）
+  - `app/core/rpe_predictor.py`の`get_prior_best_e1rm`を拡張し
+    `exclude_session_id`を`Optional`化（Noneなら全期間ベストを返す。元々は
+    セッションレポートの「今回より前の自己ベスト」専用だったが、BIG3表示は
+    「今回を含む生涯ベスト」が欲しいため）
+  - `app/crud/exercise_max.py`の`get_big3`：種目ごとに手入力値と自動推定1RMの
+    大きい方を採用し`source`（"manual"|"workout"）を返す。TOTALは3種目全ての
+    ベストが分かっている場合のみ計算（1つでも不明ならNone）
+  - `GET /records/big3`・`POST /records/exercise-max`
+  - `profile.tsx`：BIG3カードをタップすると手入力登録モーダルが開く
+    （SQUAT=exercise_id 17、BENCH=1、DEADLIFT=9で固定）
+- **My筋トレ（新規追加）**：よく行う筋トレを保存して、カレンダーからワンタップで
+  その日に登録できる機能。既存の`Program`/`UserProgram`は「1ユーザー1アクティブ
+  プログラムまで」という制約（`join_program`の`AlreadyHasActiveProgramError`）
+  があるため**流用せず**、独立した新規テーブルにした：
+  - `workout_templates`（id, user_id, name, created_at）→
+    `workout_template_exercises`（exercise_id, order_index）→
+    `workout_template_sets`（weight_kg, reps, rest_after_sec）の3階層。
+    `WorkoutSession → SessionExercise → SessionSet`と同じ形にすることで、
+    テンプレート適用時にそのまま`WorkoutSessionCreate`へ変換できる
+    （マイグレーション`7d4f2a8c91e6`）
+  - `app/crud/workout_template.py`の`apply_template`：テンプレートの内容から
+    `SessionExerciseCreate`/`SessionSetCreate`を組み立て、既存の
+    `workout_crud.create_session`をそのまま呼ぶ（セッション作成ロジックを
+    重複させない）。`target_sets`はテンプレートのセット数をそのまま使う
+    （達成率バグ修正と同じ理由で実績計算の基準になるため必須）
+  - エンドポイント：`POST/GET /workout-templates`、
+    `GET/DELETE /workout-templates/{id}`、`POST /workout-templates/{id}/apply`
+  - `profile.tsx`に「My筋トレ」セクション（一覧＋新規追加＋削除）を追加。
+    新規追加は`workout-template-edit.tsx`（`workout-register.tsx`と同じ
+    種目/セット組み立てUIだが日付が無い。休憩時間の個別設定は今回スコープ外＝
+    シンプルさ優先）
+  - `frontend/app/(tabs)/index.tsx`：カレンダーの空き日カードに「My筋トレから
+    登録」チップ行を追加（`selDayWorkouts.length === 0 && templates.length > 0`
+    の時のみ表示）。タップで`applyWorkoutTemplate`→即座にその日へセッション作成
+- **実装時の落とし穴**：`WorkoutTemplateExerciseOut.exercise_name`は
+  `WorkoutTemplateExercise`の直接属性ではなく`exercise.name`というリレーション
+  越しの値のため、`model_validate(from_attributes=True)`では埋まらず
+  `ValidationError`になった（`session_to_out`と同じ理由）。`crud/workout_template.py`
+  の`template_to_out()`で手動組み立てするよう修正して解決
+
+---
+
+## AI回数カウント機能 — バッチ（録画→アップロード→解析）方式が本番導線（2026-08-24）
+
+> **現状：「筋トレを開始する」ボタンから、model-studioで較正済みの種目（現状はスクワットのみ）
+> であれば自動で**バッチ版**のカメラ画面（`workout-camera.tsx`）が開く。録画→アップロード→
+> backend側でまとめて解析→結果表示。model-studio本番APIと数値完全一致まで検証済み。**
+>
+> 経緯：2026-08-22にリアルタイム版（WebSocket）を精度・遅延問題で一度廃止しバッチ方式へ。
+> 2026-08-24、バッチ版でmodel-studioとの数値完全一致を確認後、同日中にリアルタイム版を
+> 再設計・実装し、一時的に本番導線をリアルタイム版に切り替えて実機テストを行った。
+> しかしテストの結果、`takePictureAsync`連写方式に由来するシャッター音・速い動作への
+> 耐性不足が判明し、根本解決にはカメラ処理の本格的な刷新（react-native-vision-camera等
+> への移行、custom dev client必須）が必要と分かった。ユーザー判断により、それは大規模な
+> 変更のため見送り、**同日中にリアルタイム版のコード自体を削除**（詳細は下記
+> 「リアルタイム版」節）し、本番導線をバッチ版へ戻して、AIレビュー機能を優先することにした。
+> カウント結果は`session_sets.ai_counted_reps`・`rep_cycles_json`へ保存されるようになった
+> （AIレビュー機能実装時に対応。下記「AIレビュー機能」節参照）。
+> 詳しいデバッグの経緯（長期間、数値が一致しなかった原因調査の記録）は
+> `notes/ai-count-debug-memo.txt`を参照。
+> 続きに着手する際は、このセクションを起点に更新すること。
+
+### 背景
+
+`../model-studio/`（別リポジトリ扱い・変更禁止。詳細は `model-studio/AGENTS.md` 参照）で、
+MediaPipeのポーズランドマークから種目ごとの「回数カウント用モデル」を学習済み。
+このモデルは **ニューラルネットではなく軽量なJSON設定**（ヒステリシス状態機械の閾値＋
+1レップ形状テンプレート＋統計ゲート、`RepModel.config_json`）。
+
+model-studioはAzure App Service + Azure SQL Databaseで動いており、**1フレームごとに
+同期でDBへINSERTする設計**のため処理が非常に遅い。本アプリではこの構成を踏襲せず、
+**Azureを使わずbackend-coreでローカルに処理する**方針とした。
+
+### 決定したアーキテクチャ（現行版）
+
+```
+① スマホで動画を録画（expo-cameraの録画機能。mode="video"、録画開始/終了ボタン）
+② 録画終了後、動画ファイルをmultipartでbackend-coreへアップロード
+   POST /exercises/{id}/count-reps
+③ backend-coreがOpenCVで動画を1フレームずつ読み込み、MediaPipeでランドマーク抽出
+④ 較正済み設定（rep_count_models）を使い、app/core/rep_model.pyの
+   count_with_template（1レップ形状テンプレート照合＋統計ゲート＋ヒステリシス、
+   model-studioでmae=0.0の実績があるフル版アルゴリズム）で判定
+⑤ 結果（回数・採用/棄却したサイクルの内訳と理由）をまとめて返す→画面に表示
+```
+
+model-studio（変更禁止）自身の`POST /models/{id}/count`と同じ設計（動画アップロード→
+バッチ解析→結果を返す、非同期ジョブ化はしない）。判定は全てbackend側で行うため、
+**フロントには回数カウントのロジックが一切無い**（録画・アップロード・結果表示のみ）。
+
+- **backend-core**：動画受信→フレームごとにMediaPipeでランドマーク抽出→関節角度計算→
+  レップ判定まで全てを担う。フレーム単位の画像・ランドマークはDBに永続化しない
+  （処理用の一時ファイルも処理後に削除）。実装確認用に、毎フレームの関節角度と
+  各サイクルの採用/棄却理由をターミナル（uvicornのログ）に出力する
+- **frontend**：`expo-camera`で動画を録画し、multipartでアップロードして結果を表示するだけ
+
+### past: リアルタイムストリーミング版（2026-08-13〜08-22、廃止）
+
+最初は「フロントカメラで定期的に静止画を撮影→WebSocketでbackend-coreへ送信→都度
+関節角度を受け取りフロント側でリアルタイムにカウント」という設計で実装し、実機テストで
+数々の不具合を発見・修正した（`StreamingRepCounter`によるカウント巻き戻りの修正、遅延
+蓄積対策、姿勢ロスト判定の実時間ベース化など）。しかし精度・遅延の問題が解決しきれず、
+「①アルゴリズムが正しいか」と「②リアルタイム通信が正しいか」という2つの変数が絡まって
+デバッグが難しい状態が続いたため、**ユーザーと相談の上、②を完全に排除できるバッチ方式
+（model-studio自身と同じ設計）に戻すことにした**。このとき得られた教訓（下記「実装中に
+判明した重要な制約」の①②③）は現行のバッチ方式でも通用するため引き続き有効。
+
+このとき作った`/ws/pose`（WebSocket）・`frontend/lib/repCount.ts`
+（`StreamingRepCounter`等）・`frontend/services/pose-ws.ts`・
+`frontend/app/(screens)/pose-test.tsx`・`components/pose-skeleton-overlay.tsx`は
+**全て削除済み**。`app/core/pose.py`（ランドマーク抽出）・`app/core/pose_analysis.py`
+（角度計算）・`rep_count_models`テーブルと較正データ取り込みはそのまま現行版でも再利用している。
+
+### 較正済みモデルの取り込み
+
+model-studioのAzure App Service（`https://kinpoyo-api.azurewebsites.net`、読み取り専用アクセス。
+model-studio自体は変更禁止）から、`backend-core/scripts/import_rep_model.py`で
+較正済みの`RepModel`を取得し`rep_count_models`へ取り込む。
+
+```bash
+cd backend-core && venv\Scripts\activate
+python scripts/import_rep_model.py <model-studioのタグ名> <本アプリの種目名>
+# 例: python scripts/import_rep_model.py スクワット スクワット
+```
+
+現状、実データとして**スクワット（exercise_id=17）のみ**投入済み（model-studio側
+`model_id=15`、`mae=0.0`、`exact_match_rate=1.0`）。他の種目でカメラ計測を有効にするには、
+model-studio側で該当タグの`build-model`が実行済みであることを確認した上でこのスクリプトを
+実行する。
+
+### ⚠️ 実装中に判明した重要な制約（要一読）
+
+1. **mediapipeは最終的にlegacy API（`mp.solutions.pose`）を使う。** 当初はPython 3.14
+   環境の都合で新Tasks API（`mediapipe.tasks.python.vision.PoseLandmarker`）に
+   書き直していたが、Tasks APIの骨格検出モデルはlegacy API（0.10系）とは別に
+   学習・パッケージされた別物で、model-studioの較正済み閾値と噛み合わないことが
+   判明したため、**backend-core全体をPython 3.12＋legacy API
+   （`mediapipe>=0.10.14,<0.10.22`）に揃えた**（`app/core/pose.py`参照）。
+2. **⭐最重要・最後まで気づかなかった根本原因：角度計算には`pose_landmarks`
+   （画像正規化座標）ではなく`pose_world_landmarks`（腰を原点とする実世界3D
+   メートル座標）を使うこと。** `pose_landmarks`はx/yが画像の幅・高さで別々に
+   正規化されておりアスペクト比の分だけ歪み、zは全く別スケールなので、3点の
+   角度計算に混ぜると無意味な値になる（特に奥行きを含む動き＝スクワットの
+   ような動作で顕著）。`pose_world_landmarks`は座標系の回転・平行移動に対して
+   角度が不変なので、カメラ位置・動画サイズに依存しない正しい角度が出る。
+   config・アルゴリズム・mediapipeバージョンを全て一致させても数値が合わない、
+   という長い調査の末にたどり着いた結論（詳細な経緯は
+   `notes/ai-count-debug-memo.txt`参照）。**今後MediaPipeのランドマークを
+   扱うコードを書く際は、必ず`result.pose_world_landmarks`を使うこと。**
+3. **プロジェクトのルートパスに日本語（`HAL名古屋`）が含まれるため、MediaPipe・
+   OpenCVの内部C++層に非ASCIIパスを渡すとファイルを開けず`FileNotFoundError`
+   になる**（モデルファイルパス・`cv2.imwrite()`の保存先どちらでも発生を確認済み）。
+   backend-core全体の venv は `C:\venvs\kinpoyo-backend-core`（ASCIIパス）に
+   置いている（`backend-core\venv`ではない。`start.txt`参照）。
+4. MediaPipeの推論・動画のフレームループはCPUバウンドな同期処理。
+   `POST /exercises/{id}/count-reps`は`async def`ではなく**普通の`def`
+   （非async）で定義しており、FastAPIが自動的にスレッドプールで実行するため
+   イベントループをブロックしない（`UploadFile`の読み込みも`await video.read()`
+   ではなく同期API`video.file.read()`を使う。`def`内では`await`できないため）。
+5. **スマホの縦撮り動画は、横長ピクセルバッファ＋90度回転メタデータで保存される
+   ことがある。** これを適用しないとMediaPipeに横倒しの画像を渡すことになり
+   姿勢推定が崩れる。`cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)`で対応済み。
+6. **iPhoneの動画はHEVCで録画されることが多く、backend-coreのOpenCVがデコード
+   できないことがある**（model-studio側にも同種の既知問題があった）。
+   `expo-camera`の`recordAsync({ codec: 'avc1' })`でiOS側にH.264を強制している
+   （`codec`オプションはiOSのみ有効）。
+7. **`model-studio`はローカルリポジトリのファイルとAzure実機のデプロイ内容が
+   ズレることがある**（`deploy.ps1`は手動zipデプロイで、デプロイし忘れ・
+   部分的な更新が起こり得る構成）。ローカルのコードを読んで移植しても、
+   Azure実機と結果が一致しない場合は、まずmd5ハッシュ等でファイルの中身が
+   本当に同じか比較すること（詳細は`notes/ai-count-debug-memo.txt`）。
+
+### 実装状況
+
+| 場所 | 内容 | 状態 |
+| ---- | ---- | ---- |
+| `backend-core/app/core/pose.py` | 1フレーム（OpenCVの生配列）→`pose_world_landmarks`抽出。legacy API（`mp.solutions.pose.Pose(static_image_mode=False, model_complexity=1)`）使用 | ✅ 実装済み・model-studio本番APIと数値一致まで検証済み |
+| `backend-core/app/core/pose_analysis.py` | 関節定義・角度計算（`JOINT_DEFINITIONS_JA`・`angle_at`・`compute_joint_angles`） | ✅ 実装済み・動作確認済み |
+| `backend-core/app/core/rep_model.py` | model-studio`rep_model.py`から**推論に必要な部分のみ**移植：`count_with_template`（1レップ形状テンプレート照合＋ヒステリシス）・`joint_series_from_frames`・`model_from_dict`等 | ✅ 実装済み・実データ（スクワット動画）でmodel-studio本番APIと完全一致（回数・ROM・採用サイクル区間まで一致）を確認済み（2026-08-24の統計ゲート廃止より前の状態での検証。廃止後も同じ動画で同じ回数・区間になることは再確認済み） |
+| `POST /exercises/{exercise_id}/count-reps` | 動画アップロード→バッチ解析→結果を返す。`def`（非async）でスレッドプール実行、JWT認証必須。フレーム単位の永続化はしない。毎フレームの関節角度・各サイクルの採用/棄却理由をuvicornのターミナルに出力 | ✅ 実装済み・実機（スマホアプリ）での録画→アップロード→解析→表示の通しテスト済み |
+| `rep_count_models`テーブル・`GET /exercises/{id}/rep-model`・`scripts/import_rep_model.py` | ストリーミング版から変更なし、そのまま再利用 | ✅ 実装済み（スクワットのみデータ投入済み） |
+| `frontend/app/(screens)/workout-camera.tsx` | `expo-camera`の録画機能で動画を録画→`count-reps`へアップロード→結果表示。実装確認用に「ライブラリから選ぶ」ボタンも追加（既存動画で再テスト可能）。**本番導線（2026-08-24、リアルタイム版への一時切り替え→問題判明により差し戻し）** | ✅ 実装済み・実機テスト済み |
+| `frontend/services/exercises.ts`の`countRepsFromVideo` | `FormData`でのmultipartアップロード | ✅ 実装済み |
+| `frontend/app/(tabs)/workout.tsx`の`handleStart` | 遷移先は`workout-camera`（バッチ版）。2026-08-24中に一時`workout-camera-live`（リアルタイム版）へ変更したが、実機テストで判明した制約（下記「リアルタイム版」節参照）とAIレビュー機能優先の判断により、同日中にバッチ版へ差し戻し、リアルタイム版自体も削除した | ✅ 実装済み |
+
+### 残っている論点
+
+- カウント結果のDB保存（`session_sets.ai_counted_reps`/`rep_cycles_json`）はAIレビュー機能実装（2026-08-24）で対応済み（`addSessionSet`/`updateSessionSet`）
+- 複数種目対応（今日のメニューに較正済み種目が複数あっても最初の1つしか案内しない制約）は保留のまま
+- 動画アップロードのファイルサイズ・処理時間の上限は未検証（長時間の録画だとMediaPipe処理に時間がかかる想定。ユーザー指定で「終了ボタンまで録画」とし自動停止時間は設けていない）
+- デバッグ用に追加した`debug_uploads/`保存機能・Docker検証環境（`Dockerfile`・`docker-compose.yml`のbackend-coreサービス・requirements.txtの`gunicorn`）は調査用。今後片付けるか、検証環境として残すか要判断
+
+### リアルタイム版（2026-08-24: 設計・実装・実機テスト → 削除）
+
+2026-08-24中に、WebSocketベースのリアルタイム版（`StreamingRepCounter`・
+`app/routers/exercises_ws.py`・`frontend/services/pose-ws.ts`・
+`frontend/app/(screens)/workout-camera-live.tsx`等）を設計・実装し、一時的に
+本番導線にもした。実機テストの結果、`takePictureAsync`連写方式に起因する
+シャッター音・低フレームレートでの精度不足（速い動作・ハーフレップへの耐性が
+低い）が判明し、根本解決には`react-native-vision-camera`等への移行（Expo Go
+が使えなくなりカスタムdev clientが必要な大きめの変更）が要ることが分かった。
+
+**ユーザー判断により、リアルタイム版は同日中に削除した。** バッチ版
+（`workout-camera.tsx`）が唯一の本番導線に戻っている。理由：①上記の精度課題の
+根本解決の規模が大きいこと、②それよりAIレビュー機能・セット管理フローの改善
+（アプリの中核価値）を優先すべきと判断したこと。
+
+**このプロジェクトはgitリポジトリではない**ため、削除したコードは
+`c:\HAL名古屋\kinpoyo\_backup\realtime-ai-count-2026-08-24\`にバックアップして
+ある（`streaming_rep_counter.py`・`frame_warnings.py`・`exercises_ws.py`・
+`workout-camera-live.tsx`・`pose-ws.ts`）。再度着手する場合は、設計方針
+（WebSocket・因果的ヒステリシス閾値・実時間ベースのギャップ判定・警告機能等）
+・実機で判明した制約（シャッター音・低フレームレート耐性）は上記バックアップの
+コード内コメントと、このファイルの過去のgit差分に相当する情報が無いため、
+着手前に一からその場で再設計すること（詳細な設計判断の記録はバックアップの
+コード内docstringに残っている）。`app/core/pose.py`の`extract_frame_analysis`/
+`FrameAnalysis`（リアルタイム版専用に追加していた関数）も同時に削除済み。
+`main.py`から`exercises_ws`ルーターの登録も削除済み。
+
+## AIレビュー機能（2026-08-24実装・実機テスト待ち）
+
+AI回数カウント（バッチ版）の計測結果をもとに、DeepSeek APIでコーチ風のフォームレビュー文章を生成する機能。設計方針は`notes/ai-review-design-memo.txt`参照。
+
+### 基本方針
+
+- **「判定」と「文章生成」を分離する。** 深さ・テンポの良し悪しは決定的なロジック（閾値比較）で判定し、AIには「その観点についてコーチ風の自然な文章にする」ことだけをやらせる。AIに判定させない
+- **ベース＋パーツ差し替え方式。** ベースプロンプトは固定・共通（コード内定数）。観点ごとの差し替え文言（パーツ）は`ai_review_prompt_parts`テーブルで管理し、該当する観点のパーツを複数選んで結合する
+
+### スキーマ
+
+- `session_sets.rep_cycles_json`（JSONB）：count-repsのサイクル内訳を要約保存（`period`はフレーム数ではなく**秒に変換して**保存する。`app/schemas/exercise.py`の`RepCycleJson`参照）
+- `ai_reviews.matched_part_codes_json`（JSONB）：生成時に選ばれたパーツcodeの配列（追跡用）
+- 新規`ai_review_prompt_parts`テーブル：`code`（例：`squat_depth_shallow`）・`exercise_id`（NULL可＝種目共通）・`label_ja`・`prompt_fragment`・`is_active`。**`code`は`{種目}_{観点}_{方向}`という命名規則**（判定ロジックがサフィックス一致でパーツを検索する）
+- `ai_reviews`は`pose_records`と異なり変更禁止の対象外（担当者本人が設計・実装を兼任）。`PoseRecord`・`pose_records`には一切触れていない
+
+### 判定ロジック（`app/core/review_judge.py`）
+
+- 深さ：`session_sets.rep_cycles_json`の`accepted=true`サイクルの`bottom_deg`平均を、`rep_count_models.config_json["cycleStats"]["bottomDeg"]`（較正済み帯域）の上限と比較。超えていれば`depth_shallow`、それ以外は`depth_good`
+- テンポ：`period_sec`平均を固定しきい値`TEMPO_FAST_THRESHOLD_SEC = 1.5`と比較（model-studio側にテンポの較正データが無いため、一般的な目安の定数。実測値に基づく較正ではない）。それ未満なら`tempo_fast`、それ以外は`tempo_good`
+
+### プロンプト・API（`app/core/review_prompt.py`・`app/core/deepseek_client.py`）
+
+- ベースプロンプト（固定、日本語、コーチ口調指定）＋選ばれたパーツの`prompt_fragment`＋実測値（採用/棄却数・平均角度・平均テンポ）を組み立ててDeepSeek API（`deepseek-chat`）へ送る
+- DeepSeek APIはOpenAI互換のREST APIのため、SDKは使わず`requests`で直接`POST https://api.deepseek.com/chat/completions`を呼ぶ（追加のSDK依存を増やさない判断）
+- `DEEPSEEK_API_KEY`は`backend-core/.env`に設定（`app/core/config.py`、未設定でもアプリ起動は失敗しない設計。実際にレビュー生成を呼んだ時だけ500エラーになる）
+
+### エンドポイント・フロントエンド
+
+- `POST /workouts/{session_id}/exercises/{session_exercise_id}/generate-review`：該当種目の全セットの`rep_cycles_json`を集計→判定→プロンプト組み立て→DeepSeek呼び出し→`ai_reviews`に保存（既存があれば削除して作り直す＝再生成）して返す。有効な計測データが無ければ400
+- カメラ計測完了時（`workout-camera.tsx`）に自動で`session_sets`へ保存する導線を追加（`ai_counted_reps`・`rep_cycles_json`。保存失敗はカウント結果表示を止めない）
+- 結果画面の「AIレビューを見る」ボタン→専用画面`ai-review-result.tsx`（`TrainerAvatar`のAIトレーナーキャラクター＋`records.tsx`の「AIトレーナー」カードと同じ視覚言語で表示）
+
+### 「カウント」と「フォーム評価」の分離（2026-08-24、重要な設計変更）
+
+`app/core/rep_model.py`の`count_with_template`・`app/core/streaming_rep_counter.py`の`_evaluate_cycle`から、**統計ゲート（深さ・ROM）と形状ゲートの両方を「カウントするかどうか」の判定に使うのをやめた。**
+
+**変更の経緯（2段階）：**
+1. まず深さ・ROMの統計ゲート（`_passes_cycle_stats`によるreason="stats"棄却）を廃止。較正データ（cycleStats）の範囲から外れた深さでもカウントするようにした
+2. その後、「形状ゲート（テンプレートとの距離）による棄却も同じ問題（カウントと評価の混同）を抱えている」「棄却された分もカウントした上で“良いフォーム／改善必要”に分類すべき」「AIレビューに“棄却”という概念を持ち込むのもおかしい」という指摘を受け、形状ゲートも「カウントの可否」から「品質ラベル付け」に用途を変更した
+
+**現在の設計：** 測定可能な候補サイクル（形状ベクトルが計算できるもの）は**全て1回としてカウント**する。形状テンプレートとの距離（`shape_threshold`）は、カウントするかどうかではなく`form_quality`（`"good"` | `"needs_improvement"`）のラベル付けにのみ使う。カウントされないのは`counted=false`（点数が少なすぎて形状ベクトルすら計算できない＝測定不能）の場合のみ——これはフォーム評価ではなくデータ有効性の問題。
+
+**関連するAPI・スキーマの変更（"accepted"/"rejected"/"棄却"という語を全廃）：**
+- `RepCycleOut`/`RepCycleJson`：`accepted: bool` + `reason: str` → `counted: bool` + `form_quality: "good"|"needs_improvement"|None`
+- `CountRepsResult`：`accepted`/`rejected` → `good_form_count`/`needs_improvement_count`（`count`は両者の合計＝測定可能だった全レップ数）
+- WebSocketの`count`メッセージ：`rejected` → `good_form_count`/`needs_improvement_count`
+- `app/core/review_judge.py`の`ReviewMeasurements`：`accepted_cycle_count`/`rejected_cycle_count` → `total_rep_count`/`good_form_count`/`needs_improvement_count`。`aggregate_cycles`は`counted=true`の全サイクル（良し悪し問わず）から深さ・テンポの平均を計算する
+- AIレビューのベースプロンプト（`review_prompt.py`）からも「棄却」に相当する語を削除し、「総レップ数・フォームが安定していたレップ数・改善余地があったレップ数」という前向きな表現に統一
+- フロントエンド（`services/exercises.ts`・`services/workout.ts`・`services/pose-ws.ts`・`workout-camera.tsx`・`workout-camera-live.tsx`）も同様にリネーム。表示文言も「採用/棄却」→「良いフォーム/改善余地あり」に変更
+
+これによりmodel-studioとの「数値完全一致」はもはや保証されない（意図的な仕様分岐。model-studio本体は変更禁止のまま無変更）。実データ・エンドツーエンドで検証済み：深いスクワット（bottom=37.6°、較正範囲60.7〜111.6°を大きく外れる）・浅いスクワットを模したテストデータの両方が正しくカウントされ、AIレビューが「棄却」の概念を一切含まず深さ・テンポについて自然にコメントすることを確認。通常深さのケース（3回分）は回帰なく引き続き正しくカウントされることも確認済み。
+
+> **⚠️ 注意（このスキーマ変更で実際に踏んだ落とし穴）**：`session_sets.rep_cycles_json`は
+> JSONB列にPydanticモデルをそのまま保存しているため、フィールド名を変更（`accepted`/`reason`
+> → `counted`/`form_quality`）すると、**変更前に保存済みの行が新しいバリデーションに
+> 通らなくなり、`GET /workouts`が500エラーになる**（実際に発生・修正済み）。現状は
+> 本番ユーザーデータが無い開発段階のため、古い形式の行の`rep_cycles_json`をNULLに
+> クリアして対応した。今後この種のJSONB保存スキーマを変更する際は、既存行への影響
+> （必要ならデータマイグレーション、または後方互換のデフォルト値）を先に検討すること。
+
+### 妥当性ゲートの復活（2026-08-28、腕立て伏せモデル追加時に発覚・対応）
+
+model-studioで新規に「腕立て（アレックス）」モデルを作成し（`monitored_joints`を
+`右肘`/`左肘`のみに限定して較正、mae=0.0・exact_match_rate=1.0）、kinpoyoへ
+`import_rep_model.py`で取り込んで実機テストしたところ、上記「棄却の廃止」の副作用が
+2つ具体的に見つかった：
+
+1. **姿勢準備の誤カウント**：腕立て伏せは録画開始→プランク姿勢を整える、という
+   準備動作が録画に含まれやすい。model-studio側の学習データは`start_time_sec`/
+   `end_time_sec`で範囲指定してトリミング済みだが、kinpoyo側の`count-reps`には
+   トリミング機構が無く、録画全体（準備動作込み）を解析するため、`low`/`high`
+   しきい値が準備動作の角度で歪んだり、準備動作自体が1レップとしてカウントされ
+   得ることが判明。**対応：まずはUI側で「準備を整えてから録画開始を押す」運用で
+   回避する方針**（アルゴリズム側の対応は保留）
+2. **「変な動き」が"良いフォーム"と判定される**：実機で明らかにフォームが崩れた
+   腕立て伏せを行ったところ`form_quality: "good"`と判定された。原因は
+   `count_with_template`の品質判定が**主役関節（肘）の角度カーブのみ**を見ており、
+   股関節・体幹の崩れ等は原理的に検出できないため（1関節ベースの軽量な閾値検出
+   というアーキテクチャ自体の限界）。さらに検証の結果、**腕立て伏せと無関係な
+   動きでも、肘が十分な振れ幅で一往復しさえすれば無条件にカウントされる**ことも
+   判明（棄却廃止の設計上、ROM・周期の緩い条件を満たせば形状・統計ゲートに
+   関わらずcounted=Trueになるため）。
+
+上記2番目（無関係な動きの誤カウント）への対応として、`app/core/rep_model.py`に
+**妥当性ゲート**（`_passes_validity_gate`）を追加した：
+
+- `cycle_stats`（品質ラベル用、±25°マージン）とは別に、さらに緩いマージン
+  （`_VALIDITY_GATE_EXTRA_MARGIN_DEG=40.0`・ROM倍率`(0.5, 2.0)`を`cycle_stats`の
+  レンジにさらに掛ける）で「そもそもこの種目の動きらしいか」だけを判定し、これに
+  外れる候補のみ`counted=False`にする（`info["invalid"]=True`も付与）
+- `cycle_stats`自体・`shape_threshold`は**品質ラベル（good/needs_improvement）
+  のみに使い続ける**（変更なし）。マージンを`cycle_stats`よりずっと広く取っている
+  のは、深さ・テンポが多少ズレた本物のレップまで棄却してしまった旧設計
+  （2026-08-24以前）の失敗を繰り返さないため——「明らかに別の動き」だけを弾く
+  最後の砦、という位置づけ
+- `app/routers/exercises.py`のデバッグprintも、`counted=False`の理由を
+  「カウント外(別動作の可能性)」／「カウント外(測定不能)」で区別するよう変更
+- 1番目（姿勢準備の誤カウント）は今回は未対応。UI側の運用回避で十分か、録画側の
+  トリミング機構が必要かは今後実機テストで判断する
+- `_VALIDITY_GATE_EXTRA_MARGIN_DEG`/`_VALIDITY_GATE_ROM_SCALE`は初期値であり、
+  実機での腕立て伏せ検証を通じてチューニングが必要になる可能性がある
+
+**追記（同日）**：角度帯・ROMのみの妥当性ゲートでは、腕立て伏せと無関係な
+「変な動き」が実機でまだ通過することを確認。腕の曲げ伸ばしを伴う動きは種目が
+違っても絶対角度・ROMが被りやすく、この2つだけでは判別力が弱いと判断。
+以下2点を追加変更：
+
+- マージンを縮小：`_VALIDITY_GATE_EXTRA_MARGIN_DEG` 40.0→**20.0**、
+  `_VALIDITY_GATE_ROM_SCALE` (0.5, 2.0)→**(0.6, 1.6)**
+- **形状テンプレート距離も妥当性ゲートに追加**（新定数
+  `_VALIDITY_GATE_SHAPE_MULTIPLIER=1.6`。品質判定の`shape_threshold`より
+  1.6倍緩い距離までは許容しつつ、それも超えたら棄却）。カーブの"形"は
+  種目間でより差が出やすいため、角度帯・ROMより強い判別力を期待している
+- これに伴い`count_with_template`内の距離計算（`template_distance`）を
+  品質判定ブロックから妥当性ゲート呼び出しの直前に移動し、1回の計算結果を
+  両方の判定で使い回すようリファクタ（`_passes_validity_gate`の引数に
+  `dist`/`shape_threshold`を追加）
+- 実機再検証はこれから（マージン値は依然として初期値であり、要調整の可能性あり）
+
+**再修正（同日）**：角度帯マージン・ROM倍率の縮小（20.0/(0.6,1.6)）により、今度は
+本物のレップまでカウントされなくなる逆方向の問題が実機で発生。**角度帯マージン・
+ROM倍率は元の40.0/(0.5,2.0)に戻した**。判別力の強化は形状テンプレート距離
+（`_VALIDITY_GATE_SHAPE_MULTIPLIER=1.6`、8/28に追加した分）側だけに委ねる方針に
+変更。角度帯・ROMは「明らかに別の動き」だけを弾く最後の砦という当初の位置づけに
+戻し、種目間の判別は形状（カーブの形）に任せる。実機再検証はこれから。
+
+### 姿勢ゲートの追加（2026-08-28、立ったままの誤カウント対策）
+
+上記の妥当性ゲート（角度帯・ROM・形状）を追加しても、**「立ったまま肘だけ曲げ
+伸ばしする」ような、プッシュアップと無関係な動きが実機でまだカウントされる**
+ことが判明。原因は肘の角度だけでは体全体の向き（立位かうつ伏せか）が分からない
+ため。これに対応する姿勢ゲートを新設した：
+
+- `app/core/pose_analysis.py`に`torso_orientation_deg`/`torso_orientation_series`
+  を追加（kinpoyo側のみ・model-studioには無い概念）。肩の中点→股関節中点の
+  ベクトルが垂直軸(y軸)から何度傾いているかを`pose_world_landmarks`から算出
+  （0°=垂直、90°=水平）
+- `app/core/rep_model.py`に`EXERCISE_POSTURE`（`exercise_id → "upright"|"prone"`
+  の対応表。現状`{17: "upright"（スクワット）, 4: "prone"（プッシュアップ）}`）
+  ・`_passes_posture_gate`（想定姿勢と実測の体幹の向きが大まかに合っているかの
+  粗いチェック、`_POSTURE_UPRIGHT_MAX_DEG=55.0`/`_POSTURE_PRONE_MIN_DEG=35.0`）
+  を追加。`count_with_template`に`torso_orientation`/`posture`引数を追加し、
+  角度帯・ROM・形状の妥当性ゲートと同じ扱い（外れたら`counted=False`・
+  `invalid=True`）で組み込んだ
+- `EXERCISE_POSTURE`はmodel-studioの`config_json`とは無関係の**kinpoyo側だけの
+  追加情報**（model-studio側の較正には姿勢の概念が無いため）。新しい種目を
+  追加する際は、この対応表に1行追加する必要がある（追加し忘れると姿勢チェック
+  はスキップされるだけで、エラーにはならない＝後方互換だが、対策が効かなくなる
+  点に注意）
+- **既知の限界**：`upright`/`prone`の2値だけでは、仰向け種目（ベンチプレス等、
+  体幹はproneと同じく水平になる）を区別できない。対応する種目が無いうちは
+  対応不要と判断し先送りしている。ベンチプレス等を追加する際は、体幹の向き
+  だけでなく別の判別軸（例：顔・胸がカメラのどちら向きか）の追加を検討すること
+- `app/routers/exercises.py`のcount-repsエンドポイントで`torso_orientation_series`
+  を呼び出し、`EXERCISE_POSTURE`から該当種目のpostureを引いて渡すよう変更。
+  デバッグprintにも`torso=X.X°`を追加
+- 実機ログで動作確認済み：立ったままの動画（torso≈4.0°/5.1°、ほぼ垂直）で
+  `count=0`となり正しく棄却された（プッシュアップの想定postureは"prone"で
+  `_POSTURE_PRONE_MIN_DEG=35.0`未満のため）
+
+### 姿勢不一致をAIレビューに反映（2026-08-28）
+
+上記の姿勢ゲートで棄却された候補があっても、今までは結果画面に「カウント外」
+と出るだけでAIレビューには一切反映されなかった。ユーザーから「別の種目をやって
+いることをAIレビューに出してほしい」との要望があり対応：
+
+- 棄却理由を区別するため、`app/core/rep_model.py`の`count_with_template`が
+  付与する`info["invalid"]`に加えて`info["invalid_reason"]`
+  （`"movement"`＝角度帯/ROM/形状の妥当性ゲート、`"posture"`＝姿勢ゲート）を
+  追加
+- `RepCycleOut`/`RepCycleJson`（`app/schemas/exercise.py`）に`invalid`/
+  `invalid_reason`フィールドを追加（DB保存・API応答の両方に反映。既存行は
+  デフォルト値`invalid=False`で後方互換）
+- `app/core/review_judge.py`：`ReviewMeasurements`に`posture_mismatch_count`
+  を追加。`aggregate_cycles`は`invalid_reason=="posture"`の候補数を
+  カウント（品質評価とは別軸の情報として、実測値の平均計算には混ぜない）。
+  `judge_aspects`は`posture_mismatch_count > 0`なら観点`"posture_mismatch"`
+  を追加（良し悪しの対にはならない一方向の観点）
+- `app/core/review_prompt.py`：ベースプロンプトの実測データに「種目と異なる
+  姿勢・動きだった可能性がある候補: N件」を追加
+- `scripts/seed_ai_review_prompt_parts.py`に種目共通パーツ`"code":
+  "general_posture_mismatch"`（`exercise_id=None`）を追加・DB投入済み。
+  「責めるのではなく確認を促す」トーンをprompt_fragmentで明示的に指定
+- `app/routers/workouts.py`の`generate_review`：`total_rep_count==0`だけを
+  理由にした400エラーを、`posture_mismatch_count==0`も同時に満たす場合のみ
+  に変更（立ったままの動画しか無いセットでも、姿勢不一致の情報自体は伝える
+  価値があるため、レビュー生成を続行できるようにした）
+- フロントエンド（`services/exercises.ts`の`RepCycle`・`services/workout.ts`の
+  `RepCycleJson`・`workout-camera.tsx`の保存処理）も`invalid`/`invalid_reason`
+  を受け渡すよう対応。`tsc --noEmit`で型チェック済み
+- 実機再検証はこれから（`generate-review`を呼んで実際にAIコメントが出るか
+  確認が必要）
+
+### AIレビューを「今回のセットのみ」に変更 + movement理由もレビューへ反映（2026-08-28）
+
+ユーザーから2点要望があり対応：
+
+1. **AIレビューの対象を「その種目の全セット」から「今回記録した1セットのみ」に変更**。
+   `ai_reviews`テーブルは`session_exercise_id`にUNIQUE制約があり元々「1種目1件・
+   再生成のたびに削除して作り直す」設計だったため、**スキーマ変更は不要**——
+   `generate_review`（`app/routers/workouts.py`）に`set_id`クエリパラメータを
+   追加し、指定時はその1セットの`rep_cycles_json`のみを集計するよう変更した
+   （省略時は後方互換で従来の全セット集計にフォールバック）。フロントエンド
+   （`services/workout.ts`の`generateAiReview`・`workout-camera.tsx`）は
+   `lastSetIdRef.current`（今保存したセットのID）を渡すよう変更。
+   **注**：これは2026-08-24の筋トレフロー刷新時点での意図的な設計
+   （「1セットだけでなく、その種目でこれまでにやった全セットをまとめて評価する」）
+   を覆す変更
+2. **「movement」棄却理由（角度帯・ROM・形状の妥当性ゲート）もAIレビューに反映**。
+   既存の`posture_mismatch`と対になる形で追加：
+   - `review_judge.py`：`ReviewMeasurements.movement_mismatch_count`追加、
+     `aggregate_cycles`が`invalid_reason=="movement"`の候補数を集計、
+     `judge_aspects`は`movement_mismatch_count > 0`で観点`"movement_mismatch"`
+     を追加
+   - `review_prompt.py`：実測データに「種目と動きの形が大きく異なっていた
+     可能性がある候補: N件」を追加
+   - `seed_ai_review_prompt_parts.py`に種目共通パーツ`"general_movement_mismatch"`
+     （`exercise_id=None`）を追加・DB投入済み
+   - `generate_review`の400エラーガードを、`movement_mismatch_count>0`でも
+     続行するよう拡張
+   - **スコープ外とした点**：測定不能（`invalid_reason`が付かない、点数不足で
+     形状ベクトル自体が計算できないケース）はレビューに反映していない。
+     フォームの問題ではなく動画・トラッキングの技術的な問題のため、コーチ
+     コメントの対象として毛色が違うと判断し対象外にした
+- 実機再検証はこれから
+
+### 映像の質・撮影環境の警告（2026-08-28、AIレビューを経由しない即時警告）
+
+上記でスコープ外とした「測定不能（点数不足）」＝映像の質・撮影環境の問題に
+ついて、ユーザーへ事前に設計案を提示（A案：即時警告／B案：AIレビュー経由）し、
+**A案（AIレビューを経由しない、その場での即時警告）で承認を得て実装**。
+
+- 判定材料は`pose_frames/total_frames`（姿勢検出率）。既に`count-reps`の
+  レスポンスに含まれていた値をそのまま利用——DBスキーマ変更・マイグレーション
+  一切不要
+- `app/routers/exercises.py`に`MIN_POSE_DETECTION_RATE=0.5`（初期値、要調整）
+  を追加。検出率がこれ未満なら`CountRepsResult.quality_warning`に警告文を
+  設定（`app/schemas/exercise.py`にフィールド追加）
+- AIレビュー（DeepSeek呼び出し）は経由しない。理由：posture/movement不一致
+  （コーチ的な判断）と違い「撮影がうまくいっていない」という技術的な問題
+  なので、後から遅れて伝えるより撮影直後にその場で伝えて撮り直しを促す
+  方が実用的と判断
+- フロントエンド（`services/exercises.ts`の`CountRepsResult`型・
+  `workout-camera.tsx`）：結果画面の回数カウントカードの下に警告ボックス
+  （`Colors.warningSubtle`/`Colors.warning`）を追加、`quality_warning`が
+  あれば表示
+- `tsc --noEmit`・Python構文チェックとも通過。実機再検証はこれから
+  （`MIN_POSE_DETECTION_RATE=0.5`は初期値のため、要調整の可能性あり）
+
+### 休憩画面に次のセットの予定回数を表示（2026-08-28）
+
+`workout-camera.tsx`の休憩カード（休憩カウントダウン中／「次のセットへ」ボタン
+の下）に、次に記録する予定セットの目標回数（登録時に設定した`reps`。
+`ai_counted_reps`＝実測値とは別物）を表示するよう追加。
+
+- `slotsRef`の要素に`reps: number | null`を追加（`fetchWorkout`で取得した
+  `SessionSetOut.reps`をそのまま保持。新規作成セット＝計画外のおまけセットは
+  `reps: null`）
+- 次に埋める予定のセット（`slotsRef.current.find(s => !s.recorded)`）の`reps`
+  を`nextSetReps`として算出し、`null`でなければ「次のセット予定: N回」を表示
+- `tsc --noEmit`通過
+
+## 筋トレフロー刷新（セット管理・休憩・全体レポート）（2026-08-24 設計・実装完了）
+
+AI回数カウント機能がバッチ版で安定して動くようになったことを受けて、筋トレ実施中の
+画面フロー全体を見直した。**2026-08-24に設計・実装・実機テスト前のAPI疎通確認まで
+完了**（バックエンドはPythonスクリプトでエンドツーエンド検証済み。フロントエンドは
+`tsc --noEmit`で型チェック済みだが、実機での操作確認はこれから）。スタイルは
+`constants/theme.ts`のデザイントークン・既存画面と同じカードスタイルで統一済み。
+
+### 解決した問題（今回の発端）
+
+`workout-camera.tsx`で「もう一度撮る」を押して再録画すると、`count-reps`成功の
+たびに毎回**新しいセット**を`POST .../sets`で作成してしまっていた（`add_set`は
+`set_number = len(sets)+1`で常に追加する設計のため）。リトライするたびにセット数が
+際限なく増える不具合があった。**修正済み**：`PUT /workouts/{session_id}/exercises/
+{exercise_id}/sets/{set_id}`エンドポイント（`app/crud/workout.py`の`get_set`/
+`update_set`、`app/schemas/workout.py`の`SessionSetUpdate`）を新設し、フロント
+（`workout-camera.tsx`）は`lastSetIdRef`で「今のセットのDB ID」を保持して、
+リトライ時はこのIDへPUT（上書き）、新しいセットに進む時だけリセットしてPOST
+（新規作成）するようにした。テストスクリプトで「PUT後もセット数が1件のまま」を
+確認済み。
+
+### 新しいセットごとのフロー
+
+```
+録画 → count-reps → セット保存（新規 or 上書き、上記バグ修正込み）
+  → 「レビュー生成中...」表示 → generate-review を呼ぶ
+    （既存エンドポイントをそのまま流用。1セットだけでなく、その種目で
+      これまでにやった全セットをまとめて評価する。新規テーブル不要）
+  → カウント結果＋AIレビューを自動表示
+  → 休憩画面へ
+      - 今終えたセットにsession_sets.rest_after_secが設定されていれば
+        カウントダウン表示 → 0で自動的にカメラ画面（ready状態）へ遷移
+      - 未設定なら「準備ができたら再開」ボタンのみの画面
+  → 「再開」ボタンで次セットの録画へ（target_setsに達したら完了を促す表示。
+     複数種目への自動遷移は今回スコープ外・既存の制約のまま）
+```
+
+録画中（バッチ版）の警告表示（遠い/近い/全身が映っていない等）は**今回は見送り**。
+
+### 休憩時間はセットごとにカスタム設定（2026-08-24、種目単位の一律設定から移行）
+
+当初`session_exercises.rest_interval_sec`（種目単位で一律の休憩時間）で設計・実装
+したが、「ボタンで追加：セットを追加の下に休憩を追加、セットの間にカスタムな休憩を
+入れたい」というフィードバックを受けて**`session_sets.rest_after_sec`（このセットの
+後に取る休憩時間・秒）へ移行**した。
+
+- マイグレーション: `9f4c2b7e1a3d_add_rest_after_sec_to_session_sets.py`
+  （`session_sets`に`rest_after_sec INTEGER NULL`を追加）
+- `session_exercises.rest_interval_sec`列・スキーマは後方互換のため残すが、
+  登録画面（新規）は書き込まなくなった。`workout-camera.tsx`は各セットの
+  `rest_after_sec`が無い場合のみ`rest_interval_sec`にフォールバックする
+- 登録UI（`workout-register.tsx`・`program_choice.tsx`編集モード）：セット行と
+  休憩行を好きな順に積み重ねられるリスト形式。「セットを追加」ボタンの下に
+  「休憩を追加」ボタンを並べ、押した順にセット・休憩が積み上がる（休憩の連続は
+  UI側でブロック）。保存時にitems（セット・休憩混在の配列）を歩いて、各セットの
+  直後に置かれた休憩の秒数をそのセットの`rest_after_sec`として`sets`配列へ変換する
+- `workout-camera.tsx`：`slotsRef`の各スロットに`restAfterSec`を持たせ、
+  セット保存直後（`uploadAndCount`内）に「今保存したセットの`restAfterSec`」を
+  `currentRestSec`にセットする（種目全体で固定ではなく、セットごとに変わる）
+- 休憩時間の入力UI（2026-08-24さらに変更）：当初「秒/分」をタグ（トグルボタン）で
+  切り替える方式にしたが、「タグ選択ではなく入力欄が『○分○秒』みたいにしてほしい」
+  というフィードバックを受けて、分の入力欄と秒の入力欄を常時2つ並べる方式に変更した
+  （`RestItem`型は`{ minutes: string; seconds: string }`。保存時は
+  `mins*60 + secs`で`rest_after_sec`に変換。編集モードで既存データを読み込む時は
+  `rest_after_sec`を`Math.floor(sec/60)`分・`sec%60`秒に分解して表示する）
+
+### 実機フィードバックでの追加修正（2026-08-24）
+
+最初の実装後、実際に触ってみて見つかった問題を修正：
+
+1. **「停止」後に「再開」ボタンが出ず「終了」になっていた** — `(tabs)/workout.tsx`
+   は`in_progress`なら常に「筋トレを終了する」を表示していた。修正：全種目の
+   AI計測対応セット（`target_sets`分の`ai_counted_reps`記録）が揃うまでは
+   「筋トレを再開する」（`handleStart`を再利用）を表示し、揃って初めて
+   「筋トレを終了する」を表示するよう`workoutAllDone`判定を追加した
+   （AI計測非対応の種目は判定対象外＝常に完了扱い）
+2. **セット数が筋トレ登録メニューから勝手に増える** — 二重の原因があった。
+   (a) `workout-register.tsx`が`target_sets`を送っておらず常にnullだった、
+   (b) `workout-camera.tsx`が録画のたびに常に**新しいセット**を作成しており、
+   登録時に作った計画済みセット（重量・レップ数のみ入った空のセット）とは
+   別に積み上がっていた。修正：登録画面はセット行数をそのまま`target_sets`として
+   送るようにし、`workout-camera.tsx`は`slotsRef`で「未記録の計画済みセット」を
+   検出して、まずそこへPUTで書き込む（無くなったら初めてPOSTで新規作成）ように
+   変更。これにより編集画面（`program_choice.tsx`）で全セットを読み込んでも
+   セット数が増えない
+3. **休憩時間を登録する場所がなかった** — 上記「休憩時間はセットごとにカスタム
+   設定」参照
+4. **筋トレ終了後、同じ日にまた「筋トレを開始する」を押すと404/400エラー** —
+   `(tabs)/workout.tsx`の`loadToday`が`cancelled`のみ除外し`completed`を
+   除外していなかったため、終了済みセッションが「今日のメニュー」として残り、
+   `POST /start`が「予定済みのセッションのみ開始できます」で失敗していた。
+   修正：`completed`も除外するようにし、終了後は今日の画面が空状態に戻るようにした
+5. **（付随して発見・修正）`GET /workouts/{id}`のセット順序が不定だった** —
+   `session_to_out`が`se.sets`を`set_number`でソートしていなかったため、
+   編集画面のセット表示順がリクエストのたびにズレる可能性があった。
+   `crud/workout.py`・`routers/workouts.py`の両方で`set_number`ソートを追加
+
+### 「停止」＝一時中断
+
+- `workout_sessions.status`は変更しない（新しいステータスを追加しない。`in_progress`のまま）
+- **「停止」ボタンは、セットの録画・アップロード・解析が完全に終わった後（休憩中
+  or 次セット開始前の「ready」状態）でのみ表示する。録画中・アップロード中・
+  解析中・レビュー生成中は「停止」できないようにする**（2026-08-24追加指示）
+- 停止→確認モーダル→OKで`(tabs)/workout.tsx`へ戻る（終了APIは呼ばない、`in_progress`のまま）
+- `(tabs)/workout.tsx`の`handleStart`を修正済み：セッションが既に`in_progress`なら
+  `startWorkout`を呼ばずそのままカメラ画面へ再突入する（「次に録るべきセット」は
+  `workout-camera.tsx`側で`fetchWorkout`して`session_exercise.sets.length`と
+  `target_sets`から判断する）
+
+実装：`showStopButton = canSaveResult && (state === 'ready' || (state === 'result'
+&& !reviewLoading))`でボタン表示をガードしている（`recording`/`uploading`中、
+および`result`状態でもAIレビュー生成中（`reviewLoading`）は表示されない。
+2026-08-24、`'reviewing'`/`'resting'`という別画面状態は廃止し`'result'`に統合した
+（下記「結果画面をスマホ1画面に統合」参照）。
+
+### 登録画面でのキャンセル
+
+- `(tabs)/workout.tsx`に「この筋トレをキャンセル」ボタン（未開始時のみ表示）を
+  追加済み。確認モーダル→OKで既存の`cancelWorkout`（`DELETE /workouts/{id}`、
+  `status=cancelled`）をそのまま呼ぶ。新規APIなし
+
+### 筋トレ全体のレポート（新規テーブル。DATABASE.md 4.20参照）
+
+「筋トレを終了する」ボタン押下→`POST /workouts/{id}/end`成功後に、自動で
+`POST /workouts/{id}/generate-report`（新設）を呼び、レポート画面
+（`workout-report-result.tsx`、AIレビュー結果画面と同系統のスタイル）を表示する。
+
+- `planned_vs_actual_json`：種目ごとの`target_sets`対実績セット数・達成率（`app/core/session_report_judge.py`の`compute_measurements`で決定的に計算、AIに判定させない）
+- 「前回の同じ筋トレとの比較」：同じユーザーで、同じ種目構成（exercise_idの集合が完全一致）を含む直近の完了済み`workout_sessions`を検索する`find_compared_session`（`app/core/session_report_judge.py`）。見つかった場合そのIDを`compared_session_id`に保存
+- プロンプトパーツは既存`ai_review_prompt_parts`を流用（`exercise_id=NULL`＝種目共通、`code`は`session_`プレフィックス。`scripts/seed_ai_review_prompt_parts.py`に`session_achievement_good/low`・`session_improved`・`session_declined`の4件を追加済み）
+- 判定しきい値：`ACHIEVEMENT_GOOD_THRESHOLD_PCT = 90.0`（達成率）、`IMPROVEMENT_TOLERANCE = 0.05`（前回比±5%未満は「変化なし」扱いで`improved`/`declined`どちらのパーツも付かない。2026-08-24時点では種目ごとの`weight_change_pct`の平均で判定。下記参照）
+- **記録タブ（`records.tsx`）への反映・記録画面自体の改修は今回スコープ外**（後で実装）
+
+#### レポート内容を総ボリュームから重量・レップ数・RPEの前回比較へ変更（2026-08-24）
+
+当初`total_volume`（重量×レップの合計）の前回比較のみだったが、「総ボリューム数は
+いらないかも。今回の実績と前回の同じ種目のデータを比較できるデータを入れてほしい
+（RPE、重量改善率、重量・レップ数・RPEの比較）」というフィードバックを受けて変更：
+
+- `app/core/session_report_judge.py`の`ExerciseAchievement`を`ExerciseComparison`に
+  改名・拡張し、`total_volume`/`compared_total_volume`/`volume_change_pct`を
+  `SessionReportMeasurements`から削除。代わりに種目ごとに
+  `avg_weight_kg`/`avg_reps`/`avg_rpe`（今回、ウォームアップを除くセットの平均。
+  `_avg_metrics()`ヘルパー）と`prev_avg_weight_kg`/`prev_avg_reps`/`prev_avg_rpe`
+  （前回の同じ`exercise_id`のセットから同様に計算）、`weight_change_pct`
+  （`(avg-prev_avg)/prev_avg*100`）を持たせた
+- `judge_session_aspects`の`improved`/`declined`判定は、`volume_change_pct`ではなく
+  種目ごとの`weight_change_pct`の平均値を使うよう変更（しきい値`IMPROVEMENT_TOLERANCE`
+  は変更なし）
+- `app/core/session_report_prompt.py`のプロンプトも、種目ごとに「重量 平均◯kg
+  （前回◯kg・+◯%）／レップ数 平均◯（前回◯）／RPE 平均◯（前回◯）」の形式で
+  埋め込むよう変更（前回データが無い種目は「前回データなし」と明記）
+- `planned_vs_actual_json`のトップレベルに`has_comparison: bool`（前回の同じ種目
+  構成セッションが見つかったか）を追加
+- `workout-report-result.tsx`：種目ごとのカードに達成率＋重量/レップ数/RPEの
+  今回・前回比較（変化率は色分け：上昇は緑、下降は赤）を表示。総ボリュームの
+  カードは削除
+
+#### 達成率・実績セット数のバグ修正（2026-08-25）
+
+「5セットの予定で3セットしかやっていないのに、レポートで達成率100%・実績5セットに
+なる」というバグ報告を受けて修正。原因：`actual_sets`が`len(se.sets)`（＝登録画面で
+作られたセット**行数**）をそのまま使っていたため、AI計測未記録（`ai_counted_reps`が
+null）の計画済みセットも「実施済み」に数えていた（登録時は`target_sets`分の行が
+最初から全部作られる設計のため、行数は常に`target_sets`と一致してしまう）。
+
+- `compute_measurements`にAI計測較正済み種目IDの集合`ai_tracked_exercise_ids`を
+  渡すよう変更（routerで`exercise_crud.get_rep_count_model`を種目ごとに引いて
+  作る）。AI計測対応種目は`ai_counted_reps is not None`のセットのみを実績として
+  数え、非対応種目（現状マーク手段が無い）は従来通り行数のまま
+- `_avg_metrics()`も同様に、AI計測対応種目は実際に記録されたセットのみを平均の
+  対象にするよう修正（未記録の計画値が平均に混ざらないように）
+- 影響範囲：`achievement_pct`・`overall_achievement_pct`・
+  `avg_weight_kg`/`avg_reps`/`avg_rpe`（前回分も含む）
+
+### AIレビュープロンプトの強化：RPE予測・停滞判定・プログラム連携（2026-08-25）
+
+ユーザーフィードバック「重量扱いも大切に。最高重量登録でRPEが予測される。予測より
+実測RPEが高ければプロンプトで考慮（重量下がったら対策を言う）。重い種目は重量更新に
+時間がかかるので最後のrep数で確認し、一定なら加重を勧める。プログラムに参加していれば
+その詳細データもAIに渡す」を受けて追加。3つの設計判断はユーザーに確認済み
+（①%1RMベースのRPEチャートで予測、②停滞判定は直近3〜4セッションを見る、
+③プログラム連携は詳細データまで本格的に渡す）。
+
+**RPE予測（`app/core/rpe_predictor.py`、新規）:**
+- `estimate_1rm(weight, reps)`：Epley式で推定1RM（`weight * (1 + reps/30)`）
+- `get_prior_best_e1rm(db, user_id, exercise_id, exclude_session_id)`：今回より前の
+  完了済みセッション全てから、その種目の生涯ベスト推定1RMを計算（今回は含めない
+  ＝今回がPRでも%1RMが100%を超えられるように）
+- `predict_rpe_from_pct_1rm(pct)`：%1RM→予測RPEの対応表（100%→RPE10、95%→9、
+  90%→8、85%→7、80%→6、70%→5、60%→4）をアンカー点として線形補間。厳密な
+  科学的根拠のある表ではなく簡略化した目安（ユーザー確認済み）
+- `session_report_judge.py`の`ExerciseComparison`に`predicted_rpe`・
+  `rpe_deviation`（`avg_rpe - predicted_rpe`）を追加。`RPE_HARDER_THRESHOLD = 1.0`
+  以上なら「思ったよりきつかった」と判定し`session_rpe_harder_than_expected`
+  パーツを使う。「重量が下がっている時は対策を言う」の部分は個別の判定コードに
+  せず、`session_report_prompt.py`のベースプロンプトの注意書きでAIに指示する形にした
+  （重量変化とRPE逸脱の組み合わせは種目ごとに文脈が違うため、Pythonで固定ルール化
+  せずAIに判断を委ねた方が自然な文章になる）
+
+**停滞判定（加重の提案）:**
+- `_detect_plateau()`：直近`PLATEAU_LOOKBACK_SESSIONS=4`回（今回含む）分、この種目の
+  「最後のセット」のレップ数・重量を集め、レップ数の差が`PLATEAU_REPS_TOLERANCE=1`
+  以内かつ重量の差が`PLATEAU_WEIGHT_TOLERANCE_KG=2.5`kg以内なら停滞と判定
+  （`PLATEAU_MIN_SESSIONS=3`件未満のデータしか無ければ判定しない）。「重い種目ほど
+  重量更新に時間がかかるのは自然」という前提で、重量ではなくレップ数の余裕を
+  主なシグナルにしている
+- `ExerciseComparison.is_plateaued: bool`を追加。Trueなら`session_plateau_add_weight`
+  パーツを使う
+
+**プログラム連携:**
+- `app/crud/program.py`に`get_active_user_program(db, user_id)`を追加
+  （`status_id == STATUS_ACTIVE`、`join_program`側で1ユーザー1アクティブに制限済み）
+- routerで参加中プログラムが見つかったら、`get_program_exercises`で現在の週/日の
+  種目一覧も取得し、`session_report_prompt.build_program_context()`で
+  「プログラム名・カテゴリ・難易度・進捗（◯週目◯日目）・本日の種目構成」を
+  テキスト化してプロンプトに埋め込む
+- **Big3なら補助種目を勧める、のような個別ロジックはPythonで書いていない**。
+  プログラムの特性を踏まえた助言をしてよいとプロンプトで伝え、判断はAIの一般知識に
+  委ねる方針（プログラムの種類ごとに対策をハードコードすると際限がないため。
+  ユーザー確認済み：「本格的にプログラムの詳細データも渡す」）
+- 動作確認：BIG3強化プログラム（`programs.id=3`、DBに実データ投入済み）に参加した
+  状態でレポート生成→feedback_textにプログラム名・次回種目への言及が実際に
+  含まれることを確認済み
+
+**新規パーツ**（`scripts/seed_ai_review_prompt_parts.py`に追加。DB投入済み）：
+`session_rpe_harder_than_expected`・`session_plateau_add_weight`。既存の
+`session_improved`/`session_declined`の文言も「総ボリューム」→「重量」に修正
+（2026-08-24の総ボリューム廃止時に文言更新が漏れていた）。
+
+**フロントエンド**：`WorkoutSessionReportOut`の型に`predicted_rpe`/`rpe_deviation`/
+`is_plateaued`を追加したが、専用UIはまだ無い（`feedback_text`の文章に自然に
+反映される設計のため。数値を直接見せるカード等は今回スコープ外）。
+
+### プログラム項目を独立したカードとして表示（2026-08-26）
+
+ユーザーフィードバック「わかりやすくするために、全体的なAIレビューとプログラムと
+いう項目をレビューに入れて：プログラムに関しての推奨、対策、コメントなど」を受けて
+追加。DBスキーマ変更・追加API呼び出しなしのシンプル方式を採用（ユーザー確認済み）：
+
+- `session_report_prompt.py`に`PROGRAM_SECTION_HEADING = "【プログラムについて】"`
+  を追加。参加中プログラムがある場合のみ、`build_prompt()`が「まず全体レビューを
+  3〜5文、そのあとこの見出しから始まる段落で推奨・対策・コメントを2〜4文」という
+  出力形式をAIに指示する（`build_program_context()`側の「無理に毎回触れる必要は
+  ない」という以前の緩い指示は、出力形式を固定した今回は撤廃）
+- `feedback_text`自体は1本の文字列のまま（スキーマ変更なし）。
+  `workout-report-result.tsx`の`splitProgramSection()`がこの見出し文字列で
+  前後に分割し、全体レビューは既存の`aiCard`、プログラム部分は新設の
+  `programAiCard`（「プログラムについて」ラベル付き）に表示する
+- **見出し文字列はbackendとfrontendの両方にハードコードされている**ため、
+  変更する場合は`session_report_prompt.py`の`PROGRAM_SECTION_HEADING`と
+  `workout-report-result.tsx`の`PROGRAM_SECTION_HEADING`を両方直すこと
+- 参加中プログラムが無い場合は`output_format_instruction`が空文字になり、
+  従来通り単一の全体レビューのみが返る（プログラムカードは表示されない）
+
+### 各セットのレビュー文は200文字以内（2026-08-24）
+
+`app/core/review_prompt.py`の`BASE_PROMPT_TEMPLATE`に「必ず200文字以内」の指示を
+追加し、加えて`PER_SET_REVIEW_MAX_CHARS = 200`定数を使ってrouter側
+（`generate_review`エンドポイント）でも超過分を切り詰める安全策を入れた
+（AI出力は文字数指示を厳密に守るとは限らないため）。**筋トレ全体のレポート
+（`generate_session_report`）の`feedback_text`にはこの上限を適用しない**
+（セット単位のレビューだけがスマホ画面に頻繁に表示されるため短くする、という
+フィードバックの意図に合わせた）。
+
+### 結果画面をスマホ1画面に統合（2026-08-24）
+
+「回数カウント、AIレビューと休憩時間は同じ画面でいい」「休憩があってもスマホ
+1画面に入るように」というフィードバックを受けて、`workout-camera.tsx`の結果画面
+（`'result'`状態）を以下のように整理：
+
+- 別画面だった「AIレビュー生成中...」（`'reviewing'`状態）と「休憩中」
+  （`'resting'`状態）を廃止し、`'result'`1画面に統合。上から
+  ①AIトレーナーのメッセージボックス（アバター32px＋タイトル、生成中はこの中に
+  スピナー）②回数カウント結果③休憩セクション（自動カウントダウン、またはrest
+  未設定なら「次のセットへ」ボタン）④もう一度撮る/完了ボタン、の順で縦に並べる
+- AIレビュー生成は`await`で画面遷移をブロックせず、`generateAiReview(...).then(...)`
+  の非同期チェーンにして即座に結果画面へ遷移するよう変更（`reviewLoading`state）
+- 200文字上限（上記）により本文が短くなったことに加え、フォントサイズ・余白も
+  詰めて1画面に収まりやすくした。それでも小さい端末では収まらない可能性があるため、
+  `ScrollView`でも包んでいる（保険。基本は1画面に収まる設計）
+- 直後のフィードバック「休憩時間はもっと大きくていい、白スペースが多いので画面を
+  バランス良く埋めてほしい」を受けて再調整：回数カウント・休憩を`countCard`/
+  `restCard`という独立したカード（`bgCard`/`primarySubtle`背景、角丸、影付き、
+  横幅100%）にし、休憩の残り秒数も回数と同じ64pxの大きな数字で表示するように
+  戻した。`resultScrollContent`は`justifyContent: 'center'`（中央寄せで余白が
+  上下に偏る）から`justifyContent: 'space-evenly'`＋`gap: Space[4]`に変更し、
+  各カードが画面の縦幅に均等に広がるようにした
 
 ### フロントエンド（React Native / Expo）
 
@@ -466,6 +1318,8 @@ cd backend-core && venv\Scripts\activate && uvicorn main:app --reload  # API起�
 | メソッド | パス                           | 説明                                  | 備考                   |
 | -------- | ------------------------------ | ------------------------------------- | ---------------------- |
 | GET      | `/exercises`                   | 種目一覧（部位・PPL・器具フィルター） |                        |
+| GET      | `/exercises/{exercise_id}/rep-model` | AI回数カウント用の較正済み設定取得 | 未登録の種目は404      |
+| POST     | `/exercises/{exercise_id}/count-reps` | 録画済み動画をアップロードして回数カウント（バッチ解析） | 認証必須。multipart（`video`ファイル）。未登録の種目は404 |
 | GET      | `/masters/muscle-groups`       | 筋肉部位一覧                          | フロント色分けチップ用 |
 | GET      | `/masters/movement-categories` | PPL分類一覧                           |                        |
 | GET      | `/masters/equipment-types`     | 器具一覧                              |                        |
@@ -483,6 +1337,10 @@ cd backend-core && venv\Scripts\activate && uvicorn main:app --reload  # API起�
 | POST     | `/workouts/{id}/end`                            | セッション終了（duration_sec・total_volume集計） |                       |
 | POST     | `/workouts/{session_id}/exercises`              | 種目追加                                         |                       |
 | POST     | `/workouts/{session_id}/exercises/{ex_id}/sets` | セット記録                                       |                       |
+| PUT      | `/workouts/{session_id}/exercises/{ex_id}/sets/{set_id}` | セット上書き更新（録画リトライ用）      |                       |
+| POST     | `/workouts/{session_id}/exercises/{ex_id}/generate-review` | 種目のAIレビュー生成（DeepSeek連携）  |                       |
+| POST     | `/workouts/{session_id}/generate-report`        | 筋トレ全体のAIレビュー・実績レポート生成          | `status=completed`のみ |
+| GET      | `/workouts/{session_id}/report`                 | 生成済みレポートの取得（再生成しない）            | 記録タブの履歴閲覧用    |
 
 ### 記録・統計 `/records`
 
@@ -491,6 +1349,9 @@ cd backend-core && venv\Scripts\activate && uvicorn main:app --reload  # API起�
 | GET      | `/records/summary?period=week\|month\|year` | ボリューム推移                     |      |
 | GET      | `/records/max-weight?exercise_id=`          | 種目別最大重量                     |      |
 | GET      | `/records/history`                          | 筋トレ履歴（部位・期間フィルター） |      |
+| GET      | `/records/achievements`                     | プロフィール画面の実績（全期間累計） |      |
+| GET      | `/records/big3`                             | BIG3の合計(1RM)（自動計算＋手入力の大きい方） |      |
+| POST     | `/records/exercise-max`                     | 1RMの手入力登録             |      |
 
 ### プログラム `/programs`
 
@@ -502,6 +1363,18 @@ cd backend-core && venv\Scripts\activate && uvicorn main:app --reload  # API起�
 | GET      | `/user-programs/me`                | 自分の参加プログラム一覧   | 認証必須                     |
 | PUT      | `/user-programs/{id}/status`       | 参加状態更新               |                              |
 | POST     | `/user-programs/{id}/advance`      | current_week/dayを1進める  | 週の最終日を超えると次週へ   |
+| POST     | `/user-programs/{id}/leave`        | プログラム離脱             |                              |
+
+### My筋トレ `/workout-templates`（2026-08-25追加。Program系とは独立）
+
+| メソッド | パス                              | 説明                                  | 備考 |
+| -------- | ---------------------------------- | ------------------------------------- | ---- |
+| POST     | `/workout-templates`               | テンプレート作成                       |      |
+| GET      | `/workout-templates`               | 自分のテンプレート一覧                  |      |
+| GET      | `/workout-templates/{id}`          | テンプレート詳細                        |      |
+| PUT      | `/workout-templates/{id}`          | テンプレート更新（種目・セットは丸ごと作り直し） |      |
+| DELETE   | `/workout-templates/{id}`          | テンプレート削除                        |      |
+| POST     | `/workout-templates/{id}/apply`    | 指定日にテンプレート内容でセッション作成 | body: `{scheduled_date}` |
 
 ### コミュニティー `/posts`
 
@@ -534,6 +1407,9 @@ cd backend-core && venv\Scripts\activate && uvicorn main:app --reload  # API起�
 - python-dotenv
 - python-multipart
 - pydantic[email]
+- mediapipe>=0.10.30（AI回数カウント。Python 3.14対応のためmodel-studioより新しいバージョンを指定。`mp.solutions`旧APIは廃止済みなのでTasks API必須）
+- opencv-python-headless（AI回数カウント：画像デコード）
+- numpy（AI回数カウント：mediapipe/opencvの依存）
 
 ### フロントエンド（package.json）
 
@@ -542,10 +1418,11 @@ cd backend-core && venv\Scripts\activate && uvicorn main:app --reload  # API起�
 - typescript
 - react-native-gifted-charts（折れ線グラフ・棒グラフ）
 - react-native-linear-gradient（gifted-charts の依存）
-- react-native-svg（Expo SDK に同梱・gifted-charts が使用）
+- react-native-svg（gifted-charts が使用。以前AI回数カウントの骨格オーバーレイでも使っていたが、そのストリーミング版は廃止済み。直接依存としては残置）
 - react-native-qrcode-svg（QRコード表示）
 - expo-image-picker（投稿作成画面の画像添付：端末の写真ライブラリから選択）
 - expo-secure-store（JWTトークンの保存。Web版は未対応のためservices/token-storage.tsでlocalStorageにフォールバック）
+- expo-camera（AI回数カウント：`(screens)/workout-camera.tsx`で動画録画に使用。`mode="video"`・`recordAsync`/`stopRecording`、マイク権限も必要）
 
 ---
 
@@ -642,3 +1519,13 @@ cd backend-core && venv\Scripts\activate && uvicorn main:app --reload  # API起�
 | 2026-07-11         | プロフィール画面にログアウトボタンを追加。実績セクションの下に赤枠のボタンを配置し、タップで確認モーダル（`program-action-bar.tsx`等と同じ画面内オーバーレイ・fadeパターン）を表示、承認すると既存の`useAuth().signOut()`（トークン削除＋`/login`へ`router.replace`）を呼ぶ。`icon-symbol.tsx`のMAPPINGに`'rectangle.portrait.and.arrow.right': 'logout'`を追加。Playwrightでログアウト→ログイン画面への遷移を実写確認済み |
 | 2026-07-11         | 不具合修正：「筋トレメニューを編集したのに更新されない」。原因は`(screens)/program/program_choice.tsx`の登録済みメニュー編集時の保存処理が`console.log`+`alert`のモックのまま一度もAPIを呼んでいなかったこと。バックエンドに種目一括置換用のエンドポイントが無いため、`DELETE /workouts/{id}`（キャンセル）→`POST /workouts`（編集後データで新規作成、同じ`scheduled_date`）という既存エンドポイントの組み合わせで実装（バックエンド変更なし）。`services/workout.ts`に`fetchWorkout`/`cancelWorkout`を追加。`program_choice.tsx`に`mode==='edit'`を追加し、`sessionId`パラメータから`fetchWorkout`で実データ（種目ID・重量・レップ数・RPE含む）を取得してフォームを初期化するよう変更（従来はダミー値60kg/10回/RPE8で初期化していた）。すべて削除して更新すると、その日のメニューを空にする（作成をスキップし、キャンセルのみ実行）。呼び出し元の`(tabs)/index.tsx`の`handleEditRegisteredMenu`・`(tabs)/workout.tsx`の`handleEditMenu`を、種目名配列を渡す方式から`sessionId`を渡す方式に変更。Playwrightで、種目を編集（重量変更）→保存→画面遷移後に再取得して変更が反映されていることを実写確認済み |
 | 2026-07-11         | 不具合修正：筋トレメニューの重量表示に不要な小数点（例：`80.00kg`）が出る問題。原因はバックエンドのDecimalフィールド（`weight_kg`・`rpe`・`total_volume`）がJSON上で`"80.00"`のような文字列として返るため、フロントエンドで`String()`するとそのまま表示されていたこと。新規`frontend/utils/format.ts`に`formatDecimal()`（数値変換して末尾の0を除去：`80.00`→`80`、`62.50`→`62.5`）を追加し、`(tabs)/index.tsx`（ホーム画面の種目行）・`(tabs)/workout.tsx`（筋トレ開始タブの種目行）・`(screens)/program/program_choice.tsx`（編集画面の初期値）の3箇所に適用。`services/workout.ts`の`SessionSetOut.weight_kg`/`rpe`・`WorkoutSessionOut.total_volume`の型を実際のレスポンス形式に合わせて`string | number | null`に修正。Playwrightで各画面の重量表示・編集画面の入力初期値が小数点なしになることを実写確認済み |
+| 2026-08-13         | `model-studio/AGENTS.md`新規作成（完成済み・変更禁止の明記、本アプリとの関係を整理）。AI回数カウント機能について、Azureクラウドを使わずbackend-coreでローカル処理する設計をユーザーと協議のうえ確定し、本ファイルに新セクション「AI回数カウント機能 — 設計確定・実装前」を追加（backend-core=MediaPipeで関節角度算出のみ、frontend=repCount.ts移植版でカウント判定、WebSocketで接続、`rep_count_models`テーブル新設予定）。コード・マイグレーションは未着手 |
+| 2026-08-13         | AI回数カウント機能：backend-core側を実装（frontendは未着手）。`app/core/pose.py`・`app/core/pose_analysis.py`新規作成、`rep_count_models`テーブル追加（SQLAlchemyモデル・schema・crud・Alembicマイグレーション`f3a1c9b2e7d4`）、`GET /exercises/{exercise_id}/rep-model`・WebSocket`/ws/pose`を追加。requirements.txtに`mediapipe>=0.10.30`・`opencv-python-headless`・`numpy`追加。**実装中に判明した重要な制約2点をAGENTS.mdの当該セクションに記録**：①mediapipe 1.0系では旧API(`mp.solutions.pose`)が廃止されており新Tasks API(`PoseLandmarker`)必須、②プロジェクトパスの日本語（`HAL名古屋`）によりMediaPipeの内部C++層がファイルパスを開けず`FileNotFoundError`になるため、モデルは`model_asset_buffer`（読み込み済みバイト列）で渡す実装にした。mediapipe/opencv/numpyをvenvにインストールし、ダミー画像・ダミーランドマークでポーズ検出器の初期化〜角度計算・FastAPIアプリ起動・ルーター登録・Alembicマイグレーションチェーンの整合性まで動作確認済み。**未確認**：実DBへの`alembic upgrade head`適用（ローカルにDocker/Postgres未起動のため）、実機カメラ画像での検出精度、実際のWebSocket通信（認証込み） |
+| 2026-08-13         | AI回数カウント機能：frontend側を実装（動作確認用の暫定版）。`expo-camera`を追加（`npx expo install`）。`lib/repCount.ts`（新規、model-studioの`analyzer/lib/repCount.ts`移植・シンプル版のヒステリシス状態機械のみ）・`services/pose-ws.ts`（新規、`/ws/pose`への接続管理。`services/api.ts`のホスト解決ロジックをws(s)へ変換して流用）・`(screens)/pose-test.tsx`（新規、動作確認専用の暫定テスト画面。フロントカメラを200ms間隔でキャプチャして送信、受信した関節角度とカウント結果を画面表示に加え`console.log`にも出力し`expo start`のターミナルで確認できるようにした）を追加。既存画面からの導線は意図的に追加していない（本番導線は別途スコープ）。`npx tsc --noEmit`・`npx expo lint`ともにこの3ファイルでは0件（既存の`records.tsx`の警告1件は本タスクと無関係のため触れず）。**未確認**：実機での通し動作（カメラ起動→WebSocket接続→角度受信→カウント表示、認証込み） |
+| 2026-08-13         | 開発環境の不具合調査・修正（AI回数カウント機能とは別件）：①Expo Goで「request timeout」になる不具合を調査した結果、Docker Desktop起動時に作成される仮想アダプター（`vEthernet (WSL...)`）とは別に、**別プロジェクト`ai-company`のDockerコンテナがポート8000（backend-core）・5432（Postgres）を専有していた**ことが根本原因と判明（ユーザー側で該当コンテナを停止し解消）。②ポート解放後、`kinpoyo_db`（5週間停止していた）を`docker start`で再起動し、保留していた`alembic upgrade head`を実DBに適用（`rep_count_models`テーブルの存在をDB上で確認済み）。③ログイン時の「Not Found」はai-companyとのポート衝突で無関係のAPIに接続していたことが原因、「リクエストに失敗しました（422）」は`api.ts`に一時的な`console.log`を追加して原因調査中に解消（デバッグログは調査後に削除・復元済み）。 |
+| 2026-08-13         | AI回数カウント機能：実機テストで発覚した不具合を修正。①カウントが2→1のように減る不具合の原因は、ライブ計測で新しい角度が届くたびに`countReps()`（バッチ処理前提のアルゴリズム）を蓄積済みの全履歴に対して呼び直しており、ROMを基準にした閾値が後から遡って変わり既にカウント済みの区間が再評価されて消えていたこと。1フレームずつ状態を進め過去のカウントを取り消さない`StreamingRepCounter`（`lib/repCount.ts`に新規追加）に差し替え、`(screens)/workout-camera.tsx`・`(screens)/pose-test.tsx`両方を更新。②骨格線のオーバーレイ表示に対応：`react-native-svg`を直接依存に追加し`components/pose-skeleton-overlay.tsx`（新規）を作成、backend-coreの`/ws/pose`応答に33点のランドマーク座標（`landmarks`）を追加してカメラプレビュー上に線で重畳表示。③`(screens)/workout-camera.tsx`にフロント/背面カメラの切替ボタンを追加。④`Camera unmounted during taking photo process`エラーの原因（画面遷移後もawait中の非同期処理が撮影タイマーを立て続けるレースコンディション）を`mountedRef`ガードで修正。`npx tsc --noEmit`・`npx expo lint`ともにエラー0件。 |
+| 2026-08-13         | AI回数カウント機能：スクワットに限定して本番導線へ統合。`backend-core/scripts/import_rep_model.py`（新規）でmodel-studioの本番API（`https://kinpoyo-api.azurewebsites.net`、読み取り専用）から較正済みのスクワットモデル（model_id=15、mae=0.0、exact_match_rate=1.0、mainJoint=左股関節）を取得し`rep_count_models`（exercise_id=17）へ投入。`frontend/services/exercises.ts`に`fetchRepModel`（404はnullとして扱う）を追加。`(screens)/workout-camera.tsx`（新規・本番用）を作成：`GET /exercises/{id}/rep-model`の設定を`lib/repCount.ts`のRepConfigへ変換し、`mainJoint`のみを`/ws/pose`で監視してリアルタイムカウント（カウント結果は表示のみ、`ai_counted_reps`へのDB保存は未実装・ユーザー確認の上でスコープ外とした）。`(tabs)/workout.tsx`の`handleStart`を拡張し、開始時に今日の種目から較正済みのものを探索→あれば`workout-camera`へ自動遷移、無ければ「AI回数カウントに対応した種目はまだ登録されていません」を表示。`npx tsc --noEmit`・`npx expo lint`ともにエラー0件。**未確認**：実機での通し動作（Playwright等での実写確認は未実施） |
+| 2026-08-13         | AI回数カウント機能：実機での2回目のテストで判明した「カウントの精度がやや不安定」「遅延がある」「骨格線に顔・手指まで映る」というフィードバックを受けて対応（ユーザーと相談の上で方針決定）。①`services/pose-ws.ts`の`PoseSocket`に`sendFrameAndWait()`を追加し、`sendFrame()`（fire-and-forget）を廃止。`workout-camera.tsx`・`pose-test.tsx`とも固定間隔`setInterval`をやめ「前フレームの応答を待ってから次を撮る」ループに変更（遅延蓄積の根本対策）。②`workout-camera.tsx`から骨格線オーバーレイを撤去（`pose-test.tsx`のみ残す）。③`workout-camera.tsx`に較正データ（`cycleStats`）との比較ログを追加：毎フレームの角度と、1レップ完了ごとにそのレップの実測底値/頂点値をmodel-studio較正時の範囲と並べてターミナルに出力（`services/exercises.ts`の`RepCountModelConfig`型に`cycleStats`を追加）。④カウント数字を画面下寄り・小さめに変更。⑤**複数種目対応（今日のメニューに較正済み種目が複数あっても最初の1つしかカメラが起動しない制約）は、ユーザーと相談の上、今回は対応を保留**（スクワット以外のモデルが増えてから再検討）。`npx tsc --noEmit`・`npx expo lint`ともにエラー0件。 |
+| 2026-08-22         | AI回数カウント機能：`workout-camera.tsx`のWebSocket購読関節を`mainJoint`のみから`candidates`全部（右膝・左膝・右股関節・左股関節）に拡張し、確認用にターミナルへ全部ログ出力するようにした（カウント判定自体は引き続き`mainJoint`のみ使用）。実機テストのログを分析した結果、①左股関節の角度が1フレームごとに50〜80°跳ねる、②同じ瞬間の左右の膝の角度が30〜40°食い違う、という姿勢推定自体の不安定さを確認（信頼度フィルタが無いこと・カメラ角度・`lite`モデルの精度限界などが要因候補、対応は次回以降）。さらにログの詳細分析で**姿勢ロスト判定の不具合を発見・修正**：`StreamingRepCounter`の姿勢ロストリセットが`cfg.maxGapFrames`（フレーム番号の差、model-studioの動画フレーム番号〜24-30fps前提の値）を使っていたが、ライブ計測の`frame`はWebSocket往復1回につき1増えるカウンター（1往復の実時間は数百ms〜数秒と変動）のため、実際には数秒間検出が途切れていても閾値内と誤判定され、検出なしを何度も挟んだ長い区間（実例：frame=13〜33、複数の検出なし区間を含む）が1回のレップとして誤ってカウントされていた。`StreamingRepCounter`に`maxGapMs`（実時間ミリ秒、デフォルト2000ms）を追加し、`push(frame, angle, atMs=Date.now())`で実時間ベースの判定に変更（呼び出し側は変更不要）。`npx tsc --noEmit`・`npx expo lint`ともにエラー0件。**未対応のまま残っている論点**：姿勢推定自体の精度（信頼度フィルタ・モデルグレード変更・撮影角度）は次回以降に持ち越し。 |
+| 2026-08-22         | AI回数カウント機能：ユーザーの指示により、応答待ち方式（`sendFrameAndWait`）から固定間隔方式（`setInterval`、200ms、`sendFrame`のfire-and-forget）へ`workout-camera.tsx`・`pose-test.tsx`とも差し戻した。`services/pose-ws.ts`の`PoseSocket`に`sendFrame()`（応答を待たない送信）を復活させ、`sendFrameAndWait()`（応答待ち版）と両方使えるようにしてある（現在の呼び出し側は`sendFrame`を使用）。遅延蓄積の対策としては応答待ち方式の方が理論上優れるが、今回はユーザー判断で固定間隔に戻した。`npx tsc --noEmit`・`npx expo lint`ともにエラー0件。 |
+| 2026-08-22         | **AI回数カウント機能：設計を大幅変更（リアルタイムストリーミング→バッチ処理）。** 精度・遅延の問題（カウントのズレ、姿勢推定自体の不安定さ、遅延蓄積）が解決しきれず、「アルゴリズムの問題か通信の問題か」を切り分けられないままデバッグが続いていたことを受け、ユーザーと相談の上、model-studio自身と同じ「録画→アップロード→まとめて解析」方式に戻すことにした。**削除**：`app/routers/pose.py`（`/ws/pose`）・`main.py`からの登録・`frontend/services/pose-ws.ts`・`frontend/lib/repCount.ts`（`StreamingRepCounter`含む）・`frontend/app/(screens)/pose-test.tsx`・`components/pose-skeleton-overlay.tsx`。**新規**：`backend-core/app/core/rep_model.py`（model-studio`rep_model.py`から推論に必要な部分のみ移植。`count_with_template`＝1レップ形状テンプレート照合＋統計ゲート＋ヒステリシスのフル版アルゴリズム、model-studioでmae=0.0の実績あり。較正専用ロジックは含まない）、`app/core/pose.py`に`extract_landmarks_from_frame`（動画フレームの生配列を直接処理、JPEG再エンコード不要）を追加、`POST /exercises/{exercise_id}/count-reps`（動画アップロード→バッチ解析、`def`非asyncでスレッドプール実行、実装確認用に毎フレームの関節角度と各サイクルの採用/棄却理由をターミナルへ出力）、`frontend/services/exercises.ts`に`countRepsFromVideo`（FormDataでのmultipartアップロード）、`(screens)/workout-camera.tsx`を録画UI（`expo-camera`の`mode="video"`・`recordAsync`/`stopRecording`、iOSはHEVC回避のため`codec:'avc1'`指定）に作り直し。**再利用**：`app/core/pose.py`・`pose_analysis.py`・`rep_count_models`テーブル・`GET /exercises/{id}/rep-model`・`scripts/import_rep_model.py`はそのまま。backend側は合成データ（正常なスクワット波形→採用、浅すぎる波形→統計ゲートで正しく棄却）で動作確認済み。`npx tsc --noEmit`・`npx expo lint`・`py_compile`ともにエラー0件、backend-core再起動して新エンドポイント登録も確認済み。**未確認**：実機での録画〜アップロード〜結果表示の通しテスト。 |

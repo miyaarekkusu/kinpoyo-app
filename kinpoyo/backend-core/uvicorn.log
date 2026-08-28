@@ -1,0 +1,8 @@
+INFO:     Will watch for changes in these directories: ['C:\\HAL\u540d\u53e4\u5c4b\\kinpoyo\\kinpoyo-app\\kinpoyo\\backend-core']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [28936] using WatchFiles
+INFO:     Started server process [32180]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:61597 - "GET /docs HTTP/1.1" 200 OK
+INFO:     192.168.0.6:61600 - "GET /docs HTTP/1.1" 200 OK

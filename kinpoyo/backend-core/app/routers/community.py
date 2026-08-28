@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db
+from app.core.uploads import save_post_images
 from app.crud import community as community_crud
 from app.models.community import Post
 from app.models.user import User
@@ -10,6 +11,7 @@ from app.schemas.community import (
     CommentOut,
     FeedScope,
     PostCreate,
+    PostImageUploadOut,
     PostOut,
     PostTypeKey,
     PostUpdate,
@@ -33,6 +35,14 @@ def create_post(
 ):
     post = community_crud.create_post(db, current_user.id, data)
     return community_crud.post_to_out(post, current_user.id)
+
+
+@router.post("/images", response_model=PostImageUploadOut, status_code=status.HTTP_201_CREATED)
+def upload_post_images(
+    images: list[UploadFile] = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    return PostImageUploadOut(urls=save_post_images(images))
 
 
 @router.get("", response_model=list[PostOut])

@@ -57,3 +57,7 @@ class CommentOut(BaseModel):
     body: str
     likes_count: int
     created_at: datetime
+
+
+class PostImageUploadOut(BaseModel):
+    urls: list[str]

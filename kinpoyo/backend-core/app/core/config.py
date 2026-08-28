@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic_settings import BaseSettings
 
 
@@ -6,6 +8,9 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    # AIレビュー機能（DeepSeek API）。未設定でもアプリ起動は失敗させず、
+    # 実際にレビュー生成を呼んだ時だけエラーにする（app/core/deepseek_client.py）。
+    DEEPSEEK_API_KEY: Optional[str] = None
 
     model_config = {"env_file": ".env"}
 
