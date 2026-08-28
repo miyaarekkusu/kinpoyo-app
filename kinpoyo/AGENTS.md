@@ -56,6 +56,169 @@
 
 ---
 
+## 修正予定タスク（2026-08-28、ユーザー指摘・未着手）
+
+> **⚠️ 以下はまだ着手していないTODOリスト。実装済みの内容と混同しないこと。**
+> 着手したら、このセクションから該当項目を削除し、対応する画面の実装状況・
+> セクションに反映すること。
+
+### ~~ログイン画面~~（`frontend/app/(auth)/login.tsx`、2026-08-28対応済み）
+
+- [x] kinpoyoのロゴを表示する → タイトル「ログイン」の上に`kinpoyo`ワードマーク
+      （`FontSize['3xl']`・`Colors.primaryDark`、`AppHeader`のブランド文字と同系統の
+      スタイル）を追加。画像アセットは無いため、他画面と同じテキストロゴ方式を踏襲
+- [x] Apple/Googleログインボタンを削除 → `onPress`が無い純粋なモックだったため、
+      ボタン本体と「または」の区切り線、関連スタイル（`dividerRow`/`socialBtn`等）・
+      未使用になった`FontAwesome`importを削除
+- `tsc --noEmit`通過済み
+- **追記（同日、レイアウト再修正）**：最初に`justifyContent: 'center'`で全体を
+  中央寄せしたが、「ちょっと違う」とフィードバックがあり、選択肢を提示して
+  「上下に要素を分散」案を採用。**ロゴ＝画面上部固定・フォーム本体＝中央付近・
+  アカウント切替リンク＝画面下部固定**という3ブロック構成に変更：
+  - `switchRow`（新規登録/ログインへのリンク）を`form`の中から出し、ロゴ・
+    フォームと同階層の兄弟要素にした
+  - `scroll`のスタイルを`justifyContent: 'center'` → `'space-between'`に変更
+    （3ブロックが等間隔で上下に配置され、結果的に中央のフォームが画面中央
+    付近に来る）
+  - login.tsx・signup.tsx両方に同じ構造を適用（見た目を統一する方針は継続）
+- **追記（同日）**：ロゴをもっと大きくとの要望で、`fontSize`を`FontSize['3xl']`
+  （34、テーマの最大トークン）から**48**に変更（トークンの範囲を超えるため
+  直接数値指定。login.tsx・signup.tsx両方）
+- **追記（同日、キーボード対策）**：「キーボードが出ると画面全体が持ち上がって
+  窮屈」という相談に対し、3つのパターン（①何もしない、②キーボード表示時に
+  ロゴを縮小、③上下固定＋フォームのみスクロール）を提示し、②を採用して実装：
+  - `Keyboard.addListener`（iOSは`keyboardWillShow`/`Hide`、Androidは
+    `keyboardDidShow`/`Hide`）でキーボードの表示・非表示を検知し、
+    `Animated.Value`（0〜1）を200msでアニメーションさせる
+  - ロゴを`Text`から`Animated.Text`に変更し、`fontSize`を48→26、`opacity`を
+    1→0.7へ補間。`fontSize`のアニメーションは`useNativeDriver: false`が必須
+    （ネイティブドライバは`transform`/`opacity`のみ対応のため）
+  - login.tsx・signup.tsx両方に同じ実装を適用
+
+### ~~身体情報入力画面~~（オンボーディング：`frontend/app/(onboarding)/height.tsx`・
+`weight.tsx`、2026-08-28対応済み）
+
+- [x] 身長のft説明文 → `unit === 'ft'`の時だけ、単位トグルの下に
+      「ft = フィート・インチ表記（例: 5'9" ＝ 5フィート9インチ）」を表示
+- [x] 体重UIの目盛り/表示値ズレ → **原因判明**：`contentContainerStyle`の
+      `paddingHorizontal`が画面端の固定余白（`Layout.screenPaddingH`）に
+      なっており、目盛りを中央線に正しく揃えるのに必要な「ルーラー表示幅の
+      半分 − アイテム幅の半分」になっていなかった。height.tsx（縦方向 piker）の
+      `SIDE_PADDING = VIEWPORT_HEIGHT/2 - ITEM_HEIGHT/2`と同じ考え方に揃えて
+      修正（`useWindowDimensions()`でルーラー幅を取得し動的に算出）。
+      `handleScroll`側の計算式は変更不要（パディングを正しくすれば辻褄が合う）
+- `tsc --noEmit`通過済み
+
+### 筋トレメニュー登録画面（`frontend/app/(screens)/workout-register.tsx`、
+2026-08-28一部対応。確定ボタンのみ未解決で残っている）
+
+調査の結果、実際に「種目を追加するUI」（種目選択モーダル）を持つのは
+`workout-register.tsx`と`workout-template-edit.tsx`のみと判明（`program_choice.tsx`は
+前の画面から渡された種目リストを編集するだけで、種目選択UI自体は持たない）。今回は
+指示通り`workout-register.tsx`のみ対応。`workout-template-edit.tsx`は全く同じ実装
+パターン（同じ問題）を抱えているが、今回のスコープ外として未対応のまま。
+
+- [x] 種目選択の視認性・解除 → 選択済み行に`Colors.primarySubtle`背景＋
+      `Colors.primary`枠線＋太字（フィルターチップの`chipActive`と同じ視覚言語に
+      揃えた）。`disabled={added}`を廃止し、選択済み行タップで解除
+      （`removeExerciseByExerciseId`新設。確認ダイアログ無し＝メインカードの
+      削除ボタンと同じ挙動に合わせた）
+- [ ] レップ数入力の確定ボタン → **未解決**。3案（`InputAccessoryView`・
+      Keyboardイベント自前バー・自作数値キーパッド）を試したがいずれも不採用
+      （詳細は本セクション末尾の追記参照）
+- [x] レップ数の小数点禁止 → `keyboardType`を`"numeric"`（小数点あり）から
+      `"number-pad"`（整数のみ）に変更。ペースト対策で`onChangeText`側でも
+      `[^0-9]`を除去。休憩の分/秒も同様に整数化
+- [x] 種目の並び替え → ドラッグ&ドロップ用ライブラリを新規追加せず、各種目
+      カードのヘッダーに▲▼ボタンを追加し、隣接要素と入れ替える方式で実装
+      （`moveExercise`。`chevron.up`/`chevron.down`を`icon-symbol.tsx`の
+      MAPPINGに追加）
+- [x] レップ数未入力での保存禁止 → `handleSave`内でセット配列を`reps`未入力
+      チェックし、該当種目名を添えたエラーメッセージで保存をブロック
+- `tsc --noEmit`通過済み
+- **追記（同日、バグ修正）**：選択済み行の枠線が下辺だけ緑にならない不具合を
+  報告あり。原因はReact Nativeのスタイル上書きの仕様——`exerciseListItem`が
+  `borderBottomColor: Colors.divider`を個別指定しており、選択スタイルの
+  `borderColor`（一括指定）は上下左右まとめて指定するが、**個別指定の方が
+  優先される**ため下辺だけ灰色のまま残っていた。`exerciseListItemSelected`に
+  `borderBottomColor: Colors.primary`を追加して明示的に上書きして解決
+- **追記（同日、間隔調整）**：「種目の間に小さいスペースが欲しい」との要望で
+  `exerciseListContent`に`gap: Space[1]`を追加。これに伴い、ベースの
+  `exerciseListItem`が持っていた`borderBottomWidth`/`borderBottomColor`
+  （行間の区切り線）は、gap導入後は冗長（角丸＋余白で既に区切られている）に
+  なったため削除し、上記の枠線バグ修正で追加していた`borderBottomColor`の
+  明示的な上書きも不要になったため合わせて削除（今は`borderWidth`/
+  `borderColor`の一括指定だけで四辺とも正しく緑になる）
+- **追記（同日、確定ボタンが実機で出ないとの報告）**：`InputAccessoryView`
+  （iOS専用API）で実装した「完了」ボタンが実機で表示されないと報告があった。
+  RN/Expoでは環境・バージョン次第で`InputAccessoryView`が効かないことがある
+  既知の不安定さがあるため、**Keyboardイベントで実装する自前方式に切り替えた**：
+  - `Keyboard.addListener('keyboardDidShow'/'keyboardDidHide', ...)`で
+    キーボードの高さ（`e.endCoordinates.height`）を`keyboardHeight` stateに保持
+  - `keyboardHeight > 0`の間だけ、`position: 'absolute', bottom: keyboardHeight`
+    で画面下部・キーボードのすぐ上に「完了」ボタンのバーを重ねて表示
+  - `InputAccessoryView`・`NUMERIC_ACCESSORY_ID`・各TextInputの
+    `inputAccessoryViewID`は全て削除
+  - **副次的な利点**：`keyboardDidShow`/`Hide`はiOS/Android両対応のイベントの
+    ため、`Platform.OS === 'ios'`分岐が不要になり、**Androidでも同時に効くように
+    なった**（従来はiOS専用でAndroidは未対応のままだった）
+  - `tsc --noEmit`通過済み。実機再検証はこれから
+- **追記（同日、確定ボタン機能を撤回）**：自前実装（Keyboardイベント方式）も
+  ユーザーから「元の状態に戻してほしい」との指示があり撤回。`keyboardHeight`
+  state・`useEffect`・キーボードバーのJSX・`keyboardAccessory`/
+  `keyboardAccessoryDone`スタイル・`Keyboard`のimportを全て削除し、
+  reps/weight/rest欄は確定ボタン機能追加前の状態（`keyboardType`のみ、
+  small改善: number-padでの整数化はこの回答の対象外なので維持）に戻した。
+  **「確定ボタンが分かりづらい」というTODO項目自体は未解決のまま残っている**
+  （再挑戦する場合は別アプローチを検討すること）
+
+- **追記（同日、自作キーパッドを試すも撤回）**：ユーザーから「キーボード自体
+  （左下の空きスペース）にボタンを入れられないか」という相談があり、**iOSの
+  システムキーボード内部にはアプリ側から一切手を入れられない**（Apple非公開
+  領域）ことを説明。唯一の方法として「システムキーボードを諦めて自作の数値
+  キーパッドに置き換える」案を提示・承認を得て実装（`ActiveField`型・
+  `showSoftInputOnFocus={false}`・電卓配置の自作キーパッド・「確定」ボタン）
+  したが、**実機で試した結果「前の状態が良かった」とのことで撤回**。
+  `ActiveField`型・`activeField` state・`getActiveValue`/`setActiveValue`/
+  `handleKeypadPress`・キーパッドのJSX・`keypad`系スタイル・
+  `icon-symbol.tsx`の`delete.left`マッピングを全て削除し、4つのTextInputは
+  `keyboardType`（weight="numeric"、reps/分/秒="number-pad"）＋整数化の
+  `onChangeText`サニタイズのみの状態（確定ボタン撤回時点の状態）に戻した。
+  **「確定ボタンが分かりづらい」というTODO項目は再び未解決**。今後同じ方向で
+  再挑戦する場合は、今回の2案（キーボードイベント方式・自作キーパッド方式）
+  がどちらも不採用だったことを踏まえること
+  - `tsc --noEmit`通過済み
+
+- **追記（同日、並び替えの再実装）**：上下ボタン方式から`react-native-draggable-flatlist`
+  を使った長押しドラッグ並び替えに変更済み（`renderExerciseCard`・
+  `DraggableFlatList`・ハンドルアイコン`line.3.horizontal`を`icon-symbol.tsx`に
+  追加）。ハンドルアイコンだけを長押し起点にし、TextInputや他のボタンと
+  ジェスチャーが競合しないようにしている
+
+- **追記（同日、バリデーションのリアルタイム化）**：「レップ数未入力」等のエラー
+  表示を、保存ボタンを押した時だけの判定から**リアルタイム判定**に変更
+  （ユーザー要望：「直したらすぐエラーが消えるように」）：
+  - `validationError`を`useMemo(() => ..., [sessionExercises])`で算出する
+    ように変更。フロントエンド側だけの判定でサーバー送信は行わない
+  - `hasAttemptedSave`（一度でも保存を押したか）を導入し、これが`false`の間は
+    `validationError`があっても表示しない（未入力のまま何も操作していない
+    状態からいきなり赤字が出るのを防ぐ、一般的なUXパターン）
+  - 保存失敗時のエラー（サーバー通信エラー）は`submitError`として分離。
+    これはリアルタイムには消えない（次の保存試行まで残る、通信結果のため）
+  - 表示は`displayError = (hasAttemptedSave && validationError) || submitError`
+    の優先順位。`sessionExercises`を直すと`validationError`が自動的に`null`に
+    なり、保存ボタンを押し直さなくても即座にエラーが消える
+  - `tsc --noEmit`通過済み
+### 筋トレメニュー編集画面（`frontend/app/(screens)/program/program_choice.tsx`、
+編集モード。`(tabs)/workout.tsx`の`handleEditMenu`から`mode: 'edit'`で遷移）
+
+- [ ] **画面自体を削除し、筋トレメニュー登録画面に統合する**。理由：編集画面は登録画面と
+      本質的に同じ機能なのにUIが異なり、かつ編集画面では種目の新規追加ができないため、
+      UIが違うこと自体がユーザーにとって使いづらさの原因になっている。登録画面のUIに
+      一本化し、新規登録・既存編集の両方を同じ画面・同じ挙動で扱えるようにする
+
+---
+
 ## プロジェクト概要
 
 | 項目               | 内容                    |
@@ -266,8 +429,8 @@ kinpoyo/
 
 | 画面                   | ファイル                               | 状態                    | 備考                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ---------------------- | -------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ログイン               | `(auth)/login.tsx`                     | ✅ 実装済み（モック）   | メール/パスワード入力・パスワード表示切替・パスワードを忘れたリンク・Apple/Googleログインボタン・新規登録リンク（→ /signup）・アプリ起動時の最初の画面                                                                                                                                                                                                                                                                                                                                                  |
-| 新規登録               | `(auth)/signup.tsx`                    | ✅ 実装済み（モック）   | ニックネーム/メール/パスワード入力・パスワード表示切替・Apple/Googleログインボタン・ログインリンク（→ /login）                                                                                                                                                                                                                                                                                                                                                                                          |
+| ログイン               | `(auth)/login.tsx`                     | ✅ 実装済み（モック）   | kinpoyoロゴ・メール/パスワード入力・パスワード表示切替・パスワードを忘れたリンク・新規登録リンク（→ /signup）・アプリ起動時の最初の画面。Apple/Googleログインボタンは未実装モックだったため2026-08-28に削除済み                                                                                                                                                                                                                                                  |
+| 新規登録               | `(auth)/signup.tsx`                    | ✅ 実装済み（モック）   | kinpoyoロゴ・ニックネーム/メール/パスワード入力・パスワード表示切替・ログインリンク（→ /login）。ログイン画面と同じ見た目に統一（中央配置）。Apple/Googleログインボタンは未実装モックだったため2026-08-28に削除済み                                                                                                                                                                                                                                                                                                                                                                                          |
 | パスワードを忘れた     | `(auth)/forgot-password.tsx`           | ✅ 実装済み（モック）   | メールアドレス入力→Reset Password（入力で活性化）                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 確認コード入力         | `(auth)/verify-code.tsx`               | ✅ 実装済み（モック）   | 5桁コード入力ボックス（自動フォーカス送り）・Resend email                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | パスワードリセット完了 | `(auth)/reset-complete.tsx`            | ✅ 実装済み（モック）   | 完了メッセージ・Confirmボタン                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |

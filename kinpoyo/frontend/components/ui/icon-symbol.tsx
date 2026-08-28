@@ -17,6 +17,8 @@ const MAPPING = {
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
   'chevron.left': 'chevron-left',
+  'chevron.up': 'keyboard-arrow-up',
+  'chevron.down': 'keyboard-arrow-down',
   'bell.fill': 'notifications',
   'dumbbell.fill': 'fitness-center',
   'figure.strengthtraining.traditional': 'fitness-center',
