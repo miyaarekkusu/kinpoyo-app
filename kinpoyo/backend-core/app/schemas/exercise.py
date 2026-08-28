@@ -4,11 +4,20 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ExerciseOut(BaseModel):
+    """種目の一覧表示用。
+
+    has_rep_model は AI回数カウント用の較正済みモデル（rep_count_models）が
+    紐づいているか。種目ピッカーは紐づいていない種目を出さないため、種目ごとに
+    GET /exercises/{id}/rep-model を叩く（種目数だけ往復する）のではなく、
+    一覧に同梱して1往復で済ませる。
+    """
+
     id: int
     name: str
     movement: str
     muscle: str
     muscle_color: Optional[str] = None
+    has_rep_model: bool = False
 
 
 class RepCountModelOut(BaseModel):

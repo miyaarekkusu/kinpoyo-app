@@ -7,10 +7,22 @@ export type ExerciseOut = {
   movement: Movement;
   muscle: string;
   muscle_color: string | null;
+  /** AI回数カウント用の較正済みモデル（rep_count_models）が紐づいているか。 */
+  has_rep_model: boolean;
 };
 
-export function fetchExercises(): Promise<ExerciseOut[]> {
-  return apiFetch<ExerciseOut[]>('/exercises');
+/**
+ * 種目一覧。
+ *
+ * aiReadyOnly=true で、AI回数カウント用の較正済みモデルが紐づいている種目だけに
+ * 絞る。種目ピッカーはこれを使う——紐づいていない種目を選べてしまうと、その種目
+ * ではAI回数カウントが働かないため。
+ *
+ * 逆に、既に記録済みの筋トレを表示する用途（ホーム画面のID→種目名の解決など）は
+ * 絞ってはいけない。過去に登録した種目が表示できなくなる。
+ */
+export function fetchExercises(aiReadyOnly = false): Promise<ExerciseOut[]> {
+  return apiFetch<ExerciseOut[]>(`/exercises${aiReadyOnly ? '?ai_ready=true' : ''}`);
 }
 
 // AI回数カウント：model-studioで較正された設定（rep_count_models）。

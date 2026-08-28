@@ -18,8 +18,19 @@ router = APIRouter(prefix="/exercises", tags=["exercises"])
 
 
 @router.get("", response_model=list[ExerciseOut])
-def list_exercises(db: Session = Depends(get_db)):
-    return [exercise_crud.exercise_to_out(e) for e in exercise_crud.list_exercises(db)]
+def list_exercises(ai_ready: bool = False, db: Session = Depends(get_db)):
+    """種目一覧。
+
+    ai_ready=True で、AI回数カウント用の較正済みモデル（rep_count_models）が
+    紐づいている種目だけに絞る。種目ピッカーはこれを使う——紐づいていない種目を
+    選べてしまうと、その種目ではAI回数カウントが働かないため。
+    既に記録済みの筋トレを表示する用途（ホーム画面のID→種目名の解決など）は
+    絞ってはいけない。過去に登録した種目が表示できなくなる。
+    """
+    return [
+        exercise_crud.exercise_to_out(e, has_model)
+        for e, has_model in exercise_crud.list_exercises(db, ai_ready_only=ai_ready)
+    ]
 
 
 @router.get("/{exercise_id}/rep-model", response_model=RepCountModelOut)

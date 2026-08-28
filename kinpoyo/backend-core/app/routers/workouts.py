@@ -103,6 +103,26 @@ def start_workout(
     return workout_crud.session_to_out(session)
 
 
+@router.post("/{session_id}/abort", response_model=WorkoutSessionOut)
+def abort_workout(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """計測を中断して「予定済み」に戻す（＝最初からやり直せる状態）。
+
+    以前は開始ボタンを押した時点でセッションが実施中になり、計測画面で中断して
+    戻ると開始画面に「実施中」が残り続けるバグになっていた。中断はキャンセル
+    （メニューごと取り消し）とも終了とも違うので、専用の口を用意する。
+    """
+    session = _get_owned_session(db, session_id, current_user)
+    if session.status_id != workout_crud.STATUS_IN_PROGRESS:
+        # 既に予定済みなら何もしなくてよい（冪等）。
+        return workout_crud.session_to_out(session)
+    session = workout_crud.abort_session(db, session)
+    return workout_crud.session_to_out(session)
+
+
 @router.post("/{session_id}/end", response_model=WorkoutSessionOut)
 def end_workout(
     session_id: int,

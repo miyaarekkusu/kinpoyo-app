@@ -61,7 +61,8 @@ export default function WorkoutTemplateEditScreen() {
     setLoadingExercises(true);
     setLoadError(null);
     try {
-      const data = await fetchExercises();
+      // 紐づけ済み（AI回数カウントの較正済みモデルがある）種目だけを出す。
+      const data = await fetchExercises(true);
       setExercises(data);
     } catch (e) {
       setLoadError(e instanceof ApiError ? e.detail : '種目一覧の取得に失敗しました');
@@ -523,6 +524,15 @@ export default function WorkoutTemplateEditScreen() {
             </View>
           ) : (
             <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.exerciseListContent}>
+              {filteredExercises.length === 0 && (
+                <View style={styles.emptyCard}>
+                  <Text style={styles.emptyIcon}>🔍</Text>
+                  <Text style={styles.emptyTitle}>選べる種目がありません</Text>
+                  <Text style={styles.emptySubtitle}>
+                    AI回数カウントの較正済みモデルが紐づいた種目のみ選択できます
+                  </Text>
+                </View>
+              )}
               {filteredExercises.map(ex => {
                 const added = addedExerciseIds.has(ex.id);
                 return (

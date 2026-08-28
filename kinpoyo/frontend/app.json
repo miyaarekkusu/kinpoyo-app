@@ -26,11 +26,31 @@
         "expo-image-picker",
         {
           "photosPermission": "投稿に写真を添付するために、写真へのアクセスを許可してください",
-          "cameraPermission": false,
+          "cameraPermission": "AI回数カウントでフォームを計測するために、カメラへのアクセスを許可してください",
           "microphonePermission": false
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "AI回数カウントでフォームを計測するために、カメラへのアクセスを許可してください",
+          "enableMicrophonePermission": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          },
+          "ios": {
+            "deploymentTarget": "16.4"
+          }
+        }
+      ],
+      "./plugins/withPoseModel",
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

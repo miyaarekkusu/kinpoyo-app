@@ -156,6 +156,28 @@ def start_session(db: Session, session: WorkoutSession) -> WorkoutSession:
     return get_session(db, session.id)
 
 
+def abort_session(db: Session, session: WorkoutSession) -> WorkoutSession:
+    """実施中のセッションを「予定済み」に戻し、計測結果を消す。
+
+    計測画面を途中で中断したときに使う。中断＝最初からやり直しなので、
+    セッションを完了扱いにも取り消し扱いにもせず、開始前の状態へ戻す。
+    ai_counted_reps / rep_cycles_json を残すと、次の計測で「途中まで記録済み」の
+    セットが混ざって回数がおかしくなるためクリアする。
+    """
+    session.status_id = STATUS_SCHEDULED
+    session.started_at = None
+    session.ended_at = None
+    session.duration_sec = None
+    for se in session.session_exercises:
+        for st in se.sets:
+            st.ai_counted_reps = None
+            st.rep_cycles_json = None
+            st.completed_at = None
+    db.commit()
+    db.refresh(session)
+    return session
+
+
 def end_session(db: Session, session: WorkoutSession) -> WorkoutSession:
     ended_at = _now()
     started_at = session.started_at or ended_at

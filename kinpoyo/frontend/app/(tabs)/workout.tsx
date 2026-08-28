@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -30,7 +29,6 @@ import { fetchRepModel } from '@/services/exercises';
 import {
   SessionExerciseOut,
   WorkoutSessionOut,
-  cancelWorkout,
   endWorkout,
   fetchWorkoutsByDate,
   generateWorkoutReport,
@@ -70,10 +68,11 @@ export default function WorkoutScreen() {
     setLoadError(null);
     try {
       const sessions = await fetchWorkoutsByDate(token, toIsoDate(today));
-      // 終了済み（completed）のセッションは「今日のメニュー」としては表示しない
-      // （終了後にまた同じ画面を開くと「予定済みのセッションのみ開始できます」エラーに
-      // なっていたバグの修正。終了したら今日の画面はまっさらに戻る）。
-      setTodaySessions(sessions.filter(s => s.status_code !== 'cancelled' && s.status_code !== 'completed'));
+      // 取り消し済みだけ除く。完了済みは**残す**——1日1メニュー制にしたので、
+      // その日が終わっていることを画面で示し、リザルトへ導く必要がある
+      // （2026-08-28。以前は完了済みも除いていたため、終了後に画面がまっさらに
+      // 戻って同じ日にもう一度登録できてしまっていた）。
+      setTodaySessions(sessions.filter(s => s.status_code !== 'cancelled'));
     } catch (e) {
       setLoadError(e instanceof ApiError ? e.detail : '読み込みに失敗しました');
     } finally {
@@ -102,6 +101,9 @@ export default function WorkoutScreen() {
 
   const hasWorkout = todayExercises.length > 0;
   const activeSession = todaySessions[0] ?? null;
+  // 1日1メニュー制。その日のセッションが完了していたら、新しく登録も開始もさせず
+  // リザルトだけを見せる（同じ日に2回やるユースケースは想定していない）。
+  const todayCompleted = activeSession?.status_code === 'completed';
 
   // ── 「筋トレを終了する」ボタンは全セット終わってから ─────
   // AI回数カウント対応種目（AIレビュー用のcalibrated modelがある種目）は
@@ -150,7 +152,6 @@ export default function WorkoutScreen() {
   const [isLifecycleBusy, setIsLifecycleBusy] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [aiNotice, setAiNotice] = useState<string | null>(null);
-  const [cancelModalVisible, setCancelModalVisible] = useState(false);
 
   const goToAiExerciseOrNotice = async (session: WorkoutSessionOut) => {
     // AI回数カウント：較正済みの種目があればカメラ計測画面へ、無ければ未登録の旨を表示。
@@ -159,14 +160,12 @@ export default function WorkoutScreen() {
     try {
       const aiExercise = await findAiReadyExercise(session.exercises);
       if (aiExercise) {
+        // 計測画面がセッションを読んで、較正済み種目を**全て**順に回す。
+        // 以前は最初の1種目だけを渡していたが、2種目目以降が計測されない制約に
+        // なっていた（AGENTS.md の既知制約）。渡すのは sessionId だけでよい。
         router.push({
-          pathname: '/(screens)/workout-camera',
-          params: {
-            exerciseId: String(aiExercise.exercise_id),
-            exerciseName: aiExercise.exercise_name,
-            sessionId: String(session.id),
-            sessionExerciseId: String(aiExercise.id),
-          },
+          pathname: '/(screens)/workout-camera-live',
+          params: { sessionId: String(session.id) },
         });
       } else {
         setAiNotice('AI回数カウントに対応した種目はまだ登録されていません');
@@ -224,21 +223,6 @@ export default function WorkoutScreen() {
     }
   };
 
-  const handleCancel = async () => {
-    if (!activeSession) return;
-    setCancelModalVisible(false);
-    setLifecycleError(null);
-    setIsLifecycleBusy(true);
-    try {
-      await cancelWorkout(token, activeSession.id);
-      await loadToday();
-    } catch (e) {
-      setLifecycleError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
-    } finally {
-      setIsLifecycleBusy(false);
-    }
-  };
-
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* ── ヘッダー ───────────────────────────── */}
@@ -258,6 +242,36 @@ export default function WorkoutScreen() {
             <TouchableOpacity style={styles.retryBtn} onPress={loadToday}>
               <Text style={styles.retryBtnText}>再読み込み</Text>
             </TouchableOpacity>
+          </View>
+        ) : todayCompleted ? (
+          /* ── 1日1メニュー制：その日はもう終わっているのでリザルトを見せる ── */
+          <View style={styles.programCard}>
+            <Text style={styles.programCardTitle}>{dateLabel}の記録</Text>
+            <Text style={styles.doneBadge}>完了しました</Text>
+            {todayExercises.map(ex => {
+              const recorded = ex.sets.filter(st => st.ai_counted_reps !== null);
+              const totalReps = recorded.reduce((sum, st) => sum + (st.ai_counted_reps ?? 0), 0);
+              return (
+                <View key={ex.id} style={styles.exerciseRow}>
+                  <Text style={styles.exerciseName} numberOfLines={1}>• {ex.exercise_name}</Text>
+                  <Text style={styles.exerciseDetails}>
+                    {recorded.length}セット / 合計{totalReps}回
+                  </Text>
+                </View>
+              );
+            })}
+            <TouchableOpacity
+              style={styles.registerBtn}
+              activeOpacity={0.85}
+              onPress={() => router.push({
+                pathname: '/(screens)/workout-finish',
+                params: { sessionId: String(activeSession?.id ?? '') },
+              })}>
+              <Text style={styles.registerBtnText}>リザルトを見る</Text>
+            </TouchableOpacity>
+            <Text style={styles.emptySubtitle}>
+              1日1メニューまでです。次のメニューは明日から登録できます。
+            </Text>
           </View>
         ) : hasWorkout ? (
           <>
@@ -307,7 +321,7 @@ export default function WorkoutScreen() {
       </ScrollView>
 
       {/* ── 開始/終了ボタン（登録がある時のみ） ─────── */}
-      {hasWorkout && activeSession?.status_code !== 'in_progress' && (
+      {hasWorkout && !todayCompleted && activeSession?.status_code !== 'in_progress' && (
         <View style={styles.bottomBar}>
           <TouchableOpacity
             style={[styles.startBtn, isLifecycleBusy && styles.startBtnDisabled]}
@@ -323,33 +337,10 @@ export default function WorkoutScreen() {
               </>
             )}
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.cancelBtn}
-            activeOpacity={0.7}
-            disabled={isLifecycleBusy}
-            onPress={() => setCancelModalVisible(true)}>
-            <Text style={styles.cancelBtnText}>この筋トレをキャンセル</Text>
-          </TouchableOpacity>
         </View>
       )}
-      {hasWorkout && activeSession?.status_code === 'in_progress' && !workoutAllDone && (
-        <View style={styles.bottomBar}>
-          <TouchableOpacity
-            style={[styles.startBtn, isLifecycleBusy && styles.startBtnDisabled]}
-            activeOpacity={0.85}
-            disabled={isLifecycleBusy}
-            onPress={handleStart}>
-            {isLifecycleBusy ? (
-              <ActivityIndicator color={Colors.textOnPrimary} />
-            ) : (
-              <>
-                <IconSymbol name="dumbbell.fill" size={22} color={Colors.textOnPrimary} />
-                <Text style={styles.startBtnText}>筋トレを再開する</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
-      )}
+      {/* 「筋トレを再開する」は廃止（2026-08-28）。計測画面が全セットを通しで回すように
+          なったため、途中から再開するという状態が存在しない。中断した場合はやり直し。 */}
       {hasWorkout && activeSession?.status_code === 'in_progress' && workoutAllDone && (
         <View style={styles.bottomBar}>
           <TouchableOpacity
@@ -366,35 +357,6 @@ export default function WorkoutScreen() {
         </View>
       )}
 
-      {/* ── 筋トレキャンセル確認モーダル ─────────── */}
-      <Modal
-        visible={cancelModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCancelModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalDialog}>
-            <Text style={styles.modalTitle}>筋トレをキャンセルしますか？</Text>
-            <Text style={styles.modalBody}>
-              今日のトレーニングメニューの登録がキャンセルされます。この操作は取り消せません。
-            </Text>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.modalCancelBtn}
-                activeOpacity={0.7}
-                onPress={() => setCancelModalVisible(false)}>
-                <Text style={styles.modalCancelBtnText}>戻る</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.modalConfirmBtn}
-                activeOpacity={0.85}
-                onPress={handleCancel}>
-                <Text style={styles.modalConfirmBtnText}>キャンセルする</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       <NotificationsModal visible={showNotifModal} onClose={() => setShowNotifModal(false)} />
     </SafeAreaView>
@@ -434,6 +396,12 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.semibold,
     color: Colors.textPrimary,
     textAlign: 'center',
+  },
+  doneBadge: {
+    alignSelf: 'flex-start', backgroundColor: Colors.primarySubtle,
+    color: Colors.primaryDark, fontSize: FontSize.sm, fontWeight: FontWeight.bold,
+    paddingHorizontal: Space[3], paddingVertical: Space[1], borderRadius: Radius.md,
+    overflow: 'hidden',
   },
   emptySubtitle: {
     fontSize: FontSize.sm,
@@ -561,63 +529,6 @@ const styles = StyleSheet.create({
     color: Colors.textOnPrimary,
     letterSpacing: 0.5,
   },
-  cancelBtn: {
-    alignItems: 'center',
-    paddingVertical: Space[3],
-  },
-  cancelBtnText: {
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.semibold,
-    color: Colors.error,
-  },
 
   // ── キャンセル確認モーダル
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: Colors.bgOverlay,
-    paddingHorizontal: Space[5],
-  },
-  modalDialog: {
-    backgroundColor: Colors.bgCard,
-    borderRadius: Radius.xl,
-    width: '100%',
-    padding: Space[5],
-    gap: Space[2],
-    ...Shadow.md,
-  },
-  modalTitle: {
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
-  },
-  modalBody: {
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    marginBottom: Space[2],
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: Space[3],
-  },
-  modalCancelBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Space[3],
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  modalCancelBtnText: { color: Colors.textPrimary, fontWeight: FontWeight.bold },
-  modalConfirmBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Space[3],
-    borderRadius: Radius.md,
-    backgroundColor: Colors.error,
-  },
-  modalConfirmBtnText: { color: Colors.textOnPrimary, fontWeight: FontWeight.bold },
 });

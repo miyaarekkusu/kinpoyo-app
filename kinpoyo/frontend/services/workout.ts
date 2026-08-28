@@ -169,6 +169,11 @@ export type WorkoutSessionReportOut = {
   model_version: string;
   generated_at: string;
 };
+// 計測を途中で中断したときに「予定済み」へ戻す（＝最初からやり直せる状態）。
+// キャンセル（メニューごと取り消し）とも終了とも違う。計測結果もクリアされる。
+export function abortWorkout(token: string | null, sessionId: number): Promise<WorkoutSessionOut> {
+  return apiFetch<WorkoutSessionOut>(`/workouts/${sessionId}/abort`, { method: 'POST', token });
+}
 export function generateWorkoutReport(token: string | null, sessionId: number): Promise<WorkoutSessionReportOut> {
   return apiFetch<WorkoutSessionReportOut>(`/workouts/${sessionId}/generate-report`, {
     method: 'POST',

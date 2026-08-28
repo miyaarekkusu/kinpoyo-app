@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.core.uploads import UPLOAD_ROOT
-from app.routers import auth, community, exercises, programs, records, users, workout_templates, workouts
+from app.routers import auth, community, exercises, exercises_ws, programs, records, users, workout_templates, workouts
 
 # Windowsのコンソールはデフォルトでcp1252などのコードページを使うため、
 # count-repsのログ（日本語の関節名など）を print() すると UnicodeEncodeError で
@@ -27,6 +27,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(exercises.router)
+app.include_router(exercises_ws.router)
 app.include_router(workouts.router)
 app.include_router(records.router)
 app.include_router(programs.router)

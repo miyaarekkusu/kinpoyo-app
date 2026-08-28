@@ -40,7 +40,8 @@ export default function EvenProgramScreen() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const data = await fetchExercises();
+      // 紐づけ済み（AI回数カウントの較正済みモデルがある）種目だけを出す。
+      const data = await fetchExercises(true);
       setAllExercises(data);
     } catch (e) {
       setLoadError(e instanceof ApiError ? e.detail : '種目一覧の取得に失敗しました');
@@ -204,7 +205,8 @@ export default function EvenProgramScreen() {
               ) : (
                 <View style={styles.emptyCard}>
                   <Text style={styles.emptyText}>
-                    「{selectedPart}」の種目データがありません。他の部位を選択してください。
+                    「{selectedPart}」で選べる種目がありません。AI回数カウントの較正済み
+                    モデルが紐づいた種目のみ選択できます。他の部位を選択してください。
                   </Text>
                 </View>
               )}
