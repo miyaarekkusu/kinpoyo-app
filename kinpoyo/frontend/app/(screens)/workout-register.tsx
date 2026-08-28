@@ -127,6 +127,23 @@ export default function WorkoutRegisterScreen() {
     setSessionExercises(prev => prev.filter(se => se.key !== key));
   };
 
+  // 種目選択モーダルでの選択解除用（2026-08-28追加）。ピッカー側はexercise.idしか
+  // 持たないため、内部キーではなくexercise.idで直接絞り込む。
+  const removeExerciseByExerciseId = (exerciseId: number) => {
+    setSessionExercises(prev => prev.filter(se => se.exercise.id !== exerciseId));
+  };
+
+  // 種目の並び替え（2026-08-24追加）。上下ボタンで隣と入れ替えるシンプルな方式。
+  const moveExercise = (index: number, direction: -1 | 1) => {
+    setSessionExercises(prev => {
+      const target = index + direction;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
   const addSetItem = (exerciseKey: string) => {
     setSessionExercises(prev =>
       prev.map(se =>
@@ -189,12 +206,37 @@ export default function WorkoutRegisterScreen() {
 
   // ── 保存 ──────────────────────────────────────
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // 保存失敗時のエラー（サーバー通信の結果なので、その場では消えず次の保存
+  // 試行まで残る。以下のvalidationErrorとは別物）。
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  // 「保存」を一度でも押したかどうか。これがfalseの間はvalidationErrorがあっても
+  // 表示しない（入力し始める前から赤字が出るのを防ぐ、よくあるUXパターン）。
+  const [hasAttemptedSave, setHasAttemptedSave] = useState(false);
+
+  // 2026-08-28追加：フロントエンド側でリアルタイムに判定するバリデーション。
+  // sessionExercisesが変わるたびに再計算されるため、保存ボタンを押し直さなくても
+  // 直した瞬間にエラーが消える（ユーザー要望）。サーバーへの送信は行わない。
+  const validationError = useMemo(() => {
+    if (sessionExercises.length === 0) {
+      return '種目を1つ以上追加してください';
+    }
+    const missingRepsExercise = sessionExercises.find(se =>
+      se.items.some(item => item.type === 'set' && item.reps.trim() === '')
+    );
+    if (missingRepsExercise) {
+      return `「${missingRepsExercise.exercise.name}」にレップ数が未入力のセットがあります`;
+    }
+    return null;
+  }, [sessionExercises]);
+
+  // 表示するエラーは「保存を試みた後のバリデーションエラー」＞「直近の保存失敗」
+  // の優先順位。バリデーションが直ればvalidationErrorはnullになり自動的に消える。
+  const displayError = (hasAttemptedSave && validationError) || submitError;
 
   const handleSave = async () => {
-    setError(null);
-    if (sessionExercises.length === 0) {
-      setError('種目を1つ以上追加してください');
+    setSubmitError(null);
+    setHasAttemptedSave(true);
+    if (validationError) {
       return;
     }
     setIsSubmitting(true);
@@ -228,7 +270,7 @@ export default function WorkoutRegisterScreen() {
       });
       router.back();
     } catch (e) {
-      setError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
+      setSubmitError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
     } finally {
       setIsSubmitting(false);
     }
@@ -254,9 +296,6 @@ export default function WorkoutRegisterScreen() {
             <IconSymbol name="calendar" size={18} color={Colors.primaryDark} />
             <Text style={styles.dateCardText}>{dateLabel}</Text>
           </View>
-          <TouchableOpacity onPress={() => router.back()} hitSlop={8}>
-            <Text style={styles.changeBtnText}>変更</Text>
-          </TouchableOpacity>
         </View>
 
         {/* ── 種目一覧 ───────────────────────── */}
@@ -267,7 +306,7 @@ export default function WorkoutRegisterScreen() {
             <Text style={styles.emptySubtitle}>下のボタンから種目を追加しましょう</Text>
           </View>
         ) : (
-          sessionExercises.map(se => (
+          sessionExercises.map((se, exIndex) => (
             <View key={se.key} style={styles.exerciseCard}>
               <View style={styles.exerciseCardHeader}>
                 <View style={styles.exerciseCardHeaderLeft}>
@@ -279,9 +318,27 @@ export default function WorkoutRegisterScreen() {
                     <Text style={styles.muscleBadgeText}>{se.exercise.muscle}</Text>
                   </View>
                 </View>
-                <TouchableOpacity onPress={() => removeExercise(se.key)} hitSlop={8}>
-                  <IconSymbol name="trash" size={18} color={Colors.error} />
-                </TouchableOpacity>
+                <View style={styles.exerciseCardHeaderRight}>
+                  <View style={styles.moveBtnGroup}>
+                    <TouchableOpacity
+                      onPress={() => moveExercise(exIndex, -1)}
+                      disabled={exIndex === 0}
+                      hitSlop={8}
+                      style={exIndex === 0 && styles.moveBtnDisabled}>
+                      <IconSymbol name="chevron.up" size={18} color={Colors.textHint} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => moveExercise(exIndex, 1)}
+                      disabled={exIndex === sessionExercises.length - 1}
+                      hitSlop={8}
+                      style={exIndex === sessionExercises.length - 1 && styles.moveBtnDisabled}>
+                      <IconSymbol name="chevron.down" size={18} color={Colors.textHint} />
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity onPress={() => removeExercise(se.key)} hitSlop={8}>
+                    <IconSymbol name="trash" size={18} color={Colors.error} />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               <View style={styles.setTableHeader}>
@@ -309,11 +366,11 @@ export default function WorkoutRegisterScreen() {
                         />
                         <TextInput
                           style={[styles.setInput, styles.setColInput]}
-                          keyboardType="numeric"
+                          keyboardType="number-pad"
                           placeholder="0"
                           placeholderTextColor={Colors.textHint}
                           value={item.reps}
-                          onChangeText={v => updateSetField(se.key, item.key, 'reps', v)}
+                          onChangeText={v => updateSetField(se.key, item.key, 'reps', v.replace(/[^0-9]/g, ''))}
                         />
                         <TouchableOpacity
                           style={styles.setColAction}
@@ -330,20 +387,20 @@ export default function WorkoutRegisterScreen() {
                       <Text style={styles.restLabel}>休憩</Text>
                       <TextInput
                         style={styles.restInput}
-                        keyboardType="numeric"
+                        keyboardType="number-pad"
                         placeholder="0"
                         placeholderTextColor={Colors.textHint}
                         value={item.minutes}
-                        onChangeText={v => updateRestField(se.key, item.key, 'minutes', v)}
+                        onChangeText={v => updateRestField(se.key, item.key, 'minutes', v.replace(/[^0-9]/g, ''))}
                       />
                       <Text style={styles.restUnitLabel}>分</Text>
                       <TextInput
                         style={styles.restInput}
-                        keyboardType="numeric"
+                        keyboardType="number-pad"
                         placeholder="0"
                         placeholderTextColor={Colors.textHint}
                         value={item.seconds}
-                        onChangeText={v => updateRestField(se.key, item.key, 'seconds', v)}
+                        onChangeText={v => updateRestField(se.key, item.key, 'seconds', v.replace(/[^0-9]/g, ''))}
                       />
                       <Text style={styles.restUnitLabel}>秒</Text>
                       <TouchableOpacity
@@ -383,9 +440,9 @@ export default function WorkoutRegisterScreen() {
 
       {/* ── 保存パネル ─────────────────────────── */}
       <View style={styles.bottomPanel}>
-        {error && (
+        {displayError && (
           <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{error}</Text>
+            <Text style={styles.errorText}>{displayError}</Text>
           </View>
         )}
         <TouchableOpacity
@@ -483,15 +540,20 @@ export default function WorkoutRegisterScreen() {
                 return (
                   <TouchableOpacity
                     key={ex.id}
-                    style={styles.exerciseListItem}
-                    disabled={added}
-                    onPress={() => addExercise(ex)}
+                    style={[styles.exerciseListItem, added && styles.exerciseListItemSelected]}
+                    onPress={() => (added ? removeExerciseByExerciseId(ex.id) : addExercise(ex))}
                     activeOpacity={0.7}>
                     <View style={styles.exerciseListItemLeft}>
                       {ex.muscle_color && (
                         <View style={[styles.muscleDot, { backgroundColor: ex.muscle_color }]} />
                       )}
-                      <Text style={styles.exerciseListItemName}>{ex.name}</Text>
+                      <Text
+                        style={[
+                          styles.exerciseListItemName,
+                          added && styles.exerciseListItemNameSelected,
+                        ]}>
+                        {ex.name}
+                      </Text>
                       <View style={styles.muscleBadge}>
                         <Text style={styles.muscleBadgeText}>{ex.muscle}</Text>
                       </View>
@@ -548,7 +610,6 @@ const styles = StyleSheet.create({
   },
   dateCardLeft: { flexDirection: 'row', alignItems: 'center', gap: Space[2] },
   dateCardText: { fontSize: FontSize.base, fontWeight: FontWeight.semibold, color: Colors.textPrimary },
-  changeBtnText: { fontSize: FontSize.sm, fontWeight: FontWeight.medium, color: Colors.textLink },
   emptyCard: {
     backgroundColor: Colors.bgCard,
     borderRadius: Radius.lg,
@@ -579,6 +640,9 @@ const styles = StyleSheet.create({
     marginBottom: Space[3],
   },
   exerciseCardHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: Space[2], flexShrink: 1 },
+  exerciseCardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: Space[5] },
+  moveBtnGroup: { flexDirection: 'row', alignItems: 'center', gap: Space[3] },
+  moveBtnDisabled: { opacity: 0.3 },
   muscleDot: { width: 8, height: 8, borderRadius: 4 },
   exerciseName: { fontSize: FontSize.base, fontWeight: FontWeight.semibold, color: Colors.textPrimary },
   muscleBadge: {
@@ -697,7 +761,7 @@ const styles = StyleSheet.create({
     paddingVertical: Space[3],
     paddingHorizontal: Space[4],
   },
-  errorText: { fontSize: FontSize.sm, color: Colors.error },
+  errorText: { fontSize: FontSize.sm, color: Colors.error, textAlign: 'center' },
   saveBtn: {
     height: Layout.buttonHeightLg,
     borderRadius: Radius.md,
@@ -744,16 +808,29 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primaryDark,
   },
   retryBtnText: { color: Colors.textOnPrimary, fontSize: FontSize.sm, fontWeight: FontWeight.bold },
-  exerciseListContent: { paddingHorizontal: Layout.screenPaddingH, paddingVertical: Space[3] },
+  exerciseListContent: {
+    paddingHorizontal: Layout.screenPaddingH,
+    paddingVertical: Space[3],
+    gap: Space[1],
+  },
   exerciseListItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: Space[3],
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.divider,
+    paddingHorizontal: Space[2],
+    borderRadius: Radius.md,
+  },
+  // 2026-08-28追加：選択済みかどうかがアイコンの違い（+/✓）だけでは分かりづらい
+  // という指摘への対策。フィルターチップの選択中スタイル（chipActive）と同じ
+  // 見た目（背景色＋枠線＋太字）に揃え、行全体で選択状態が一目で分かるようにした。
+  exerciseListItemSelected: {
+    backgroundColor: Colors.primarySubtle,
+    borderWidth: 1,
+    borderColor: Colors.primary,
   },
   exerciseListItemLeft: { flexDirection: 'row', alignItems: 'center', gap: Space[2], flexShrink: 1 },
   exerciseListItemName: { fontSize: FontSize.base, color: Colors.textPrimary, fontWeight: FontWeight.medium },
+  exerciseListItemNameSelected: { color: Colors.primaryDark, fontWeight: FontWeight.bold },
   noResultText: { textAlign: 'center', color: Colors.textHint, fontSize: FontSize.sm, marginTop: Space[6] },
 });

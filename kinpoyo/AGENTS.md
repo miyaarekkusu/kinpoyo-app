@@ -56,6 +56,169 @@
 
 ---
 
+## 修正予定タスク（2026-08-28、ユーザー指摘・未着手）
+
+> **⚠️ 以下はまだ着手していないTODOリスト。実装済みの内容と混同しないこと。**
+> 着手したら、このセクションから該当項目を削除し、対応する画面の実装状況・
+> セクションに反映すること。
+
+### ~~ログイン画面~~（`frontend/app/(auth)/login.tsx`、2026-08-28対応済み）
+
+- [x] kinpoyoのロゴを表示する → タイトル「ログイン」の上に`kinpoyo`ワードマーク
+      （`FontSize['3xl']`・`Colors.primaryDark`、`AppHeader`のブランド文字と同系統の
+      スタイル）を追加。画像アセットは無いため、他画面と同じテキストロゴ方式を踏襲
+- [x] Apple/Googleログインボタンを削除 → `onPress`が無い純粋なモックだったため、
+      ボタン本体と「または」の区切り線、関連スタイル（`dividerRow`/`socialBtn`等）・
+      未使用になった`FontAwesome`importを削除
+- `tsc --noEmit`通過済み
+- **追記（同日、レイアウト再修正）**：最初に`justifyContent: 'center'`で全体を
+  中央寄せしたが、「ちょっと違う」とフィードバックがあり、選択肢を提示して
+  「上下に要素を分散」案を採用。**ロゴ＝画面上部固定・フォーム本体＝中央付近・
+  アカウント切替リンク＝画面下部固定**という3ブロック構成に変更：
+  - `switchRow`（新規登録/ログインへのリンク）を`form`の中から出し、ロゴ・
+    フォームと同階層の兄弟要素にした
+  - `scroll`のスタイルを`justifyContent: 'center'` → `'space-between'`に変更
+    （3ブロックが等間隔で上下に配置され、結果的に中央のフォームが画面中央
+    付近に来る）
+  - login.tsx・signup.tsx両方に同じ構造を適用（見た目を統一する方針は継続）
+- **追記（同日）**：ロゴをもっと大きくとの要望で、`fontSize`を`FontSize['3xl']`
+  （34、テーマの最大トークン）から**48**に変更（トークンの範囲を超えるため
+  直接数値指定。login.tsx・signup.tsx両方）
+- **追記（同日、キーボード対策）**：「キーボードが出ると画面全体が持ち上がって
+  窮屈」という相談に対し、3つのパターン（①何もしない、②キーボード表示時に
+  ロゴを縮小、③上下固定＋フォームのみスクロール）を提示し、②を採用して実装：
+  - `Keyboard.addListener`（iOSは`keyboardWillShow`/`Hide`、Androidは
+    `keyboardDidShow`/`Hide`）でキーボードの表示・非表示を検知し、
+    `Animated.Value`（0〜1）を200msでアニメーションさせる
+  - ロゴを`Text`から`Animated.Text`に変更し、`fontSize`を48→26、`opacity`を
+    1→0.7へ補間。`fontSize`のアニメーションは`useNativeDriver: false`が必須
+    （ネイティブドライバは`transform`/`opacity`のみ対応のため）
+  - login.tsx・signup.tsx両方に同じ実装を適用
+
+### ~~身体情報入力画面~~（オンボーディング：`frontend/app/(onboarding)/height.tsx`・
+`weight.tsx`、2026-08-28対応済み）
+
+- [x] 身長のft説明文 → `unit === 'ft'`の時だけ、単位トグルの下に
+      「ft = フィート・インチ表記（例: 5'9" ＝ 5フィート9インチ）」を表示
+- [x] 体重UIの目盛り/表示値ズレ → **原因判明**：`contentContainerStyle`の
+      `paddingHorizontal`が画面端の固定余白（`Layout.screenPaddingH`）に
+      なっており、目盛りを中央線に正しく揃えるのに必要な「ルーラー表示幅の
+      半分 − アイテム幅の半分」になっていなかった。height.tsx（縦方向 piker）の
+      `SIDE_PADDING = VIEWPORT_HEIGHT/2 - ITEM_HEIGHT/2`と同じ考え方に揃えて
+      修正（`useWindowDimensions()`でルーラー幅を取得し動的に算出）。
+      `handleScroll`側の計算式は変更不要（パディングを正しくすれば辻褄が合う）
+- `tsc --noEmit`通過済み
+
+### 筋トレメニュー登録画面（`frontend/app/(screens)/workout-register.tsx`、
+2026-08-28一部対応。確定ボタンのみ未解決で残っている）
+
+調査の結果、実際に「種目を追加するUI」（種目選択モーダル）を持つのは
+`workout-register.tsx`と`workout-template-edit.tsx`のみと判明（`program_choice.tsx`は
+前の画面から渡された種目リストを編集するだけで、種目選択UI自体は持たない）。今回は
+指示通り`workout-register.tsx`のみ対応。`workout-template-edit.tsx`は全く同じ実装
+パターン（同じ問題）を抱えているが、今回のスコープ外として未対応のまま。
+
+- [x] 種目選択の視認性・解除 → 選択済み行に`Colors.primarySubtle`背景＋
+      `Colors.primary`枠線＋太字（フィルターチップの`chipActive`と同じ視覚言語に
+      揃えた）。`disabled={added}`を廃止し、選択済み行タップで解除
+      （`removeExerciseByExerciseId`新設。確認ダイアログ無し＝メインカードの
+      削除ボタンと同じ挙動に合わせた）
+- [ ] レップ数入力の確定ボタン → **未解決**。3案（`InputAccessoryView`・
+      Keyboardイベント自前バー・自作数値キーパッド）を試したがいずれも不採用
+      （詳細は本セクション末尾の追記参照）
+- [x] レップ数の小数点禁止 → `keyboardType`を`"numeric"`（小数点あり）から
+      `"number-pad"`（整数のみ）に変更。ペースト対策で`onChangeText`側でも
+      `[^0-9]`を除去。休憩の分/秒も同様に整数化
+- [x] 種目の並び替え → ドラッグ&ドロップ用ライブラリを新規追加せず、各種目
+      カードのヘッダーに▲▼ボタンを追加し、隣接要素と入れ替える方式で実装
+      （`moveExercise`。`chevron.up`/`chevron.down`を`icon-symbol.tsx`の
+      MAPPINGに追加）
+- [x] レップ数未入力での保存禁止 → `handleSave`内でセット配列を`reps`未入力
+      チェックし、該当種目名を添えたエラーメッセージで保存をブロック
+- `tsc --noEmit`通過済み
+- **追記（同日、バグ修正）**：選択済み行の枠線が下辺だけ緑にならない不具合を
+  報告あり。原因はReact Nativeのスタイル上書きの仕様——`exerciseListItem`が
+  `borderBottomColor: Colors.divider`を個別指定しており、選択スタイルの
+  `borderColor`（一括指定）は上下左右まとめて指定するが、**個別指定の方が
+  優先される**ため下辺だけ灰色のまま残っていた。`exerciseListItemSelected`に
+  `borderBottomColor: Colors.primary`を追加して明示的に上書きして解決
+- **追記（同日、間隔調整）**：「種目の間に小さいスペースが欲しい」との要望で
+  `exerciseListContent`に`gap: Space[1]`を追加。これに伴い、ベースの
+  `exerciseListItem`が持っていた`borderBottomWidth`/`borderBottomColor`
+  （行間の区切り線）は、gap導入後は冗長（角丸＋余白で既に区切られている）に
+  なったため削除し、上記の枠線バグ修正で追加していた`borderBottomColor`の
+  明示的な上書きも不要になったため合わせて削除（今は`borderWidth`/
+  `borderColor`の一括指定だけで四辺とも正しく緑になる）
+- **追記（同日、確定ボタンが実機で出ないとの報告）**：`InputAccessoryView`
+  （iOS専用API）で実装した「完了」ボタンが実機で表示されないと報告があった。
+  RN/Expoでは環境・バージョン次第で`InputAccessoryView`が効かないことがある
+  既知の不安定さがあるため、**Keyboardイベントで実装する自前方式に切り替えた**：
+  - `Keyboard.addListener('keyboardDidShow'/'keyboardDidHide', ...)`で
+    キーボードの高さ（`e.endCoordinates.height`）を`keyboardHeight` stateに保持
+  - `keyboardHeight > 0`の間だけ、`position: 'absolute', bottom: keyboardHeight`
+    で画面下部・キーボードのすぐ上に「完了」ボタンのバーを重ねて表示
+  - `InputAccessoryView`・`NUMERIC_ACCESSORY_ID`・各TextInputの
+    `inputAccessoryViewID`は全て削除
+  - **副次的な利点**：`keyboardDidShow`/`Hide`はiOS/Android両対応のイベントの
+    ため、`Platform.OS === 'ios'`分岐が不要になり、**Androidでも同時に効くように
+    なった**（従来はiOS専用でAndroidは未対応のままだった）
+  - `tsc --noEmit`通過済み。実機再検証はこれから
+- **追記（同日、確定ボタン機能を撤回）**：自前実装（Keyboardイベント方式）も
+  ユーザーから「元の状態に戻してほしい」との指示があり撤回。`keyboardHeight`
+  state・`useEffect`・キーボードバーのJSX・`keyboardAccessory`/
+  `keyboardAccessoryDone`スタイル・`Keyboard`のimportを全て削除し、
+  reps/weight/rest欄は確定ボタン機能追加前の状態（`keyboardType`のみ、
+  small改善: number-padでの整数化はこの回答の対象外なので維持）に戻した。
+  **「確定ボタンが分かりづらい」というTODO項目自体は未解決のまま残っている**
+  （再挑戦する場合は別アプローチを検討すること）
+
+- **追記（同日、自作キーパッドを試すも撤回）**：ユーザーから「キーボード自体
+  （左下の空きスペース）にボタンを入れられないか」という相談があり、**iOSの
+  システムキーボード内部にはアプリ側から一切手を入れられない**（Apple非公開
+  領域）ことを説明。唯一の方法として「システムキーボードを諦めて自作の数値
+  キーパッドに置き換える」案を提示・承認を得て実装（`ActiveField`型・
+  `showSoftInputOnFocus={false}`・電卓配置の自作キーパッド・「確定」ボタン）
+  したが、**実機で試した結果「前の状態が良かった」とのことで撤回**。
+  `ActiveField`型・`activeField` state・`getActiveValue`/`setActiveValue`/
+  `handleKeypadPress`・キーパッドのJSX・`keypad`系スタイル・
+  `icon-symbol.tsx`の`delete.left`マッピングを全て削除し、4つのTextInputは
+  `keyboardType`（weight="numeric"、reps/分/秒="number-pad"）＋整数化の
+  `onChangeText`サニタイズのみの状態（確定ボタン撤回時点の状態）に戻した。
+  **「確定ボタンが分かりづらい」というTODO項目は再び未解決**。今後同じ方向で
+  再挑戦する場合は、今回の2案（キーボードイベント方式・自作キーパッド方式）
+  がどちらも不採用だったことを踏まえること
+  - `tsc --noEmit`通過済み
+
+- **追記（同日、並び替えの再実装）**：上下ボタン方式から`react-native-draggable-flatlist`
+  を使った長押しドラッグ並び替えに変更済み（`renderExerciseCard`・
+  `DraggableFlatList`・ハンドルアイコン`line.3.horizontal`を`icon-symbol.tsx`に
+  追加）。ハンドルアイコンだけを長押し起点にし、TextInputや他のボタンと
+  ジェスチャーが競合しないようにしている
+
+- **追記（同日、バリデーションのリアルタイム化）**：「レップ数未入力」等のエラー
+  表示を、保存ボタンを押した時だけの判定から**リアルタイム判定**に変更
+  （ユーザー要望：「直したらすぐエラーが消えるように」）：
+  - `validationError`を`useMemo(() => ..., [sessionExercises])`で算出する
+    ように変更。フロントエンド側だけの判定でサーバー送信は行わない
+  - `hasAttemptedSave`（一度でも保存を押したか）を導入し、これが`false`の間は
+    `validationError`があっても表示しない（未入力のまま何も操作していない
+    状態からいきなり赤字が出るのを防ぐ、一般的なUXパターン）
+  - 保存失敗時のエラー（サーバー通信エラー）は`submitError`として分離。
+    これはリアルタイムには消えない（次の保存試行まで残る、通信結果のため）
+  - 表示は`displayError = (hasAttemptedSave && validationError) || submitError`
+    の優先順位。`sessionExercises`を直すと`validationError`が自動的に`null`に
+    なり、保存ボタンを押し直さなくても即座にエラーが消える
+  - `tsc --noEmit`通過済み
+### 筋トレメニュー編集画面（`frontend/app/(screens)/program/program_choice.tsx`、
+編集モード。`(tabs)/workout.tsx`の`handleEditMenu`から`mode: 'edit'`で遷移）
+
+- [ ] **画面自体を削除し、筋トレメニュー登録画面に統合する**。理由：編集画面は登録画面と
+      本質的に同じ機能なのにUIが異なり、かつ編集画面では種目の新規追加ができないため、
+      UIが違うこと自体がユーザーにとって使いづらさの原因になっている。登録画面のUIに
+      一本化し、新規登録・既存編集の両方を同じ画面・同じ挙動で扱えるようにする
+
+---
+
 ## プロジェクト概要
 
 | 項目               | 内容                    |
@@ -266,8 +429,8 @@ kinpoyo/
 
 | 画面                   | ファイル                               | 状態                    | 備考                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ---------------------- | -------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ログイン               | `(auth)/login.tsx`                     | ✅ 実装済み（モック）   | メール/パスワード入力・パスワード表示切替・パスワードを忘れたリンク・Apple/Googleログインボタン・新規登録リンク（→ /signup）・アプリ起動時の最初の画面                                                                                                                                                                                                                                                                                                                                                  |
-| 新規登録               | `(auth)/signup.tsx`                    | ✅ 実装済み（モック）   | ニックネーム/メール/パスワード入力・パスワード表示切替・Apple/Googleログインボタン・ログインリンク（→ /login）                                                                                                                                                                                                                                                                                                                                                                                          |
+| ログイン               | `(auth)/login.tsx`                     | ✅ 実装済み（モック）   | kinpoyoロゴ・メール/パスワード入力・パスワード表示切替・パスワードを忘れたリンク・新規登録リンク（→ /signup）・アプリ起動時の最初の画面。Apple/Googleログインボタンは未実装モックだったため2026-08-28に削除済み                                                                                                                                                                                                                                                  |
+| 新規登録               | `(auth)/signup.tsx`                    | ✅ 実装済み（モック）   | kinpoyoロゴ・ニックネーム/メール/パスワード入力・パスワード表示切替・ログインリンク（→ /login）。ログイン画面と同じ見た目に統一（中央配置）。Apple/Googleログインボタンは未実装モックだったため2026-08-28に削除済み                                                                                                                                                                                                                                                                                                                                                                                          |
 | パスワードを忘れた     | `(auth)/forgot-password.tsx`           | ✅ 実装済み（モック）   | メールアドレス入力→Reset Password（入力で活性化）                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 確認コード入力         | `(auth)/verify-code.tsx`               | ✅ 実装済み（モック）   | 5桁コード入力ボックス（自動フォーカス送り）・Resend email                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | パスワードリセット完了 | `(auth)/reset-complete.tsx`            | ✅ 実装済み（モック）   | 完了メッセージ・Confirmボタン                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -704,6 +867,208 @@ AI回数カウント（バッチ版）の計測結果をもとに、DeepSeek API
 > 本番ユーザーデータが無い開発段階のため、古い形式の行の`rep_cycles_json`をNULLに
 > クリアして対応した。今後この種のJSONB保存スキーマを変更する際は、既存行への影響
 > （必要ならデータマイグレーション、または後方互換のデフォルト値）を先に検討すること。
+
+### 妥当性ゲートの復活（2026-08-28、腕立て伏せモデル追加時に発覚・対応）
+
+model-studioで新規に「腕立て（アレックス）」モデルを作成し（`monitored_joints`を
+`右肘`/`左肘`のみに限定して較正、mae=0.0・exact_match_rate=1.0）、kinpoyoへ
+`import_rep_model.py`で取り込んで実機テストしたところ、上記「棄却の廃止」の副作用が
+2つ具体的に見つかった：
+
+1. **姿勢準備の誤カウント**：腕立て伏せは録画開始→プランク姿勢を整える、という
+   準備動作が録画に含まれやすい。model-studio側の学習データは`start_time_sec`/
+   `end_time_sec`で範囲指定してトリミング済みだが、kinpoyo側の`count-reps`には
+   トリミング機構が無く、録画全体（準備動作込み）を解析するため、`low`/`high`
+   しきい値が準備動作の角度で歪んだり、準備動作自体が1レップとしてカウントされ
+   得ることが判明。**対応：まずはUI側で「準備を整えてから録画開始を押す」運用で
+   回避する方針**（アルゴリズム側の対応は保留）
+2. **「変な動き」が"良いフォーム"と判定される**：実機で明らかにフォームが崩れた
+   腕立て伏せを行ったところ`form_quality: "good"`と判定された。原因は
+   `count_with_template`の品質判定が**主役関節（肘）の角度カーブのみ**を見ており、
+   股関節・体幹の崩れ等は原理的に検出できないため（1関節ベースの軽量な閾値検出
+   というアーキテクチャ自体の限界）。さらに検証の結果、**腕立て伏せと無関係な
+   動きでも、肘が十分な振れ幅で一往復しさえすれば無条件にカウントされる**ことも
+   判明（棄却廃止の設計上、ROM・周期の緩い条件を満たせば形状・統計ゲートに
+   関わらずcounted=Trueになるため）。
+
+上記2番目（無関係な動きの誤カウント）への対応として、`app/core/rep_model.py`に
+**妥当性ゲート**（`_passes_validity_gate`）を追加した：
+
+- `cycle_stats`（品質ラベル用、±25°マージン）とは別に、さらに緩いマージン
+  （`_VALIDITY_GATE_EXTRA_MARGIN_DEG=40.0`・ROM倍率`(0.5, 2.0)`を`cycle_stats`の
+  レンジにさらに掛ける）で「そもそもこの種目の動きらしいか」だけを判定し、これに
+  外れる候補のみ`counted=False`にする（`info["invalid"]=True`も付与）
+- `cycle_stats`自体・`shape_threshold`は**品質ラベル（good/needs_improvement）
+  のみに使い続ける**（変更なし）。マージンを`cycle_stats`よりずっと広く取っている
+  のは、深さ・テンポが多少ズレた本物のレップまで棄却してしまった旧設計
+  （2026-08-24以前）の失敗を繰り返さないため——「明らかに別の動き」だけを弾く
+  最後の砦、という位置づけ
+- `app/routers/exercises.py`のデバッグprintも、`counted=False`の理由を
+  「カウント外(別動作の可能性)」／「カウント外(測定不能)」で区別するよう変更
+- 1番目（姿勢準備の誤カウント）は今回は未対応。UI側の運用回避で十分か、録画側の
+  トリミング機構が必要かは今後実機テストで判断する
+- `_VALIDITY_GATE_EXTRA_MARGIN_DEG`/`_VALIDITY_GATE_ROM_SCALE`は初期値であり、
+  実機での腕立て伏せ検証を通じてチューニングが必要になる可能性がある
+
+**追記（同日）**：角度帯・ROMのみの妥当性ゲートでは、腕立て伏せと無関係な
+「変な動き」が実機でまだ通過することを確認。腕の曲げ伸ばしを伴う動きは種目が
+違っても絶対角度・ROMが被りやすく、この2つだけでは判別力が弱いと判断。
+以下2点を追加変更：
+
+- マージンを縮小：`_VALIDITY_GATE_EXTRA_MARGIN_DEG` 40.0→**20.0**、
+  `_VALIDITY_GATE_ROM_SCALE` (0.5, 2.0)→**(0.6, 1.6)**
+- **形状テンプレート距離も妥当性ゲートに追加**（新定数
+  `_VALIDITY_GATE_SHAPE_MULTIPLIER=1.6`。品質判定の`shape_threshold`より
+  1.6倍緩い距離までは許容しつつ、それも超えたら棄却）。カーブの"形"は
+  種目間でより差が出やすいため、角度帯・ROMより強い判別力を期待している
+- これに伴い`count_with_template`内の距離計算（`template_distance`）を
+  品質判定ブロックから妥当性ゲート呼び出しの直前に移動し、1回の計算結果を
+  両方の判定で使い回すようリファクタ（`_passes_validity_gate`の引数に
+  `dist`/`shape_threshold`を追加）
+- 実機再検証はこれから（マージン値は依然として初期値であり、要調整の可能性あり）
+
+**再修正（同日）**：角度帯マージン・ROM倍率の縮小（20.0/(0.6,1.6)）により、今度は
+本物のレップまでカウントされなくなる逆方向の問題が実機で発生。**角度帯マージン・
+ROM倍率は元の40.0/(0.5,2.0)に戻した**。判別力の強化は形状テンプレート距離
+（`_VALIDITY_GATE_SHAPE_MULTIPLIER=1.6`、8/28に追加した分）側だけに委ねる方針に
+変更。角度帯・ROMは「明らかに別の動き」だけを弾く最後の砦という当初の位置づけに
+戻し、種目間の判別は形状（カーブの形）に任せる。実機再検証はこれから。
+
+### 姿勢ゲートの追加（2026-08-28、立ったままの誤カウント対策）
+
+上記の妥当性ゲート（角度帯・ROM・形状）を追加しても、**「立ったまま肘だけ曲げ
+伸ばしする」ような、プッシュアップと無関係な動きが実機でまだカウントされる**
+ことが判明。原因は肘の角度だけでは体全体の向き（立位かうつ伏せか）が分からない
+ため。これに対応する姿勢ゲートを新設した：
+
+- `app/core/pose_analysis.py`に`torso_orientation_deg`/`torso_orientation_series`
+  を追加（kinpoyo側のみ・model-studioには無い概念）。肩の中点→股関節中点の
+  ベクトルが垂直軸(y軸)から何度傾いているかを`pose_world_landmarks`から算出
+  （0°=垂直、90°=水平）
+- `app/core/rep_model.py`に`EXERCISE_POSTURE`（`exercise_id → "upright"|"prone"`
+  の対応表。現状`{17: "upright"（スクワット）, 4: "prone"（プッシュアップ）}`）
+  ・`_passes_posture_gate`（想定姿勢と実測の体幹の向きが大まかに合っているかの
+  粗いチェック、`_POSTURE_UPRIGHT_MAX_DEG=55.0`/`_POSTURE_PRONE_MIN_DEG=35.0`）
+  を追加。`count_with_template`に`torso_orientation`/`posture`引数を追加し、
+  角度帯・ROM・形状の妥当性ゲートと同じ扱い（外れたら`counted=False`・
+  `invalid=True`）で組み込んだ
+- `EXERCISE_POSTURE`はmodel-studioの`config_json`とは無関係の**kinpoyo側だけの
+  追加情報**（model-studio側の較正には姿勢の概念が無いため）。新しい種目を
+  追加する際は、この対応表に1行追加する必要がある（追加し忘れると姿勢チェック
+  はスキップされるだけで、エラーにはならない＝後方互換だが、対策が効かなくなる
+  点に注意）
+- **既知の限界**：`upright`/`prone`の2値だけでは、仰向け種目（ベンチプレス等、
+  体幹はproneと同じく水平になる）を区別できない。対応する種目が無いうちは
+  対応不要と判断し先送りしている。ベンチプレス等を追加する際は、体幹の向き
+  だけでなく別の判別軸（例：顔・胸がカメラのどちら向きか）の追加を検討すること
+- `app/routers/exercises.py`のcount-repsエンドポイントで`torso_orientation_series`
+  を呼び出し、`EXERCISE_POSTURE`から該当種目のpostureを引いて渡すよう変更。
+  デバッグprintにも`torso=X.X°`を追加
+- 実機ログで動作確認済み：立ったままの動画（torso≈4.0°/5.1°、ほぼ垂直）で
+  `count=0`となり正しく棄却された（プッシュアップの想定postureは"prone"で
+  `_POSTURE_PRONE_MIN_DEG=35.0`未満のため）
+
+### 姿勢不一致をAIレビューに反映（2026-08-28）
+
+上記の姿勢ゲートで棄却された候補があっても、今までは結果画面に「カウント外」
+と出るだけでAIレビューには一切反映されなかった。ユーザーから「別の種目をやって
+いることをAIレビューに出してほしい」との要望があり対応：
+
+- 棄却理由を区別するため、`app/core/rep_model.py`の`count_with_template`が
+  付与する`info["invalid"]`に加えて`info["invalid_reason"]`
+  （`"movement"`＝角度帯/ROM/形状の妥当性ゲート、`"posture"`＝姿勢ゲート）を
+  追加
+- `RepCycleOut`/`RepCycleJson`（`app/schemas/exercise.py`）に`invalid`/
+  `invalid_reason`フィールドを追加（DB保存・API応答の両方に反映。既存行は
+  デフォルト値`invalid=False`で後方互換）
+- `app/core/review_judge.py`：`ReviewMeasurements`に`posture_mismatch_count`
+  を追加。`aggregate_cycles`は`invalid_reason=="posture"`の候補数を
+  カウント（品質評価とは別軸の情報として、実測値の平均計算には混ぜない）。
+  `judge_aspects`は`posture_mismatch_count > 0`なら観点`"posture_mismatch"`
+  を追加（良し悪しの対にはならない一方向の観点）
+- `app/core/review_prompt.py`：ベースプロンプトの実測データに「種目と異なる
+  姿勢・動きだった可能性がある候補: N件」を追加
+- `scripts/seed_ai_review_prompt_parts.py`に種目共通パーツ`"code":
+  "general_posture_mismatch"`（`exercise_id=None`）を追加・DB投入済み。
+  「責めるのではなく確認を促す」トーンをprompt_fragmentで明示的に指定
+- `app/routers/workouts.py`の`generate_review`：`total_rep_count==0`だけを
+  理由にした400エラーを、`posture_mismatch_count==0`も同時に満たす場合のみ
+  に変更（立ったままの動画しか無いセットでも、姿勢不一致の情報自体は伝える
+  価値があるため、レビュー生成を続行できるようにした）
+- フロントエンド（`services/exercises.ts`の`RepCycle`・`services/workout.ts`の
+  `RepCycleJson`・`workout-camera.tsx`の保存処理）も`invalid`/`invalid_reason`
+  を受け渡すよう対応。`tsc --noEmit`で型チェック済み
+- 実機再検証はこれから（`generate-review`を呼んで実際にAIコメントが出るか
+  確認が必要）
+
+### AIレビューを「今回のセットのみ」に変更 + movement理由もレビューへ反映（2026-08-28）
+
+ユーザーから2点要望があり対応：
+
+1. **AIレビューの対象を「その種目の全セット」から「今回記録した1セットのみ」に変更**。
+   `ai_reviews`テーブルは`session_exercise_id`にUNIQUE制約があり元々「1種目1件・
+   再生成のたびに削除して作り直す」設計だったため、**スキーマ変更は不要**——
+   `generate_review`（`app/routers/workouts.py`）に`set_id`クエリパラメータを
+   追加し、指定時はその1セットの`rep_cycles_json`のみを集計するよう変更した
+   （省略時は後方互換で従来の全セット集計にフォールバック）。フロントエンド
+   （`services/workout.ts`の`generateAiReview`・`workout-camera.tsx`）は
+   `lastSetIdRef.current`（今保存したセットのID）を渡すよう変更。
+   **注**：これは2026-08-24の筋トレフロー刷新時点での意図的な設計
+   （「1セットだけでなく、その種目でこれまでにやった全セットをまとめて評価する」）
+   を覆す変更
+2. **「movement」棄却理由（角度帯・ROM・形状の妥当性ゲート）もAIレビューに反映**。
+   既存の`posture_mismatch`と対になる形で追加：
+   - `review_judge.py`：`ReviewMeasurements.movement_mismatch_count`追加、
+     `aggregate_cycles`が`invalid_reason=="movement"`の候補数を集計、
+     `judge_aspects`は`movement_mismatch_count > 0`で観点`"movement_mismatch"`
+     を追加
+   - `review_prompt.py`：実測データに「種目と動きの形が大きく異なっていた
+     可能性がある候補: N件」を追加
+   - `seed_ai_review_prompt_parts.py`に種目共通パーツ`"general_movement_mismatch"`
+     （`exercise_id=None`）を追加・DB投入済み
+   - `generate_review`の400エラーガードを、`movement_mismatch_count>0`でも
+     続行するよう拡張
+   - **スコープ外とした点**：測定不能（`invalid_reason`が付かない、点数不足で
+     形状ベクトル自体が計算できないケース）はレビューに反映していない。
+     フォームの問題ではなく動画・トラッキングの技術的な問題のため、コーチ
+     コメントの対象として毛色が違うと判断し対象外にした
+- 実機再検証はこれから
+
+### 映像の質・撮影環境の警告（2026-08-28、AIレビューを経由しない即時警告）
+
+上記でスコープ外とした「測定不能（点数不足）」＝映像の質・撮影環境の問題に
+ついて、ユーザーへ事前に設計案を提示（A案：即時警告／B案：AIレビュー経由）し、
+**A案（AIレビューを経由しない、その場での即時警告）で承認を得て実装**。
+
+- 判定材料は`pose_frames/total_frames`（姿勢検出率）。既に`count-reps`の
+  レスポンスに含まれていた値をそのまま利用——DBスキーマ変更・マイグレーション
+  一切不要
+- `app/routers/exercises.py`に`MIN_POSE_DETECTION_RATE=0.5`（初期値、要調整）
+  を追加。検出率がこれ未満なら`CountRepsResult.quality_warning`に警告文を
+  設定（`app/schemas/exercise.py`にフィールド追加）
+- AIレビュー（DeepSeek呼び出し）は経由しない。理由：posture/movement不一致
+  （コーチ的な判断）と違い「撮影がうまくいっていない」という技術的な問題
+  なので、後から遅れて伝えるより撮影直後にその場で伝えて撮り直しを促す
+  方が実用的と判断
+- フロントエンド（`services/exercises.ts`の`CountRepsResult`型・
+  `workout-camera.tsx`）：結果画面の回数カウントカードの下に警告ボックス
+  （`Colors.warningSubtle`/`Colors.warning`）を追加、`quality_warning`が
+  あれば表示
+- `tsc --noEmit`・Python構文チェックとも通過。実機再検証はこれから
+  （`MIN_POSE_DETECTION_RATE=0.5`は初期値のため、要調整の可能性あり）
+
+### 休憩画面に次のセットの予定回数を表示（2026-08-28）
+
+`workout-camera.tsx`の休憩カード（休憩カウントダウン中／「次のセットへ」ボタン
+の下）に、次に記録する予定セットの目標回数（登録時に設定した`reps`。
+`ai_counted_reps`＝実測値とは別物）を表示するよう追加。
+
+- `slotsRef`の要素に`reps: number | null`を追加（`fetchWorkout`で取得した
+  `SessionSetOut.reps`をそのまま保持。新規作成セット＝計画外のおまけセットは
+  `reps: null`）
+- 次に埋める予定のセット（`slotsRef.current.find(s => !s.recorded)`）の`reps`
+  を`nextSetReps`として算出し、`null`でなければ「次のセット予定: N回」を表示
+- `tsc --noEmit`通過
 
 ## 筋トレフロー刷新（セット管理・休憩・全体レポート）（2026-08-24 設計・実装完了）
 

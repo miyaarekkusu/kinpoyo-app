@@ -55,3 +55,47 @@ def compute_joint_angles(
         if angle is not None:
             out[name] = round(angle, 2)
     return out
+
+
+# --- 体幹の向き（2026-08-28追加、kinpoyo側のみ・model-studioには無い） -------
+#
+# 「肘の角度だけ」では、立位でも寝た姿勢でも同じように見える動きを区別できない
+# （実機で、立ったまま肘を曲げ伸ばししただけの動きが腕立て伏せとしてカウント
+# されてしまう問題が見つかった）。肩・股関節の中点を結ぶベクトルが垂直軸から
+# どれだけ傾いているかを求め、種目の想定姿勢（立位系／うつ伏せ系）と大まかに
+# 合っているかのチェックに使う（app/core/rep_model.pyの妥当性ゲート参照）。
+_LEFT_SHOULDER, _RIGHT_SHOULDER = 11, 12
+_LEFT_HIP, _RIGHT_HIP = 23, 24
+
+
+def torso_orientation_deg(landmarks: list[dict]) -> float | None:
+    """肩の中点→股関節中点のベクトルが垂直軸(y軸)からどれだけ傾いているかを
+    度数で返す。0°=垂直（立位・座位）、90°=水平（うつ伏せ・仰向け）。
+    pose_world_landmarksが前提（実世界メートル座標、カメラ位置に依存しない）。
+    """
+    try:
+        ls, rs = landmarks[_LEFT_SHOULDER], landmarks[_RIGHT_SHOULDER]
+        lh, rh = landmarks[_LEFT_HIP], landmarks[_RIGHT_HIP]
+    except (IndexError, KeyError, TypeError):
+        return None
+    sx, sy, sz = (ls["x"] + rs["x"]) / 2, (ls["y"] + rs["y"]) / 2, (ls["z"] + rs["z"]) / 2
+    hx, hy, hz = (lh["x"] + rh["x"]) / 2, (lh["y"] + rh["y"]) / 2, (lh["z"] + rh["z"]) / 2
+    dx, dy, dz = sx - hx, sy - hy, sz - hz
+    mag = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if mag == 0:
+        return None
+    cos_theta = max(-1.0, min(1.0, abs(dy) / mag))
+    return math.degrees(math.acos(cos_theta))
+
+
+def torso_orientation_series(frames) -> dict[int, float]:
+    """(frame_number, landmarks)の列から、フレームごとの体幹の向き(度)を返す。
+    joint_series_from_frames（app/core/rep_model.py）と同じ入力形式を使う。"""
+    out: dict[int, float] = {}
+    for frame_number, landmarks in frames:
+        if not isinstance(landmarks, list) or len(landmarks) < 33:
+            continue
+        deg = torso_orientation_deg(landmarks)
+        if deg is not None:
+            out[int(frame_number)] = round(deg, 2)
+    return out

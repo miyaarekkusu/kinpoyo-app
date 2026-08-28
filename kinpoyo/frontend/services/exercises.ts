@@ -53,6 +53,9 @@ export async function fetchRepModel(exerciseId: number): Promise<RepCountModelOu
 // 2026-08-24変更：「カウント」と「フォーム評価」を分離。測定可能なレップは
 // 全てcounted=trueでカウントし、form_qualityで品質をラベル付けするのみ
 // （カウントの可否には影響しない）。counted=falseは測定不能（短すぎる）な場合のみ。
+// 2026-08-28追加：invalid/invalid_reasonは妥当性ゲート・姿勢ゲート（別動作・
+// 別姿勢の可能性）で棄却された候補か。invalid_reason="posture"はAIレビューで
+// 「別の姿勢・種目だった可能性」のコメントに使う。
 export type RepCycle = {
   start: number;
   end: number;
@@ -62,6 +65,8 @@ export type RepCycle = {
   bottom_deg: number | null;
   top_deg: number | null;
   period: number | null;
+  invalid: boolean;
+  invalid_reason: 'movement' | 'posture' | null;
 };
 export type CountRepsResult = {
   exercise_id: number;
@@ -75,6 +80,9 @@ export type CountRepsResult = {
   pose_frames: number;
   fps: number;
   cycles: RepCycle[];
+  // 2026-08-28追加：姿勢検出率が低い（映像の質・撮影環境の問題）場合の警告文。
+  // 問題なければnull。
+  quality_warning: string | null;
 };
 
 export async function countRepsFromVideo(

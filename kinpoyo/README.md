@@ -118,6 +118,10 @@ npx expo start
 ### バックエンド
 
 > **DB は Docker、FastAPI は venv で起動する（Docker Desktop + WSL2 が必要）**
+> `docker compose up`を引数無しで実行しない（`backend-core`サービスも一緒に起動しようとして、
+> 未作成の`.env`が無い・SECRET_KEY未設定などで失敗する。`backend-core`はLinux環境での
+> AI回数カウント比較検証専用で、通常のAPI提供はvenv側が担う）。必ず`docker compose up -d db`
+> のように`db`だけを指定すること。
 
 ```bash
 # 1. DB起動（PostgreSQL 16 on Docker）
@@ -129,8 +133,10 @@ python -m venv venv
 venv\Scripts\activate          # Windows
 pip install -r requirements.txt
 
-# 3. .env 作成
+# 3. .env 作成（SECRET_KEYは必須。無いと起動時に落ちる）
 echo DATABASE_URL=postgresql+psycopg://kinpoyo:kinpoyo@localhost:5432/kinpoyo > .env
+echo SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))") >> .env
+# AIレビュー機能を使う場合はDEEPSEEK_API_KEYも追記する（無くても起動はできる）
 
 # 4. マイグレーション適用
 alembic upgrade head

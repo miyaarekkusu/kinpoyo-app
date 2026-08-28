@@ -9,12 +9,18 @@ from sqlalchemy.orm import Session
 from app.core import rep_model
 from app.core.deps import get_current_user, get_db
 from app.core.pose import close_pose_detector, create_pose_detector, extract_landmarks_from_frame
-from app.core.pose_analysis import compute_joint_angles
+from app.core.pose_analysis import compute_joint_angles, torso_orientation_series
 from app.crud import exercise as exercise_crud
 from app.models.user import User
 from app.schemas.exercise import CountRepsResult, ExerciseOut, RepCountModelOut, RepCycleOut
 
 router = APIRouter(prefix="/exercises", tags=["exercises"])
+
+# 2026-08-28追加：姿勢検出率（pose_frames/total_frames）がこれ未満なら、映像の
+# 質・撮影環境（画角から体がはみ出た・暗い・遠すぎる等）の問題として、その場で
+# 警告する。AIレビューは経由しない（フォームの問題ではなく技術的な問題のため）。
+# 初期値であり、実機テストで調整が必要になる可能性がある。
+MIN_POSE_DETECTION_RATE = 0.5
 
 
 @router.get("", response_model=list[ExerciseOut])
@@ -162,8 +168,11 @@ def count_reps_from_video(
         tmp_path.unlink(missing_ok=True)
 
     joint_series = rep_model.joint_series_from_frames(collected, joints_to_track)
+    torso_series = torso_orientation_series(collected)
+    posture = rep_model.EXERCISE_POSTURE.get(exercise_id)
     res = rep_model.count_with_template(
-        joint_series, candidates, cfg, main_joint, template, shape_threshold, cycle_stats
+        joint_series, candidates, cfg, main_joint, template, shape_threshold, cycle_stats,
+        torso_orientation=torso_series, posture=posture,
     )
 
     print(
@@ -172,12 +181,19 @@ def count_reps_from_video(
         f"pose_frames={len(collected)}"
     )
     for c in res["cycles"]:
-        status = "カウント外(測定不能)" if not c["counted"] else (
-            "良いフォーム" if c["form_quality"] == "good" else "改善余地あり"
-        )
+        if not c["counted"]:
+            if c.get("invalid_reason") == "posture":
+                status = "カウント外(姿勢が異なる/別動作の可能性)"
+            elif c.get("invalid"):
+                status = "カウント外(別動作の可能性)"
+            else:
+                status = "カウント外(測定不能)"
+        else:
+            status = "良いフォーム" if c["form_quality"] == "good" else "改善余地あり"
         print(
             f"[count-reps]   cycle {c['start']}-{c['end']}: {status} "
-            f"bottom={c.get('bottomDeg')}° top={c.get('topDeg')}° distance={c.get('distance')}"
+            f"bottom={c.get('bottomDeg')}° top={c.get('topDeg')}° distance={c.get('distance')} "
+            f"torso={c.get('torsoDeg')}°"
         )
 
     cycles_out = [
@@ -190,9 +206,20 @@ def count_reps_from_video(
             bottom_deg=c.get("bottomDeg"),
             top_deg=c.get("topDeg"),
             period=c.get("period"),
+            invalid=c.get("invalid", False),
+            invalid_reason=c.get("invalid_reason"),
         )
         for c in res["cycles"]
     ]
+
+    pose_detection_rate = len(collected) / total_frames if total_frames > 0 else None
+    quality_warning = None
+    if pose_detection_rate is not None and pose_detection_rate < MIN_POSE_DETECTION_RATE:
+        quality_warning = (
+            f"体の検出率が低いです（{pose_detection_rate * 100:.0f}%）。"
+            "カメラに全身が映るように距離・角度を調整して撮り直すことをおすすめします。"
+        )
+        print(f"[count-reps] 品質警告: 検出率={pose_detection_rate * 100:.1f}%")
 
     return CountRepsResult(
         exercise_id=exercise_id,
@@ -206,4 +233,5 @@ def count_reps_from_video(
         pose_frames=len(collected),
         fps=fps,
         cycles=cycles_out,
+        quality_warning=quality_warning,
     )

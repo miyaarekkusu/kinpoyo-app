@@ -239,7 +239,9 @@ def _cycle_stat(sub: list[dict]) -> Optional[tuple[float, float, int]]:
 
 
 def _passes_cycle_stats(sub: list[dict], stats: dict) -> bool:
-    """候補サイクルが較正済みの絶対角度帯・ROM帯に収まっているか（周期は判定しない）。"""
+    """候補サイクルが較正済みの絶対角度帯・ROM帯に収まっているか（周期は判定しない）。
+    2026-08-28以降、この結果は品質ラベル（good/needs_improvement）にのみ使う。
+    カウントの可否には`_passes_validity_gate`を使う（下記）。"""
     st = _cycle_stat(sub)
     if st is None:
         return False
@@ -251,6 +253,119 @@ def _passes_cycle_stats(sub: list[dict], stats: dict) -> bool:
     return b0 <= bottom <= b1 and t0 <= top <= t1 and r0 <= rom <= r1
 
 
+# --- 妥当性ゲート（2026-08-28追加）------------------------------------------
+#
+# 経緯：「カウント」と「フォーム評価」を分離した際（2026-08-24）、統計ゲート・
+# 形状テンプレートは両方とも品質ラベルのみに格下げされ、カウントの可否は
+# ヒステリシス状態機械（ROM・周期のみ）だけで決まるようになった。これにより、
+# 較正データより深い/浅い"本物のレップ"を誤って棄却する旧バグは直ったが、
+# 副作用として「そもそもこの種目の動きではない候補」（姿勢を整える動作・
+# 別の動作等）まで、肘（等）が十分な振れ幅で一往復しさえすれば無条件に
+# カウントされてしまうようになった（実機で確認済み）。
+#
+# 対策：cycle_statsよりさらに大きく緩めた"妥当性ゲート"だけを別途設け、これに
+# 外れる候補のみ棄却する（counted=False）。cycle_stats自体（品質ラベル用、
+# ±25°マージン）・shape_thresholdは今まで通りカウントの可否に影響しない。
+# マージンをcycle_statsよりずっと広く取っているのは、深さ・テンポが多少
+# ズレた本物のレップまで弾いてしまった旧設計の失敗を繰り返さないため——
+# 「明らかに別の動き」だけを弾く最後の砦、という位置づけ。
+#
+# 2026-08-28追加（角度帯・ROMのみでは弱いことが実機で判明）：腕の曲げ伸ばしを
+# 伴う動きは種目が違っても絶対角度・ROMが被りやすく、角度帯・ROMだけの
+# チェックでは「腕立て伏せと無関係な動き」を弾き切れないことが確認された。
+# そこで形状テンプレート距離も妥当性ゲートに追加する（品質判定の
+# shape_thresholdより緩い倍率を許容）。カーブの"形"（滑らかなV字か等）は
+# 種目間でより差が出やすいため、角度帯・ROMより強い判別力を期待できる。
+#
+# 2026-08-28再修正：角度帯マージン・ROM倍率を一度20.0/(0.6,1.6)まで縮小したが、
+# 実機で本物のレップまでカウントされなくなる逆方向の問題が発生したため、
+# 元の40.0/(0.5,2.0)に戻した。角度帯・ROMは緩いまま維持し、判別力の強化は
+# 形状テンプレート距離（_VALIDITY_GATE_SHAPE_MULTIPLIER）側だけに委ねる方針。
+_VALIDITY_GATE_EXTRA_MARGIN_DEG = 40.0
+_VALIDITY_GATE_ROM_SCALE = (0.5, 2.0)
+_VALIDITY_GATE_SHAPE_MULTIPLIER = 1.6
+
+
+def _passes_validity_gate(
+    sub: list[dict],
+    stats: dict,
+    dist: Optional[float] = None,
+    shape_threshold: Optional[float] = None,
+) -> bool:
+    """cycle_statsのレンジをさらに緩めた最低限の妥当性チェック（角度帯・ROM＋
+    形状距離）。これを外れる候補は品質に関わらずカウントしない（そもそも
+    この種目の動きではない可能性が高いため）。"""
+    st = _cycle_stat(sub)
+    if st is None:
+        return False
+    bottom, top, _period = st
+    b0, b1 = stats["bottomDeg"]
+    t0, t1 = stats["topDeg"]
+    r0, r1 = stats["romDeg"]
+    rom = top - bottom
+    vb0 = b0 - _VALIDITY_GATE_EXTRA_MARGIN_DEG
+    vb1 = b1 + _VALIDITY_GATE_EXTRA_MARGIN_DEG
+    vt0 = t0 - _VALIDITY_GATE_EXTRA_MARGIN_DEG
+    vt1 = t1 + _VALIDITY_GATE_EXTRA_MARGIN_DEG
+    vr0 = r0 * _VALIDITY_GATE_ROM_SCALE[0]
+    vr1 = r1 * _VALIDITY_GATE_ROM_SCALE[1]
+    if not (vb0 <= bottom <= vb1 and vt0 <= top <= vt1 and vr0 <= rom <= vr1):
+        return False
+    if dist is not None and shape_threshold is not None:
+        if dist > shape_threshold * _VALIDITY_GATE_SHAPE_MULTIPLIER:
+            return False
+    return True
+
+
+# --- 姿勢ゲート（2026-08-28追加）--------------------------------------------
+#
+# 経緯：妥当性ゲート（角度帯・ROM・形状）を追加しても、「立ったまま肘だけ
+# 曲げ伸ばしする」ような、種目と無関係な動きが実機でまだ通過することが判明
+# した。原因は、肘の角度だけでは"体全体がどんな向きか"（立位かうつ伏せか）
+# が分からないため。app/core/pose_analysis.pyのtorso_orientation_series()で
+# 求めた「体幹（肩〜股関節）が垂直軸からどれだけ傾いているか」を使い、種目の
+# 想定姿勢と大まかに合っているかを追加でチェックする。
+#
+# 種目ごとの想定姿勢は較正済みモデル（model-studioのconfig_json）には含まれ
+# ないkinpoyo側だけの情報のため、rep_count_models等のテーブルではなく、この
+# ファイル内の小さな対応表で管理する（種目が増えたら1行追加するだけでよい
+# シンプルさを優先）。"upright"=立位・座位系（体幹はほぼ垂直）、
+# "prone"=うつ伏せ系（体幹はほぼ水平）。この2値だけでは仰向け種目（ベンチ
+# プレス等、体幹はproneと同じく水平）を区別できないが、対応する種目が無い
+# うちは対応不要と判断（詳細はAGENTS.md参照）。
+EXERCISE_POSTURE: dict[int, str] = {
+    17: "upright",  # スクワット
+    4: "prone",  # プッシュアップ
+}
+
+# 判定は精密な較正値ではなく「大まかに合っているか」の粗いチェックでよい
+# （このゲートの役割はあくまで"明らかに別の姿勢"を弾く最後の砦のため）。
+_POSTURE_UPRIGHT_MAX_DEG = 55.0
+_POSTURE_PRONE_MIN_DEG = 35.0
+
+
+def _avg_torso_orientation(
+    torso_orientation: dict[int, float], start: int, end: int
+) -> Optional[float]:
+    vals = [v for f, v in torso_orientation.items() if start <= f <= end]
+    if not vals:
+        return None
+    return sum(vals) / len(vals)
+
+
+def _passes_posture_gate(avg_deg: Optional[float], posture: Optional[str]) -> bool:
+    """種目の想定姿勢（upright/prone）と実測した体幹の向きが大まかに合っているか。
+    postureが未登録、または体幹の向きが計測できなかった場合は判定せず通す
+    （measurement不能を理由にカウント漏れさせないため）。"""
+    if posture is None or avg_deg is None:
+        return True
+    if posture == "upright":
+        return avg_deg <= _POSTURE_UPRIGHT_MAX_DEG
+    if posture == "prone":
+        return avg_deg >= _POSTURE_PRONE_MIN_DEG
+    return True
+
+
 def count_with_template(
     joint_series: dict[str, list[dict]],
     candidates: list[str],
@@ -259,6 +374,8 @@ def count_with_template(
     template: Optional[dict],
     shape_threshold: float,
     cycle_stats: Optional[dict] = None,
+    torso_orientation: Optional[dict[int, float]] = None,
+    posture: Optional[str] = None,
 ) -> dict:
     """主役関節で候補サイクルを検出し、測定可能なもの（形状ベクトルが計算できる
     もの）は全て1回としてカウントする。
@@ -276,6 +393,14 @@ def count_with_template(
     ベクトルすら計算できず、そもそも1レップとして測定不能）の場合のみ——
     これはフォーム評価ではなくデータ有効性の問題。
 
+    2026-08-28追加：上記に加えて`_passes_validity_gate`（cycle_statsよりさらに
+    緩めた絶対角度帯・ROM帯）も`counted=False`の判定に使う。姿勢を整える動作や
+    別の動作が、肘等の振れ幅がたまたま十分あるというだけでカウントされて
+    しまう問題が実機で見つかったための対策（詳細は`_passes_validity_gate`の
+    コメント参照）。cycle_stats自体（±25°マージン）はこれより厳しいので、
+    引き続き品質ラベルのみに使う——深さ・テンポが多少ズレた本物のレップまで
+    棄却してしまった旧設計の失敗は繰り返さない。
+
     2026-08-24追加変更：`form_quality`の判定に形状テンプレート距離
     （distance ≤ shape_threshold）**と**深さの較正データ（cycle_stats）との
     整合性（`_passes_cycle_stats`）の両方を使う。形状テンプレート照合は振幅
@@ -287,6 +412,13 @@ def count_with_template(
     使わずrep_cycles_jsonの実測値から独自に深さ・テンポを判定しているため、
     二重評価にはなるが矛盾はしない（review_judge側はコメント文生成用、
     ここはcount-repsのその場の結果表示用）。
+
+    2026-08-28追加：`torso_orientation`（フレーム→体幹の向き度数）と`posture`
+    （その種目の想定姿勢"upright"|"prone"）を渡すと、`_passes_posture_gate`
+    による姿勢チェックも`counted=False`の判定に使う。妥当性ゲート（角度帯・
+    ROM・形状）だけでは、立ったまま肘を動かすような無関係な動きを弾き切れ
+    なかったための追加対策（詳細は`_passes_posture_gate`のコメント参照）。
+    いずれかを渡さなければ姿勢チェックはスキップされる（後方互換）。
 
     "cycles" は各候補サイクルの内訳（カウント可否・フォーム品質・形状距離）で、
     実装確認・デバッグ用にも使う。
@@ -336,6 +468,44 @@ def count_with_template(
             cycles.append(info)
             continue
 
+        # 距離は妥当性ゲート・品質判定の両方で使うため、ここで一度だけ計算する。
+        dist: Optional[float] = None
+        if mean is not None:
+            dist = template_distance(vec, mean)
+            info["distance"] = round(dist, 4)
+
+        if cycle_stats is not None and not _passes_validity_gate(
+            sub, cycle_stats, dist, shape_threshold
+        ):
+            # cycle_statsよりさらに緩い妥当性ゲート（角度帯・ROM＋形状距離）
+            # すら外れる＝この種目の動きである可能性が低い（姿勢準備・別動作
+            # 等）。品質に関わらずカウントしない。
+            info["counted"] = False
+            info["form_quality"] = None
+            info["invalid"] = True
+            info["invalid_reason"] = "movement"
+            cycles.append(info)
+            continue
+
+        avg_torso_deg = (
+            _avg_torso_orientation(torso_orientation, start, end)
+            if torso_orientation is not None
+            else None
+        )
+        if avg_torso_deg is not None:
+            info["torsoDeg"] = round(avg_torso_deg, 1)
+        if not _passes_posture_gate(avg_torso_deg, posture):
+            # 体幹の向きが種目の想定姿勢（立位系/うつ伏せ系）と大きく食い違う
+            # ＝この種目の動きである可能性が低い。品質に関わらずカウントしない。
+            # invalid_reason="posture"は、AIレビュー側で「別の種目・姿勢だった
+            # 可能性」をユーザーに伝えるために使う（app/core/review_judge.py参照）。
+            info["counted"] = False
+            info["form_quality"] = None
+            info["invalid"] = True
+            info["invalid_reason"] = "posture"
+            cycles.append(info)
+            continue
+
         info["counted"] = True
         rep_frames.append(end)
 
@@ -346,11 +516,7 @@ def count_with_template(
         # との比較も別途行い、どちらか一方でも基準から外れていれば
         # needs_improvementとする。カウントするかどうかには影響しない
         # （廃止済みの統計ゲートとは違い、あくまでラベル付けのみに使う）。
-        shape_ok = True
-        if mean is not None:
-            dist = template_distance(vec, mean)
-            info["distance"] = round(dist, 4)
-            shape_ok = dist <= shape_threshold
+        shape_ok = dist is None or dist <= shape_threshold
 
         depth_ok = True
         if cycle_stats is not None:

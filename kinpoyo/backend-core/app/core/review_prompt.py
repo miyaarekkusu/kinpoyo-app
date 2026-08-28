@@ -32,6 +32,8 @@ BASE_PROMPT_TEMPLATE = """あなたはAIパーソナルトレーナーです。�
 - 平均ボトム角度: {avg_bottom_deg}
 - 平均トップ角度: {avg_top_deg}
 - 平均テンポ: {avg_period_sec}秒/レップ
+- 種目と異なる姿勢だった可能性がある候補: {posture_mismatch_count}件
+- 種目と動きの形が大きく異なっていた可能性がある候補: {movement_mismatch_count}件
 """
 
 
@@ -59,4 +61,6 @@ def build_prompt(
         avg_bottom_deg=_fmt(measurements.avg_bottom_deg),
         avg_top_deg=_fmt(measurements.avg_top_deg),
         avg_period_sec=_fmt(measurements.avg_period_sec),
+        posture_mismatch_count=measurements.posture_mismatch_count,
+        movement_mismatch_count=measurements.movement_mismatch_count,
     )

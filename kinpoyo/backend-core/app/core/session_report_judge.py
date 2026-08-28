@@ -14,6 +14,21 @@
 - 停滞判定：直近3〜4セッションの「最後のセット」のレップ数がほぼ一定で、
   かつ重量もほぼ一定（=重い種目ほど重量更新に時間がかかるのは自然なので、
   レップ数の余裕で判断する）なら、加重を勧める
+
+2026-08-28：以下2点をユーザー報告により修正・追加。
+- achievement_pctのバグ修正：AI計測対応種目は、計画したセット数さえ埋まって
+  いれば（例: 目標5回+10回に対し実測が合計14回でも）達成率が常に100%になって
+  いた。session_sets.repsは登録時に入力した「目標」レップ数のまま更新されず
+  （AI計測はai_counted_repsのみを書き込むため）、achievement_pctがセット数の
+  充足だけを見てレップ数の充足を見ていなかったのが原因。計画レップ数合計に
+  対する実測レップ数合計の割合に変更した。同じ理由で`_avg_metrics`の平均
+  レップ数もAI計測対応種目では実測値ではなく目標値を平均していたバグを修正
+  （ai_counted_repsを使うように）
+- 種目ごとの平均値カードの代わりに、セットごとの実測値（重量・レップ数・RPE）を
+  前回の同じ種目・同じセット番号と並べて比較できるように`sets`/`prev_sets`を
+  追加（ユーザーフィードバック：「平均はいらない。前回の実績と重量とrep数と
+  rpeを出して比較できるようにしてほしい」）。avg_*系のフィールドはAIレビュー
+  文面の生成・RPE予測・停滞判定に引き続き使うため残している
 """
 from dataclasses import dataclass, field
 from typing import Optional
@@ -39,6 +54,17 @@ PLATEAU_WEIGHT_TOLERANCE_KG = 2.5
 
 
 @dataclass
+class SetResult:
+    """1セット分の実測値（フロントの前回比較テーブル用）。AI計測対応種目は
+    ai_counted_reps（実測レップ数）、非対応種目はreps（そのまま実績として扱う）
+    をrepsに入れる。session_sets.repsそのもの（登録時の目標値）ではない点に注意。"""
+    set_number: int
+    weight_kg: Optional[float]
+    reps: Optional[int]
+    rpe: Optional[float]
+
+
+@dataclass
 class ExerciseComparison:
     exercise_id: int
     exercise_name: str
@@ -52,6 +78,8 @@ class ExerciseComparison:
     prev_avg_reps: Optional[float]
     prev_avg_rpe: Optional[float]
     weight_change_pct: Optional[float]  # (avg_weight_kg - prev_avg_weight_kg) / prev_avg_weight_kg * 100
+    sets: list[SetResult]  # 今回の各セットの実測値（フロントの前回比較表示用）
+    prev_sets: list[SetResult]  # 前回セッションの同じ種目の各セット実測値
     predicted_rpe: Optional[float] = None  # 生涯ベストe1RMに対する%1RMからの予測RPE
     rpe_deviation: Optional[float] = None  # avg_rpe - predicted_rpe（正なら「思ったよりきつかった」）
     is_plateaued: bool = False  # 直近数セッション、最後のセットのレップ数・重量がほぼ一定
@@ -62,6 +90,16 @@ class SessionReportMeasurements:
     exercises: list[ExerciseComparison] = field(default_factory=list)
     overall_achievement_pct: Optional[float] = None
     has_comparison: bool = False  # 前回の同じ種目構成のセッションが見つかったか
+
+
+def _actual_reps(s, ai_tracked: bool) -> Optional[int]:
+    """そのセットの「実際に行ったレップ数」。AI計測対応種目はai_counted_reps
+    （実測値）、非対応種目はreps（記録手段が無いためそのまま実績として扱う）。
+    session_sets.repsは登録時に入力した目標値のまま更新されない（AI計測は
+    ai_counted_repsのみを書き込む）ため、AI計測対応種目でrepsを使うと目標値を
+    実績として扱ってしまう（2026-08-28、achievement_pct・平均計算の両方に
+    あったバグ）。"""
+    return s.ai_counted_reps if ai_tracked else s.reps
 
 
 def _avg_metrics(
@@ -81,12 +119,35 @@ def _avg_metrics(
     if ai_tracked:
         sets = [s for s in sets if s.ai_counted_reps is not None]
     weights = [float(s.weight_kg) for s in sets if s.weight_kg is not None]
-    reps = [s.reps for s in sets if s.reps is not None]
+    reps = [_actual_reps(s, ai_tracked) for s in sets]
+    reps = [r for r in reps if r is not None]
     rpes = [float(s.rpe) for s in sets if s.rpe is not None]
     avg_weight = round(sum(weights) / len(weights), 1) if weights else None
     avg_reps = round(sum(reps) / len(reps), 1) if reps else None
     avg_rpe = round(sum(rpes) / len(rpes), 1) if rpes else None
     return avg_weight, avg_reps, avg_rpe
+
+
+def _set_results(session_exercise: Optional[SessionExercise], ai_tracked: bool) -> list["SetResult"]:
+    """ウォームアップを除く各セットの実測値（重量・レップ数・RPE）を、セット番号
+    順に返す。フロントで前回の同じ種目と1セットずつ比較表示するために使う。"""
+    if session_exercise is None:
+        return []
+    sets = [s for s in session_exercise.sets if not s.is_warmup]
+    if ai_tracked:
+        sets = [s for s in sets if s.ai_counted_reps is not None]
+    else:
+        sets = [s for s in sets if s.reps is not None]
+    sets = sorted(sets, key=lambda s: s.set_number)
+    return [
+        SetResult(
+            set_number=s.set_number,
+            weight_kg=float(s.weight_kg) if s.weight_kg is not None else None,
+            reps=_actual_reps(s, ai_tracked),
+            rpe=float(s.rpe) if s.rpe is not None else None,
+        )
+        for s in sets
+    ]
 
 
 def _last_set_reps_and_weight(
@@ -103,7 +164,7 @@ def _last_set_reps_and_weight(
     if not sets:
         return None
     last = max(sets, key=lambda s: s.set_number)
-    reps = last.ai_counted_reps if ai_tracked else last.reps
+    reps = _actual_reps(last, ai_tracked)
     if reps is None:
         return None
     weight = float(last.weight_kg) if last.weight_kg is not None else None
@@ -199,12 +260,27 @@ def compute_measurements(
 
     for se in sorted(session.session_exercises, key=lambda x: x.order_index):
         is_ai_tracked = se.exercise_id in ai_tracked_exercise_ids
+        non_warmup_sets = [s for s in se.sets if not s.is_warmup]
         if is_ai_tracked:
-            actual_sets = sum(1 for s in se.sets if s.ai_counted_reps is not None)
+            actual_sets = sum(1 for s in non_warmup_sets if s.ai_counted_reps is not None)
         else:
-            actual_sets = len(se.sets)
+            actual_sets = len(non_warmup_sets)
+
         achievement_pct: Optional[float] = None
-        if se.target_sets:
+        if is_ai_tracked:
+            # AI計測対応種目は、計画したレップ数（session_sets.reps＝登録時の
+            # 目標値）の合計に対する、実測レップ数（ai_counted_reps）の合計の
+            # 割合で達成率を出す。セット数だけ見ていた以前の実装だと、目標
+            # 5回+10回に対し実測が合計14回でもセットさえ埋まっていれば100%に
+            # なってしまっていた（2026-08-28、ユーザー報告で発覚）。
+            target_reps_total = sum(s.reps for s in non_warmup_sets if s.reps is not None)
+            actual_reps_total = sum(
+                s.ai_counted_reps for s in non_warmup_sets if s.ai_counted_reps is not None
+            )
+            if target_reps_total:
+                achievement_pct = round(actual_reps_total / target_reps_total * 100, 1)
+                achievement_values.append(achievement_pct)
+        elif se.target_sets:
             achievement_pct = round(actual_sets / se.target_sets * 100, 1)
             achievement_values.append(achievement_pct)
 
@@ -212,6 +288,8 @@ def compute_measurements(
         prev_avg_weight, prev_avg_reps, prev_avg_rpe = _avg_metrics(
             prev_by_exercise_id.get(se.exercise_id), is_ai_tracked
         )
+        sets_result = _set_results(se, is_ai_tracked)
+        prev_sets_result = _set_results(prev_by_exercise_id.get(se.exercise_id), is_ai_tracked)
 
         weight_change_pct: Optional[float] = None
         if avg_weight is not None and prev_avg_weight:
@@ -245,6 +323,8 @@ def compute_measurements(
                 prev_avg_reps=prev_avg_reps,
                 prev_avg_rpe=prev_avg_rpe,
                 weight_change_pct=weight_change_pct,
+                sets=sets_result,
+                prev_sets=prev_sets_result,
                 predicted_rpe=predicted_rpe,
                 rpe_deviation=rpe_deviation,
                 is_plateaued=is_plateaued,

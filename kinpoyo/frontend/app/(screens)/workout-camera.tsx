@@ -96,7 +96,17 @@ export default function WorkoutCameraScreen() {
   // 空のセット行も含む）。録画のたびに新しいセットを作るのではなく、まず未記録の
   // 計画済みセットを埋めていく（AGENTS.md『現状の問題（今回の発端）』の再発防止）。
   // restAfterSecはそのセットの後に取る休憩時間（登録画面でセットごとに設定）。
-  const slotsRef = useRef<{ id: number; recorded: boolean; restAfterSec: number | null }[]>([]);
+  // reps: そのセットの予定回数（登録画面で設定した目標値。ai_counted_repsは
+  // 実測値で別物）。2026-08-28追加：休憩画面で「次のセットの予定回数」を
+  // 表示するために保持する。
+  const slotsRef = useRef<
+    { id: number; recorded: boolean; restAfterSec: number | null; reps: number | null }[]
+  >([]);
+  // 次に記録する予定のセット（まだ未記録の計画済みセット）の予定回数。
+  // 2026-08-28追加：休憩画面で「次のセットは何回やる予定か」を表示するため。
+  // slotsRefはrefだが、この値が使われるのは結果画面の再描画時（保存処理で
+  // 既にslot.recorded=trueへ更新済みの後）なので、ここで直接読んで問題ない。
+  const nextSetReps = slotsRef.current.find((s) => !s.recorded)?.reps ?? null;
 
   useEffect(() => {
     (async () => {
@@ -122,6 +132,7 @@ export default function WorkoutCameraScreen() {
                 // 個々のセットにrest_after_secが無ければ、種目単位の旧設定
                 // （rest_interval_sec）にフォールバックする（後方互換）。
                 restAfterSec: s.rest_after_sec ?? se.rest_interval_sec ?? null,
+                reps: s.reps ?? null,
               }));
               const pending = slotsRef.current.find((s) => !s.recorded);
               lastSetIdRef.current = pending ? pending.id : null;
@@ -257,6 +268,8 @@ export default function WorkoutCameraScreen() {
             bottom_deg: c.bottom_deg,
             top_deg: c.top_deg,
             period_sec: fps && c.period != null ? c.period / fps : null,
+            invalid: c.invalid,
+            invalid_reason: c.invalid_reason,
           }));
           const setData = { ai_counted_reps: res.count, rep_cycles_json };
           if (lastSetIdRef.current != null) {
@@ -273,7 +286,7 @@ export default function WorkoutCameraScreen() {
             // カスタム休憩は未設定（登録時のプランに無いおまけセットのため）。
             const created = await addSessionSet(token, sessionId, sessionExerciseId, setData);
             lastSetIdRef.current = created.id;
-            slotsRef.current.push({ id: created.id, recorded: true, restAfterSec: null });
+            slotsRef.current.push({ id: created.id, recorded: true, restAfterSec: null, reps: null });
             if (mountedRef.current) {
               setCompletedSetsCount((prev) => prev + 1);
               setCurrentRestSec(null);
@@ -287,16 +300,17 @@ export default function WorkoutCameraScreen() {
       if (!mountedRef.current) return;
       setResult(res);
 
-      // AIレビュー自動生成（その種目でこれまでにやった全セットをまとめて評価。
-      // 既存エンドポイントをそのまま流用。AGENTS.md『新しいセットごとのフロー』参照）。
+      // AIレビュー自動生成（2026-08-28変更：今回記録した1セットのみを評価。
+      // 以前はその種目の全セットをまとめて評価していたが、ユーザー要望により
+      // 変更した）。既存エンドポイントをそのまま流用。
       // 2026-08-24：結果画面への遷移をレビュー完了まで待たせず、非同期・非
       // ブロッキングで発火するように変更（結果画面内のメッセージボックスで
       // reviewLoadingを見てスピナー表示する）。
-      if (canSaveResult) {
+      if (canSaveResult && lastSetIdRef.current != null) {
         setReviewText(null);
         setReviewError(null);
         setReviewLoading(true);
-        generateAiReview(token, sessionId, sessionExerciseId)
+        generateAiReview(token, sessionId, sessionExerciseId, lastSetIdRef.current)
           .then((review) => {
             if (mountedRef.current) setReviewText(review.feedback_text);
           })
@@ -459,6 +473,14 @@ export default function WorkoutCameraScreen() {
           </Text>
         </View>
 
+        {/* 2026-08-28追加：姿勢検出率が低い（映像の質・撮影環境の問題）場合の
+            その場での警告。AIレビューは経由せず即座に表示する */}
+        {result.quality_warning && (
+          <View style={styles.qualityWarningBox}>
+            <Text style={styles.qualityWarningText}>{result.quality_warning}</Text>
+          </View>
+        )}
+
         {canSaveResult && !isLastSet && (
           <View style={styles.restCard}>
             {currentRestSec != null ? (
@@ -474,6 +496,10 @@ export default function WorkoutCameraScreen() {
                   <Text style={styles.nextSetBtnText}>次のセットへ</Text>
                 </Pressable>
               </>
+            )}
+            {/* 2026-08-28追加：次のセットの予定回数（登録時の目標値）を表示 */}
+            {nextSetReps != null && (
+              <Text style={styles.nextSetRepsText}>次のセット予定: {nextSetReps}回</Text>
             )}
           </View>
         )}
@@ -639,6 +665,19 @@ const styles = StyleSheet.create({
     gap: Space[2],
     ...Shadow.sm,
   },
+  qualityWarningBox: {
+    width: '100%',
+    backgroundColor: Colors.warningSubtle,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.warning,
+    padding: Space[3],
+  },
+  qualityWarningText: {
+    fontSize: FontSize.xs,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+  },
   resultCountRow: { flexDirection: 'row', alignItems: 'flex-end', gap: Space[1] },
   resultCount: { fontSize: 64, fontWeight: FontWeight.bold, color: Colors.primaryDark },
   resultUnit: { fontSize: FontSize.lg, color: Colors.textSecondary, marginBottom: Space[2] },
@@ -665,6 +704,11 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primaryDark,
   },
   nextSetBtnText: { color: Colors.textOnPrimary, fontSize: FontSize.base, fontWeight: FontWeight.bold },
+  nextSetRepsText: {
+    fontSize: FontSize.xs,
+    color: Colors.textSecondary,
+    marginTop: Space[1],
+  },
 
   overlayTop: {
     position: 'absolute',

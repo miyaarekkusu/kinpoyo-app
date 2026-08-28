@@ -7,6 +7,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, Stack } from 'expo-router';
@@ -29,7 +30,6 @@ const MIN_KG = 40;
 const MAX_KG = 150;
 const DEFAULT_KG = 75;
 const ITEM_WIDTH = 16;
-const VIEWPORT_WIDTH_PADDING = Layout.screenPaddingH;
 
 const VALUES = Array.from({ length: MAX_KG - MIN_KG + 1 }, (_, i) => MIN_KG + i);
 
@@ -48,6 +48,16 @@ export default function WeightScreen() {
   const [unit, setUnit] = useState<Unit>('kg');
   const [weight, setWeight] = useState(DEFAULT_KG);
   const scrollRef = useRef<ScrollView>(null);
+
+  // 2026-08-28修正：目盛り(centerLineの下)に来る値と、大きく表示される値が
+  // ズレるバグを修正。原因はcontentContainerStyleのpaddingHorizontalが
+  // 画面端の余白（Layout.screenPaddingH）になっていて、実際に目盛りを中央線に
+  // 揃えるのに必要な「ルーラーの表示幅の半分」になっていなかったこと
+  // （height.tsxのSIDE_PADDING = VIEWPORT_HEIGHT/2 - ITEM_HEIGHT/2と同じ考え方に
+  // 揃えた）。この値を正しくすることで、handleScroll側の計算式は変更不要になる。
+  const { width: screenWidth } = useWindowDimensions();
+  const rulerWidth = screenWidth - Layout.screenPaddingH * 2;
+  const sidePadding = rulerWidth / 2 - ITEM_WIDTH / 2;
 
   const handleScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const offsetX = e.nativeEvent.contentOffset.x;
@@ -104,7 +114,7 @@ export default function WeightScreen() {
               scrollEventThrottle={16}
               onScroll={handleScroll}
               contentContainerStyle={{
-                paddingHorizontal: VIEWPORT_WIDTH_PADDING,
+                paddingHorizontal: sidePadding,
               }}
               contentOffset={{ x: (DEFAULT_KG - MIN_KG) * ITEM_WIDTH, y: 0 }}>
               {VALUES.map(v => (

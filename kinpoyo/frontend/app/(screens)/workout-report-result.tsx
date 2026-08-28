@@ -36,32 +36,24 @@ function fmtPct(value: number | null | undefined): string {
 function fmtNum(value: number | null | undefined): string {
   return value === null || value === undefined ? '-' : String(value);
 }
-function fmtSignedPct(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '';
-  const sign = value > 0 ? '+' : '';
-  return `${sign}${value}%`;
-}
 
 type ExerciseComparison = NonNullable<WorkoutSessionReportOut['planned_vs_actual_json']>['exercises'][number];
+type SetComparison = ExerciseComparison['sets'][number];
 
-function MetricRow({ label, current, prev, changePct, unit }: {
-  label: string;
-  current: number | null;
-  prev: number | null;
-  changePct?: number | null;
-  unit: string;
-}) {
+// 今回のセットを前回の「同じセット番号」と比較する行。平均ではなく実測値を
+// そのまま並べる（ユーザーフィードバック：「平均はいらない。前回の実績と
+// 重量とrep数とrpeを出して比較できるようにしてほしい」）。
+function SetCompareRow({ current, prev }: { current: SetComparison; prev: SetComparison | undefined }) {
   return (
-    <View style={styles.metricRow}>
-      <Text style={styles.metricLabel}>{label}</Text>
-      <Text style={styles.metricValue}>
-        {fmtNum(current)}{current !== null ? unit : ''}
-        {prev !== null && (
+    <View style={styles.setRow}>
+      <Text style={styles.setRowLabel}>セット{current.set_number}</Text>
+      <Text style={styles.setRowValue}>
+        {fmtNum(current.weight_kg)}kg × {fmtNum(current.reps)}回
+        {current.rpe != null ? `（RPE${current.rpe}）` : ''}
+        {prev && (
           <Text style={styles.metricPrev}>
-            {'  （前回 '}{fmtNum(prev)}{unit}
-            {changePct != null && (
-              <Text style={changePct >= 0 ? styles.metricUp : styles.metricDown}> {fmtSignedPct(changePct)}</Text>
-            )}
+            {'  （前回 '}{fmtNum(prev.weight_kg)}kg × {fmtNum(prev.reps)}回
+            {prev.rpe != null ? `・RPE${prev.rpe}` : ''}
             {'）'}
           </Text>
         )}
@@ -71,7 +63,7 @@ function MetricRow({ label, current, prev, changePct, unit }: {
 }
 
 function ExerciseCard({ ex }: { ex: ExerciseComparison }) {
-  const hasPrev = ex.prev_avg_weight_kg != null || ex.prev_avg_reps != null || ex.prev_avg_rpe != null;
+  const hasPrev = ex.prev_sets.length > 0;
   return (
     <View style={styles.exerciseCard}>
       <View style={styles.exerciseHeaderRow}>
@@ -80,9 +72,13 @@ function ExerciseCard({ ex }: { ex: ExerciseComparison }) {
           {ex.actual_sets}/{ex.target_sets ?? '-'}set ・ {fmtPct(ex.achievement_pct)}
         </Text>
       </View>
-      <MetricRow label="平均重量" current={ex.avg_weight_kg} prev={ex.prev_avg_weight_kg} changePct={ex.weight_change_pct} unit="kg" />
-      <MetricRow label="平均レップ数" current={ex.avg_reps} prev={ex.prev_avg_reps} unit="回" />
-      <MetricRow label="平均RPE" current={ex.avg_rpe} prev={ex.prev_avg_rpe} unit="" />
+      {ex.sets.map(s => (
+        <SetCompareRow
+          key={s.set_number}
+          current={s}
+          prev={ex.prev_sets.find(p => p.set_number === s.set_number)}
+        />
+      ))}
       {!hasPrev && <Text style={styles.noPrevText}>前回の同じ種目データはありません</Text>}
     </View>
   );
@@ -231,18 +227,18 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.bold,
     color: Colors.textSecondary,
   },
-  metricRow: {
+  setRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Space[2],
   },
-  metricLabel: {
+  setRowLabel: {
     width: 56,
     fontSize: FontSize.xs,
     fontWeight: FontWeight.semibold,
     color: Colors.textHint,
   },
-  metricValue: {
+  setRowValue: {
     flex: 1,
     fontSize: FontSize.sm,
     fontWeight: FontWeight.semibold,
@@ -253,8 +249,6 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.medium,
     color: Colors.textSecondary,
   },
-  metricUp: { color: '#16A34A', fontWeight: FontWeight.bold },
-  metricDown: { color: Colors.error, fontWeight: FontWeight.bold },
   noPrevText: {
     fontSize: FontSize.xs,
     color: Colors.textHint,

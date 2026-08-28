@@ -17,13 +17,21 @@ TEMPO_FAST_THRESHOLD_SEC = 1.5
 class ReviewMeasurements:
     """レビュー生成用に集計した実測値（プロンプトにそのまま埋め込む）。
     「棄却」という概念はここでは扱わない（カウントとフォーム評価を分離する
-    方針のため。AIレビューに"棄却"の話を持ち込まない）。"""
+    方針のため。AIレビューに"棄却"の話を持ち込まない）。
+
+    2026-08-28追加：posture_mismatch_count/movement_mismatch_countのみ例外——
+    これらは「カウントしたレップの品質」ではなく「そもそも種目と違う動き・
+    姿勢が混ざっていた候補の数」なので、良し悪しの評価とは別の情報として
+    ユーザーに伝える価値がある（app/core/rep_model.pyの妥当性ゲート・
+    姿勢ゲート参照）。"""
     total_rep_count: int
     good_form_count: int
     needs_improvement_count: int
     avg_bottom_deg: Optional[float]
     avg_top_deg: Optional[float]
     avg_period_sec: Optional[float]
+    posture_mismatch_count: int = 0
+    movement_mismatch_count: int = 0
 
 
 def aggregate_cycles(rep_cycles_json_list: list[list[dict]]) -> ReviewMeasurements:
@@ -36,6 +44,8 @@ def aggregate_cycles(rep_cycles_json_list: list[list[dict]]) -> ReviewMeasuremen
     total_count = 0
     good_count = 0
     improvement_count = 0
+    posture_mismatch_count = 0
+    movement_mismatch_count = 0
     bottom_values: list[float] = []
     top_values: list[float] = []
     period_values: list[float] = []
@@ -45,6 +55,18 @@ def aggregate_cycles(rep_cycles_json_list: list[list[dict]]) -> ReviewMeasuremen
             continue
         for cycle in cycles:
             if not cycle.get("counted"):
+                # counted=Falseでも、妥当性/姿勢ゲートによる棄却
+                # （invalid_reason="movement"/"posture"）だけは別途カウント
+                # する。「そもそも種目と違う動き・姿勢だった可能性」を
+                # ユーザーに伝えるための情報であり、レップの品質評価
+                # （good/needs_improvement）とは別軸のため実測値には混ぜない。
+                # 測定不能（invalid_reasonが無い）はここでは扱わない——動画・
+                # トラッキングの技術的な問題であり、フォームの話ではないため。
+                reason = cycle.get("invalid_reason")
+                if reason == "posture":
+                    posture_mismatch_count += 1
+                elif reason == "movement":
+                    movement_mismatch_count += 1
                 continue
             total_count += 1
             if cycle.get("form_quality") == "good":
@@ -74,6 +96,8 @@ def aggregate_cycles(rep_cycles_json_list: list[list[dict]]) -> ReviewMeasuremen
         avg_period_sec=(
             round(sum(period_values) / len(period_values), 2) if period_values else None
         ),
+        posture_mismatch_count=posture_mismatch_count,
+        movement_mismatch_count=movement_mismatch_count,
     )
 
 
@@ -106,5 +130,16 @@ def judge_aspects(
             aspects.append("tempo_fast")
         else:
             aspects.append("tempo_good")
+
+    # 2026-08-28追加：姿勢ゲートで棄却された候補が1つでもあれば、種目と違う
+    # 姿勢・動きが混ざっていた可能性をユーザーに伝える。深さ・テンポと違い
+    # 「良い/悪い」の対にはならない（無ければ何も言わないだけでよい）。
+    if measurements.posture_mismatch_count > 0:
+        aspects.append("posture_mismatch")
+
+    # 2026-08-28追加：妥当性ゲート（角度帯・ROM・形状）で棄却された候補が
+    # あれば、動きの形が種目と大きく異なっていた可能性をユーザーに伝える。
+    if measurements.movement_mismatch_count > 0:
+        aspects.append("movement_mismatch")
 
     return aspects
