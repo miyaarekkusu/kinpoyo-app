@@ -74,6 +74,27 @@ const ANNOUNCE_MS = 2400;
 /** メニュー完了後、終了画面へ移るまでの余韻。 */
 const FINISH_LINGER_MS = 2800;
 
+
+/**
+ * リアルタイム版のノーカン理由を、保存スキーマの invalid / invalid_reason に写す。
+ *
+ * main 側（2026-08-28）で rep_cycles_json に invalid が入った。review_judge は
+ * これをこう解釈する:
+ *   invalid_reason='posture' … 体幹の向きが種目と食い違う＝別種目の可能性
+ *   invalid_reason='movement' … 動きが種目と食い違う
+ *   invalid=false かつ counted=false … 測定不能（技術的問題）。実測値にも
+ *                                       ミスマッチ件数にも数えない
+ *
+ * リアルタイム版は姿勢ゲートを持たない（位相の進み方で判定している）ので
+ * 'posture' は使わない。流れから外れた・テンポ外れ・可動域外は「動きが違う」＝
+ * movement、姿勢ロストは技術的問題なので invalid にしない。
+ */
+function toInvalid(reason: string | null): { invalid: boolean; invalid_reason: 'movement' | 'posture' | null } {
+  if (reason === null) return { invalid: false, invalid_reason: null };
+  if (reason === 'pose_lost') return { invalid: false, invalid_reason: null };
+  return { invalid: true, invalid_reason: 'movement' };
+}
+
 const PHASE_UI: Record<Phase, { label: string; color: string }> = {
   loading: { label: '準備中', color: '#9CA3AF' },
   error: { label: 'エラー', color: Colors.error },
@@ -337,6 +358,7 @@ export default function WorkoutCameraLiveScreen() {
         start: Math.round(e.start_sec * 1000), end: Math.round(e.end_sec * 1000),
         counted: e.counted, form_quality: e.form_quality, distance: null,
         bottom_deg: e.bottom_deg, top_deg: e.top_deg, period_sec: e.period_sec,
+        ...toInvalid(e.not_counted_reason),
       }));
       const payload = { ai_counted_reps: counted, rep_cycles_json: repCycles };
       try {
