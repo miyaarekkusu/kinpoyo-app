@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -12,7 +14,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, router } from 'expo-router';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/hooks/use-auth';
@@ -34,6 +35,27 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // キーボード表示時にロゴを縮小して、フォームのスペースを確保する
+  // （2026-08-28追加。キーボードが出ると画面全体が持ち上がって窮屈に見える
+  // 問題への対策。0=通常表示、1=キーボード表示中）。
+  const logoAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => {
+      Animated.timing(logoAnim, { toValue: 1, duration: 200, useNativeDriver: false }).start();
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      Animated.timing(logoAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [logoAnim]);
+  const logoFontSize = logoAnim.interpolate({ inputRange: [0, 1], outputRange: [48, 26] });
+  const logoOpacity = logoAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.7] });
 
   const handleLogin = async () => {
     setError(null);
@@ -59,9 +81,13 @@ export default function LoginScreen() {
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled">
 
-            <Text style={styles.title}>ログイン</Text>
+            <Animated.Text style={[styles.logo, { fontSize: logoFontSize, opacity: logoOpacity }]}>
+              kinpoyo
+            </Animated.Text>
 
             <View style={styles.form}>
+              <Text style={styles.title}>ログイン</Text>
+
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>メールアドレス</Text>
                 <TextInput
@@ -119,28 +145,13 @@ export default function LoginScreen() {
                   <Text style={styles.primaryBtnText}>ログイン</Text>
                 )}
               </TouchableOpacity>
+            </View>
 
-              <View style={styles.dividerRow}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>または</Text>
-                <View style={styles.dividerLine} />
-              </View>
-
-              <TouchableOpacity style={styles.socialBtn} activeOpacity={0.85}>
-                <FontAwesome name="apple" size={18} color={Colors.textPrimary} />
-                <Text style={styles.socialBtnText}>Appleでログイン</Text>
+            <View style={styles.switchRow}>
+              <Text style={styles.switchText}>アカウントをお持ちでない方は </Text>
+              <TouchableOpacity onPress={() => router.push('/signup')}>
+                <Text style={styles.switchLink}>新規登録</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.socialBtn} activeOpacity={0.85}>
-                <FontAwesome name="google" size={16} color="#EA4335" />
-                <Text style={styles.socialBtnText}>Googleでログイン</Text>
-              </TouchableOpacity>
-
-              <View style={styles.switchRow}>
-                <Text style={styles.switchText}>アカウントをお持ちでない方は </Text>
-                <TouchableOpacity onPress={() => router.push('/signup')}>
-                  <Text style={styles.switchLink}>新規登録</Text>
-                </TouchableOpacity>
-              </View>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -156,9 +167,17 @@ const styles = StyleSheet.create({
   },
   scroll: {
     flexGrow: 1,
+    justifyContent: 'space-between',
     paddingHorizontal: Layout.screenPaddingH,
-    paddingTop: Space[8],
-    paddingBottom: Space[10],
+    paddingVertical: Space[8],
+  },
+  logo: {
+    // FontSizeトークンの最大('3xl'=34)を超えるロゴ用の特別サイズ。
+    fontSize: 48,
+    fontWeight: FontWeight.bold,
+    color: Colors.primaryDark,
+    letterSpacing: 1,
+    textAlign: 'center',
   },
   title: {
     fontSize: FontSize.xl,
@@ -236,39 +255,6 @@ const styles = StyleSheet.create({
     fontSize: FontSize.md,
     fontWeight: FontWeight.semibold,
     color: Colors.textOnPrimary,
-  },
-
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Space[3],
-    marginVertical: Space[1],
-  },
-  dividerLine: {
-    flex: 1,
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: Colors.border,
-  },
-  dividerText: {
-    fontSize: FontSize.sm,
-    color: Colors.textHint,
-  },
-
-  socialBtn: {
-    height: Layout.buttonHeightLg,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.bgCard,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Space[3],
-  },
-  socialBtnText: {
-    fontSize: FontSize.base,
-    fontWeight: FontWeight.medium,
-    color: Colors.textPrimary,
   },
 
   switchRow: {
