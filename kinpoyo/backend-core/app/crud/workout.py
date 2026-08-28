@@ -168,11 +168,19 @@ def abort_session(db: Session, session: WorkoutSession) -> WorkoutSession:
     session.started_at = None
     session.ended_at = None
     session.duration_sec = None
+    from app.models.workout import AiReview, WorkoutSessionReport
+
     for se in session.session_exercises:
+        # 計測結果を消す以上、その結果に対するAIレビューも残してはいけない
+        # （回数が変わるのに古い講評が見えてしまう）。
+        db.query(AiReview).filter(AiReview.session_exercise_id == se.id).delete()
         for st in se.sets:
             st.ai_counted_reps = None
             st.rep_cycles_json = None
             st.completed_at = None
+    db.query(WorkoutSessionReport).filter(
+        WorkoutSessionReport.workout_session_id == session.id
+    ).delete()
     db.commit()
     db.refresh(session)
     return session

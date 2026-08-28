@@ -58,6 +58,19 @@ export default function WorkoutFinishScreen() {
     return () => { cancelled = true; };
   }, [sessionId, token]);
 
+  // 戻るはパス指定ではなくスタックを1枚戻す。
+  // router.replace('/(tabs)/workout') だと、カレンダー（ホーム）からリザルトを
+  // 開いたときに筋トレ開始タブへ飛んでしまい、来た画面に戻らない。
+  // canGoBack() が false になるのは直リンクで開かれた場合だけなので、
+  // そのときだけ既定の行き先へ逃がす。
+  const handleClose = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/(tabs)/workout');
+  };
+
   const handleReview = async () => {
     setReviewLoading(true);
     setErrorText(null);
@@ -133,7 +146,7 @@ export default function WorkoutFinishScreen() {
           )}
         </Pressable>
 
-        <Pressable style={styles.secondaryBtn} onPress={() => router.replace('/(tabs)/workout')}>
+        <Pressable style={styles.secondaryBtn} onPress={handleClose}>
           <Text style={styles.secondaryBtnText}>閉じる</Text>
         </Pressable>
       </ScrollView>

@@ -189,13 +189,11 @@ STREAMING_CONFIG = RealtimeConfig(
     ng_sec=0.35,
     gap_sec=0.35,
     phase_rate_alpha=0.6,
-    # 低fpsではEMAの追従遅れが致命的になる。alpha=0.4 のままだと、5fps で「途中で
-    # 止まった」1.5秒のうち1秒近くをEMAの収束に食われ、位相が進み続けて停滞を
-    # 検知できなかった。サンプル間隔が長いぶん平滑化は弱めでよい（単発の外れ値は
-    # 前段の3点メディアンが落とす）。
+    # 低fpsではEMAの追従遅れが効く。合成信号では alpha=0.85 の方が good だったが、
+    # 実機では 0.6 の方がカウントできていたため戻した（2026-08-29）。
+    # 合成信号は実機のノイズを再現できていないので、実測を優先する。
     ema_alpha=0.6,
-    # 粗いサンプリングでボトムを取り逃すぶんROMが小さく出る（8fpsで約3°、5fpsで
-    # 約8°）。下限をそのままにすると浅いレップが可動域不足で落ちる。
+    # 粗いサンプリングでボトムを取り逃すぶんROMが小さく出る。
     rom_min_deg=32.0,
 )
 
@@ -377,19 +375,23 @@ class RealtimeRepCounter:
         if angle is None:
             return self._on_lost(t_sec, dt)
 
-        a = self._smooth(angle)
+        a = self._smooth(angle, dt)
         if self.state is State.IDLE:
             self._update_anchor(a)
             return None
         return self._track(t_sec, dt, a)
 
-    def _smooth(self, angle: float) -> float:
+    def _smooth(self, angle: float, dt: float) -> float:
         """因果的な前処理：3点メディアン（デグリッチ）→ 片側EMA（平滑化）。
 
         バッチ版の `_declitch()` + `_smooth()` に対応する。どちらも未来フレームを
-        参照する実装なので流用できない。メディアンは1サンプル分の群遅延と引き換えに
-        単発の外れ値を完全に除去できる。EMA単体では外れ値を薄めるだけで残るため、
-        位相の逆引きが汚れて停滞検知が誤爆する（合成信号で確認済み）。
+        参照する実装なので流用できない。
+
+        ⚠️ メディアンは単調変化の区間で必ず「1つ前の値」を返すため1サンプル遅れる
+        （2.9fps では 350ms）。遅延を嫌って「変化率が大きいサンプルを1回だけ棄却する」
+        方式に置き換えたことがあるが、実機で4回試して1回もカウントされず、
+        メディアンの方が明確に良かったため戻した。合成信号では差が出なかった
+        （実機のノイズは合成では再現できていない）。
         """
         self._raw_window.append(angle)
         if len(self._raw_window) > 3:

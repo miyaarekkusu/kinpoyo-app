@@ -29,6 +29,7 @@ import { fetchRepModel } from '@/services/exercises';
 import {
   SessionExerciseOut,
   WorkoutSessionOut,
+  abortWorkout,
   endWorkout,
   fetchWorkoutsByDate,
   generateWorkoutReport,
@@ -196,6 +197,23 @@ export default function WorkoutScreen() {
     }
   };
 
+  // 完了したメニューを「予定済み」に戻してもう一度実行する。
+  // 1日1メニュー制のため通常は開始できないが、回数カウントの検証では同じメニューを
+  // 何度も回したい。計測結果とAIレビューはサーバー側で消される。
+  const handleRetest = async () => {
+    if (!activeSession) return;
+    setLifecycleError(null);
+    setIsLifecycleBusy(true);
+    try {
+      await abortWorkout(token, activeSession.id);
+      await loadToday();
+    } catch (e) {
+      setLifecycleError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
+    } finally {
+      setIsLifecycleBusy(false);
+    }
+  };
+
   const handleEnd = async () => {
     if (!activeSession) return;
     setLifecycleError(null);
@@ -270,8 +288,19 @@ export default function WorkoutScreen() {
               <Text style={styles.registerBtnText}>リザルトを見る</Text>
             </TouchableOpacity>
             <Text style={styles.emptySubtitle}>
-              1日1メニューまでです。次のメニューは明日から登録できます。
+              1日1メニューまでです。
             </Text>
+            {/* 回数カウントの検証用。同じメニューを何度も回せるようにする。
+                計測結果とAIレビューは消えて「予定済み」に戻る。 */}
+            <TouchableOpacity
+              style={styles.retestBtn}
+              activeOpacity={0.7}
+              disabled={isLifecycleBusy}
+              onPress={handleRetest}>
+              <Text style={styles.retestBtnText}>
+                {isLifecycleBusy ? '戻しています…' : 'もう一度実行する（テスト用）'}
+              </Text>
+            </TouchableOpacity>
           </View>
         ) : hasWorkout ? (
           <>
@@ -397,6 +426,11 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     textAlign: 'center',
   },
+  retestBtn: {
+    marginTop: Space[2], alignItems: 'center', paddingVertical: Space[2],
+    borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.borderStrong,
+  },
+  retestBtnText: { color: Colors.textSecondary, fontSize: FontSize.sm },
   doneBadge: {
     alignSelf: 'flex-start', backgroundColor: Colors.primarySubtle,
     color: Colors.primaryDark, fontSize: FontSize.sm, fontWeight: FontWeight.bold,

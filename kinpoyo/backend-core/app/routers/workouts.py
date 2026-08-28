@@ -110,15 +110,23 @@ def abort_workout(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """計測を中断して「予定済み」に戻す（＝最初からやり直せる状態）。
+    """計測を「予定済み」に戻す（＝最初からやり直せる状態）。
 
-    以前は開始ボタンを押した時点でセッションが実施中になり、計測画面で中断して
-    戻ると開始画面に「実施中」が残り続けるバグになっていた。中断はキャンセル
-    （メニューごと取り消し）とも終了とも違うので、専用の口を用意する。
+    2つの用途がある。
+      1. 計測画面で中断したとき。以前は開始ボタンを押した時点で実施中になり、
+         中断して戻ると開始画面に「実施中」が残り続けるバグになっていた。
+      2. 完了済みのメニューをもう一度実行したいとき（回数カウントの検証用）。
+         1日1メニュー制のため、完了すると開始ボタンが出なくなる。
+
+    キャンセル（メニューごと取り消し）とも終了とも違うので専用の口にしている。
+    取り消し済みには触らない——捨てたものを掘り返さないため。
     """
     session = _get_owned_session(db, session_id, current_user)
-    if session.status_id != workout_crud.STATUS_IN_PROGRESS:
-        # 既に予定済みなら何もしなくてよい（冪等）。
+    if session.status_id not in (
+        workout_crud.STATUS_IN_PROGRESS,
+        workout_crud.STATUS_COMPLETED,
+    ):
+        # 既に予定済み、または取り消し済み。何もしない（冪等）。
         return workout_crud.session_to_out(session)
     session = workout_crud.abort_session(db, session)
     return workout_crud.session_to_out(session)

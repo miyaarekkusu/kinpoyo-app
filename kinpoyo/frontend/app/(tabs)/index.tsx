@@ -213,6 +213,14 @@ export default function HomeScreen() {
     [monthWorkouts, selDateIso]
   );
 
+  // その日の筋トレが終わっているか。終わっていたらメニューは編集させず、
+  // 実績（リザルト）を見せる。終了後に編集できると、既に計測した記録と
+  // 食い違うメニューになってしまうため。
+  const selDayCompletedSession = useMemo(
+    () => selDaySessions.find(s => s.status_code === 'completed') ?? null,
+    [selDaySessions]
+  );
+
   const selDayWorkouts: WorkoutItem[] = useMemo(
     () =>
       selDaySessions.flatMap(s =>
@@ -279,6 +287,14 @@ export default function HomeScreen() {
 
   const handleEditRegisteredMenu = () => {
     if (selDaySessions.length === 0) return;
+    // 終了済みの日は編集ではなくリザルトへ。
+    if (selDayCompletedSession !== null) {
+      router.push({
+        pathname: '/(screens)/workout-finish',
+        params: { sessionId: String(selDayCompletedSession.id) },
+      });
+      return;
+    }
     router.push({
       pathname: '/(screens)/program/program_choice',
       params: {
@@ -414,17 +430,38 @@ export default function HomeScreen() {
             style={styles.programCard}
             onPress={handleEditRegisteredMenu}
             activeOpacity={0.8}>
-            <Text style={styles.programCardTitle}>{selLabel}のトレーニングメニュー</Text>
-            {selDayWorkouts.map(w => (
-              <View key={w.id} style={styles.exerciseRow}>
-                <Text style={styles.exerciseName} numberOfLines={1}>
-                  • {w.name}
-                </Text>
-                <Text style={styles.exerciseDetails}>
-                  {w.sets.length}set / {w.sets.map(s => `${s.weight}kg×${s.reps}`).join(', ')}
-                </Text>
-              </View>
-            ))}
+            <Text style={styles.programCardTitle}>
+              {selLabel}の{selDayCompletedSession !== null ? '記録' : 'トレーニングメニュー'}
+            </Text>
+            {selDayCompletedSession !== null && (
+              <Text style={styles.doneBadge}>完了しました</Text>
+            )}
+            {selDayCompletedSession !== null
+              ? selDayCompletedSession.exercises.map(ex => {
+                  const recorded = ex.sets.filter(st => st.ai_counted_reps !== null);
+                  const totalReps = recorded.reduce((sum, st) => sum + (st.ai_counted_reps ?? 0), 0);
+                  return (
+                    <View key={ex.id} style={styles.exerciseRow}>
+                      <Text style={styles.exerciseName} numberOfLines={1}>• {ex.exercise_name}</Text>
+                      <Text style={styles.exerciseDetails}>
+                        {recorded.length}セット / 合計{totalReps}回
+                      </Text>
+                    </View>
+                  );
+                })
+              : selDayWorkouts.map(w => (
+                  <View key={w.id} style={styles.exerciseRow}>
+                    <Text style={styles.exerciseName} numberOfLines={1}>
+                      • {w.name}
+                    </Text>
+                    <Text style={styles.exerciseDetails}>
+                      {w.sets.length}set / {w.sets.map(s => `${s.weight}kg×${s.reps}`).join(', ')}
+                    </Text>
+                  </View>
+                ))}
+            {selDayCompletedSession !== null && (
+              <Text style={styles.emptySubtitle}>タップしてリザルトを見る</Text>
+            )}
           </TouchableOpacity>
         ) : (
           /* 未登録：タップで筋トレメニュー登録画面へ */
@@ -798,6 +835,12 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.semibold,
     color: Colors.textPrimary,
     marginBottom: Space[1],
+  },
+  doneBadge: {
+    alignSelf: 'flex-start', backgroundColor: Colors.primarySubtle,
+    color: Colors.primaryDark, fontSize: FontSize.sm, fontWeight: FontWeight.bold,
+    paddingHorizontal: Space[3], paddingVertical: Space[1], borderRadius: Radius.md,
+    overflow: 'hidden',
   },
   emptySubtitle: {
     fontSize: FontSize.sm,

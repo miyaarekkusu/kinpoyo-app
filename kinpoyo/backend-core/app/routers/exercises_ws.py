@@ -38,6 +38,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
+from pathlib import Path
 from dataclasses import asdict
 from typing import Optional
 
@@ -92,7 +94,17 @@ def _event_to_dict(event: rt.RepEvent) -> dict:
 
 # 「その関節がちゃんと映っている」とみなす可視性のしきい値。MediaPipe の visibility は
 # 0〜1で、隠れている・フレーム外の関節は低い値になる。
-VISIBILITY_THRESHOLD = 0.7
+#
+# ⚠️ 0.7 にしてはいけない。スクワットは深さを見るため横向きに撮るのが自然で、その
+# とき奥側の半身は体に隠れて visibility が上がらない。実測（295フレーム）では
+# 左股関節・左膝の中央値が 0.84 / 0.80 なのに対し、**右膝は最大でも 0.69**、
+# 右股関節は 0.7以上が 2.5% しかなく、joints_ok が一度も True にならずに計測が
+# 始まらなかった。
+#
+# 0.2 は「隠れていてもフレーム内にはいる」を拾う値。同じ実測で4関節の最小値は
+# 25%点 0.29 / 中央値 0.40 なので、大半のフレームが通る。厳しくしたくなったら
+# ここだけ上げること。
+VISIBILITY_THRESHOLD = 0.2
 
 
 def _decode_and_measure(
@@ -122,6 +134,7 @@ def _decode_and_measure(
 
     h, w = frame_bgr.shape[:2]
     debug["size"] = f"{w}x{h}"
+    debug["frame"] = frame_bgr
     # ⚠️ 端末が縦持ちなのにここが横長（w>h）なら、向き補正されていない画像が来ている。
     # 横倒しの人物はMediaPipeの姿勢推定が大きく劣化し、visibilityが落ちて計測が
     # 始まらない（AGENTS.md『実装中に判明した重要な制約』5と同じ罠）。
@@ -198,7 +211,16 @@ async def count_reps_stream(websocket: WebSocket, exercise_id: int, token: str =
             if str(j) in JOINT_DEFINITIONS_JA
         ] or [main_joint]
 
+        # ⚠️ static_image_mode=True（毎フレーム全体から検出）を試したが、実機では
+        # 4回連続で1回もカウントされず、追跡モードのままの方が明確に良かった。
+        # 理屈の上ではフレーム間隔が空く用途に True が合うはずだが、実測が優先。
         detector = create_pose_detector()
+        # 実際に何が写っているかを1枚だけ保存する。可視性が 0.0 近辺のとき、
+        # 「人が小さすぎる／暗い／フレーム外」のどれなのかはログの数値だけでは
+        # 分からない。目で見て切り分けるための最短手段。
+        debug_dir = Path("debug_frames")
+        debug_dir.mkdir(exist_ok=True)
+        saved_frame = False
         raw = counter.raw
         print(
             f"[ws] 接続: exercise_id={exercise_id} 主役関節={main_joint} "
@@ -256,12 +278,14 @@ async def count_reps_stream(websocket: WebSocket, exercise_id: int, token: str =
                 continue
 
             busy = True
+            proc_began = time.perf_counter()
             try:
                 angle, joints_ok, debug = await asyncio.to_thread(
                     _decode_and_measure, detector, image_b64, main_joint, monitored_joints
                 )
             finally:
                 busy = False
+            proc_ms = (time.perf_counter() - proc_began) * 1000
 
             # 診断ログ。計測が始まらないときに「何が足りないのか」が分かるように、
             # 監視関節ごとの可視性の最小値と画像の向きを毎フレーム出す。
@@ -273,10 +297,20 @@ async def count_reps_stream(websocket: WebSocket, exercise_id: int, token: str =
                 f"[ws] t={float(t_sec):5.2f} "
                 f"img={debug.get('size', '?')}{'(横長!)' if debug.get('landscape') else ''} "
                 f"angle={'--' if angle is None else f'{angle:6.1f}'} "
-                f"joints_ok={joints_ok} count={counter.count} "
+                f"joints_ok={joints_ok} count={counter.count} 処理={proc_ms:.0f}ms "
                 f"{vis_str}{' ' + str(debug['error']) if debug.get('error') else ''}",
                 flush=True,
             )
+
+            frame_img = debug.pop("frame", None)
+            if not saved_frame and frame_img is not None:
+                saved_frame = True
+                path = debug_dir / f"frame_{int(time.time())}.jpg"
+                try:
+                    cv2.imwrite(str(path), frame_img)
+                    print(f"[ws] 検証用に1枚保存: {path}", flush=True)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[ws] フレーム保存に失敗: {exc}", flush=True)
 
             event = counter.update(float(t_sec), angle)
             await websocket.send_json(

@@ -29,14 +29,22 @@ mp_pose = mp.solutions.pose
 PoseDetector = mp_pose.Pose
 
 
-def create_pose_detector() -> PoseDetector:
+def create_pose_detector(static_image_mode: bool = False) -> PoseDetector:
     """1回の処理（1本の動画・1回のリクエスト）の間だけ使い回す検出器を作る。
 
     static_image_mode=False: 前フレームの検出結果を使って連続的に追跡する
     モード（model-studioと同じ）。フレームを渡す順序が重要なので、1本の
-    動画の処理中のみ使い回すこと。
+    動画の処理中のみ使い回すこと。**録画動画のバッチ解析はこちら。**
+
+    static_image_mode=True: 毎フレーム全体から検出し直す。追跡を使わないぶん
+    1枚あたりは重いが、フレーム間隔が空く用途ではこちらが正しい。
+    リアルタイム版（連写→WebSocket）は実測 2.9fps しか出ておらず、
+    350ms 空いたフレーム同士はほぼ無関係。それでも False のまま使うと、
+    古い追跡結果を手がかりに誤った領域を追い続ける。実測では
+    「姿勢未検出 11%」「隣接サンプル間の角度変化が最大135度（実際の動きは
+    1サンプル約19度）」という壊れ方をしていた。
     """
-    return mp_pose.Pose(static_image_mode=False, model_complexity=1)
+    return mp_pose.Pose(static_image_mode=static_image_mode, model_complexity=1)
 
 
 def close_pose_detector(detector: PoseDetector) -> None:

@@ -16,7 +16,7 @@
 //
 // 操作は**左上の中断ボタン1つだけ**。中断は最初からやり直しになるので確認を挟む。
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Stack, router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator, Animated, Modal, Pressable, StyleSheet, Text, View,
@@ -66,7 +66,7 @@ type ExercisePlan = {
 // 1枚終わってから次を撮る自己駆動ループにし、間に最低限の間隔だけ空ける。
 const MIN_CAPTURE_GAP_MS = 60;
 const PICTURE_QUALITY = 0.3;
-/** 監視関節が全て信頼できる状態が何サンプル続いたら計測を始めるか。単発では始めない。 */
+/** 監視関節が信頼できる状態が何サンプル続いたら計測を始めるか。単発では始めない。 */
 const READY_CONSECUTIVE_SAMPLES = 5;
 const DEFAULT_REST_SEC = 60;
 /** 「次は○○」を見せている時間。読む間もなく切り替わると何が起きたか分からない。 */
@@ -141,10 +141,13 @@ export default function WorkoutCameraLiveScreen() {
   const inFlightRef = useRef(false);
   const readySamplesRef = useRef(0);
   const lastCountRef = useRef(0);
+  // 計測開始時のリセット応答を1回だけ読み飛ばすためのフラグ。
+  const ignoreNextSetDoneRef = useRef(false);
   const sampleTimesRef = useRef<number[]>([]);
   const mountedRef = useRef(true);
   // ログは1回だけ出す。毎フレーム出すとMetroのコンソールが埋まって他が読めない。
   const loggedCaptureRef = useRef(false);
+  const cycleCountRef = useRef(0);
   const loggedErrorRef = useRef(false);
   // ws.onmessage は代入時の関数を握り続ける。描画後のeffectで割り当てる方式だと、
   // 割り当て前に届いた ready を取りこぼして「何も起きない」状態になる。
@@ -194,6 +197,13 @@ export default function WorkoutCameraLiveScreen() {
   }, []);
 
   // ── 撮影解像度 ──────────────────────────────────
+  // 【計測済み・2026-08-29】撮影オプションを4通り実測した結果、
+  //   現行(base64+向き補正あり) 376ms / 向き補正なし 394ms
+  //   base64なし 347ms / base64なし+向き補正なし 370ms
+  // と全て 347〜394ms に収まり、差はばらつきの範囲内だった。
+  // takePictureAsync の約350msは Expo Go の構造的な上限で、オプションでは動かない。
+  // skipProcessing を切っても速くならない（むしろ遅い）ので、向き補正は入れたままでよい。
+  // → fps を上げる方向は打ち止め。2.7fps 前提でロジックを詰めること。
   const handleCameraReady = useCallback(async () => {
     const camera = cameraRef.current;
     if (camera === null) return;
@@ -216,6 +226,7 @@ export default function WorkoutCameraLiveScreen() {
     if (ws === null || ws.readyState !== WebSocket.OPEN || camera === null) return;
     if (inFlightRef.current) return;   // 溜めない（時刻と実時間がずれるとテンポ判定が壊れる）
     inFlightRef.current = true;
+    const captureBeganAt = Date.now();
     try {
       const picture = await camera.takePictureAsync({
         base64: true, quality: PICTURE_QUALITY,
@@ -231,16 +242,25 @@ export default function WorkoutCameraLiveScreen() {
         console.log('[workout-camera-live] base64が空');
         return;
       }
-      if (!loggedCaptureRef.current) {
-        loggedCaptureRef.current = true;
+      // 1周の内訳を測る。サーバー側は実測25msしかかかっておらず、残り約325msが
+      // 端末側にある。どこを削れば速くなるかは、撮影・JSON化・送信の内訳を
+      // 見ないと決められない。10周ごとに1回だけ出す（毎周出すとログが埋まる）。
+      const capturedAt = Date.now();
+      const payload = JSON.stringify({
+        t: (capturedAt - setStartedAtRef.current) / 1000, image: picture.base64,
+      });
+      const serializedAt = Date.now();
+      ws.send(payload);
+      const sentAt = Date.now();
+
+      cycleCountRef.current += 1;
+      if (cycleCountRef.current % 10 === 1) {
         console.log(
-          `[workout-camera-live] 撮影成功 ${picture.width}x${picture.height} ` +
-          `base64=${Math.round(picture.base64.length / 1024)}KB`
+          `[workout-camera-live] 内訳 撮影=${capturedAt - captureBeganAt}ms ` +
+          `JSON化=${serializedAt - capturedAt}ms 送信=${sentAt - serializedAt}ms ` +
+          `／ ${picture.width}x${picture.height} base64=${Math.round(picture.base64.length / 1024)}KB`
         );
       }
-      ws.send(JSON.stringify({
-        t: (Date.now() - setStartedAtRef.current) / 1000, image: picture.base64,
-      }));
     } catch (e) {
       if (!loggedErrorRef.current) {
         loggedErrorRef.current = true;
@@ -428,10 +448,17 @@ export default function WorkoutCameraLiveScreen() {
         if (msg.joints_ok === true) {
           readySamplesRef.current += 1;
           if (readySamplesRef.current >= READY_CONSECUTIVE_SAMPLES) {
+            // サーバーは接続直後からカウントを始めている。準備中に動いたぶんが
+            // 積み上がったまま計測に入ると、開始した瞬間に回数がいきなり増えている
+            // ことになるので、ここでカウンタを作り直してゼロから数え直す。
+            // （reset の応答 set_done は準備中のゴミなので finishSet に流さない）
+            ignoreNextSetDoneRef.current = true;
+            wsRef.current?.send(JSON.stringify({ type: 'reset' }));
             playWorkoutSound('start');
             flashToast('計測開始');
             setStartedAtRef.current = Date.now();
             lastCountRef.current = 0;
+            setLiveCount(0);
             setPhaseBoth('counting');
           }
         } else {
@@ -452,6 +479,11 @@ export default function WorkoutCameraLiveScreen() {
     }
 
     if (msg.type === 'set_done') {
+      if (ignoreNextSetDoneRef.current) {
+        // 計測開始時のリセットに対する応答。準備中の計測結果なので捨てる。
+        ignoreNextSetDoneRef.current = false;
+        return;
+      }
       void finishSet(msg.count as number, msg.events as RepEventMsg[]);
       return;
     }
@@ -546,21 +578,19 @@ export default function WorkoutCameraLiveScreen() {
   };
 
   // ── 表示 ────────────────────────────────────────
-  const header = <Stack.Screen options={{ headerShown: false }} />;
+  // ヘッダーは (screens)/_layout.tsx でグループごと非表示にしている。
   const ui = PHASE_UI[phase];
 
   if (phase === 'loading' || permission === null) {
     return (
-      <SafeAreaView style={styles.container}>{header}
-        <View style={styles.centerBox}><ActivityIndicator color={Colors.primaryDark} size="large" /></View>
+      <SafeAreaView style={styles.container}>        <View style={styles.centerBox}><ActivityIndicator color={Colors.primaryDark} size="large" /></View>
       </SafeAreaView>
     );
   }
 
   if (!permission.granted) {
     return (
-      <SafeAreaView style={styles.container}>{header}
-        <View style={styles.centerBox}>
+      <SafeAreaView style={styles.container}>        <View style={styles.centerBox}>
           <Text style={styles.noticeTitle}>カメラの使用を許可してください</Text>
           <Pressable style={styles.primaryBtn} onPress={requestPermission}>
             <Text style={styles.primaryBtnText}>許可する</Text>
@@ -572,8 +602,7 @@ export default function WorkoutCameraLiveScreen() {
 
   if (phase === 'error') {
     return (
-      <SafeAreaView style={styles.container}>{header}
-        <View style={styles.centerBox}>
+      <SafeAreaView style={styles.container}>        <View style={styles.centerBox}>
           <Text style={styles.noticeTitle}>計測を開始できませんでした</Text>
           {errorText !== null && <Text style={styles.noticeBody}>{errorText}</Text>}
           <Pressable style={styles.primaryBtn} onPress={() => router.back()}>
@@ -586,17 +615,18 @@ export default function WorkoutCameraLiveScreen() {
 
   return (
     <View style={styles.container}>
-      {header}
-      <CameraView
+            <CameraView
         ref={cameraRef} style={styles.camera}
         facing="front" mode="picture"
         onCameraReady={handleCameraReady}
       />
 
-      {/* 画面全周の枠。周辺視野で状態が分かるようにする最重要要素 */}
+      {/* 画面全周の枠。周辺視野で状態が分かるようにする最重要要素。
+          ⚠️ borderWidth はネイティブドライバでアニメーションできない
+          （transform と opacity のみ）。幅は固定にして opacity を脈動させる。 */}
       <Animated.View pointerEvents="none" style={[styles.frame, {
         borderColor: ui.color,
-        borderWidth: pulse.interpolate({ inputRange: [0, 1], outputRange: [8, 16] }),
+        opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] }),
       }]} />
 
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">
@@ -702,7 +732,7 @@ export default function WorkoutCameraLiveScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  frame: { ...StyleSheet.absoluteFillObject, borderRadius: Radius.sm },
+  frame: { ...StyleSheet.absoluteFillObject, borderRadius: Radius.sm, borderWidth: 12 },
   camera: { flex: 1 },
   overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'space-between' },
   centerBox: {

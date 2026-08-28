@@ -49,12 +49,18 @@ export async function prepareWorkoutSounds(): Promise<void> {
     }
   }
   prepared = true;
+  // 音が鳴らないと言われたときに「プレイヤーが作れていない」のか
+  // 「呼ばれていない」のかを切り分けられるようにしておく。
+  console.log('[workoutSounds] 準備完了:', Object.keys(players).join(', ') || '(なし)');
 }
 
 /** 効果音を鳴らす。失敗しても計測は止めない（音は補助であって本体ではない）。 */
 export function playWorkoutSound(name: WorkoutSoundName): void {
   const player = players[name];
-  if (player === undefined) return;
+  if (player === undefined) {
+    console.log('[workoutSounds] プレイヤー未生成のため鳴らせない:', name);
+    return;
+  }
   // seekTo は Promise を返す。await せずに play() すると前回の再生位置から鳴る
   // ことがあるので、必ず巻き戻し完了を待ってから再生する。
   player
