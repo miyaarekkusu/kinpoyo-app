@@ -16,6 +16,11 @@ from pose_analysis import JOINT_DEFINITIONS_JA, _angle_at
 # 1レップ・テンプレートの正規化ビン数（サイクルを 0〜100% にリサンプルする解像度）。
 TEMPLATE_BINS = 32
 
+# 角度を計算する座標系。'world' = MediaPipe の world ランドマーク（メートル単位の実3D、
+# カメラアングル非依存）。これ以前は画像座標で角度を出しており、絶対角度がカメラと
+# 動画のアスペクト比に依存していた。学習済みモデルにこの値を焼き込んで判別する。
+POSE_SPACE = "world"
+
 
 @dataclass
 class RepConfig:
@@ -362,12 +367,14 @@ def build_template_for_sessions(
         return None, 0.3, 0
     mean, std = _mean_std_vectors(vecs)
     dists = [template_distance(v, mean) for v in vecs]
-    # 形状しきい値は学習サイクルの最大距離×1.5（下限0.35・上限0.6）。
+    # 形状しきい値は学習サイクルの最大距離×1.8（下限0.45・上限0.75）。
     # 下限が要る理由: 学習サイクルが数本しかないと互いに似すぎて最大距離がほぼ0に
     # なり、しきい値が過度に厳しくなる。実測では、同じ人の同じ種目でも沈み込みの
     # 深さ・ボトムでの静止時間が違うだけで距離 0.19〜0.27 が出る。下限がこれを下回る
     # と本物のレップを形違いとして棄却してしまう。
-    thr = min(0.6, max(max(dists) * 1.5, 0.35))
+    # 以前は 1.5 / 下限0.35 / 上限0.6 だったが、本物のレップの取りこぼしを減らすため
+    # 全体に一段甘くした。棄却力の残りは統計ゲート（絶対角度帯・ROM帯）が担う。
+    thr = min(0.75, max(max(dists) * 1.8, 0.45))
     template = {
         "bins": n_bins,
         "mean": [round(x, 4) for x in mean],
@@ -381,13 +388,16 @@ def build_template_for_sessions(
 # 統計ゲートの余裕幅。学習サイクルの実測レンジに対するマージン。全体的に甘めにして、
 # カメラアングル・体格差・関節違いによる正当なブレでの棄却を減らす（棄却の主役は形
 # テンプレートに寄せる方針）。
-# 角度: カメラアングルや人による絶対角度のブレを見込む(度)。±25°まで許容。
-_GATE_ANGLE_MARGIN_DEG = 25.0
-# ROM: 実測の最小×0.5 〜 最大×2.0 まで許容（比率ベース）。
+# 角度: カメラアングルや人による絶対角度のブレを見込む(度)。±35°まで許容。
+# 以前は ±25° だったが、同一クリップ内の 4 レップのうち 3 本が絶対角度で棄却される
+# ケースが出たため広げた。疲労やフォーム崩れで後半のレップほど角度が寄っていくのを
+# 拾いきれていなかった。
+_GATE_ANGLE_MARGIN_DEG = 35.0
+# ROM: 実測の最小×0.4 〜 最大×2.5 まで許容（比率ベース）。以前は 0.5〜2.0。
 # 注: 周期（所要フレーム数）ゲートは廃止。速さに依存する判定基準であり、テンポの
 # 違うだけの正しいレップを棄却してしまうため。速さ非依存な「形テンプレート」が
 # 走行/ノイズサイクルの棄却を肩代わりする（本物=対称V字 / ノイズ=平底プラトー）。
-_GATE_ROM_SCALE = (0.5, 2.0)
+_GATE_ROM_SCALE = (0.4, 2.5)
 
 
 def _cycle_stat(sub: list[dict]) -> Optional[tuple[float, float, int]]:
@@ -601,7 +611,10 @@ def calibrate(
     for sw in _GRID_SMOOTH:
         for en in _GRID_ENTER:
             for ex in _GRID_EXIT:
-                if ex - en < 0.2:  # 閾値の幅が狭すぎる組合せは捨てる
+                # 閾値の幅が狭すぎる組合せは捨てる。1e-9 の余裕は浮動小数点対策で、
+                # これが無いと 0.6-0.4 = 0.19999999999999996 となり、境界のつもりで
+                # 残したい最狭幅 (enter=0.4, exit=0.6) が黙って探索から落ちる。
+                if ex - en < 0.2 - 1e-9:
                     continue
                 for mp in _GRID_MIN_PERIOD:
                     for mr in _GRID_MIN_ROM:
@@ -683,6 +696,9 @@ def model_to_dict(
     d["shapeThreshold"] = shape_threshold
     d["cycleCount"] = cycle_count
     d["cycleStats"] = cycle_stats
+    # どの座標系の角度で学習したか。cycleStats の絶対角度帯は座標系が変わると意味を
+    # 失うため、world 移行前の旧モデルを使い回すと黙って誤カウントする。判別用。
+    d["poseSpace"] = POSE_SPACE
     return d
 
 
@@ -697,13 +713,20 @@ def model_from_dict(d: dict):
     return cfg, candidates, main_joint, template, shape_threshold, cycle_stats
 
 
+def model_pose_space(d: dict) -> str:
+    """モデルがどの座標系の角度で学習されたか。旧モデルは 'image'（キー無し）。"""
+    return str(d.get("poseSpace", "image"))
+
+
 def joint_series_from_frames(
     frames: Iterable[tuple[int, list]],
     joints: Iterable[str],
 ) -> dict[str, list[dict]]:
     """姿勢推定済みフレーム列から、指定関節の角度系列を作る（チェッカー用）。
 
-    frames: (frame_number, landmarks_list) の列。landmarks は MediaPipe の33点。
+    frames: (frame_number, landmarks_list) の列。landmarks は MediaPipe の33点で、
+    必ず *world* ランドマーク（メートル単位の実3D座標）を渡すこと。画像座標を渡すと
+    角度がカメラアングルと動画のアスペクト比に依存してしまう（_angle_at 参照）。
     """
     defs = {n: JOINT_DEFINITIONS_JA[n] for n in joints if n in JOINT_DEFINITIONS_JA}
     out: dict[str, list[dict]] = {n: [] for n in defs}

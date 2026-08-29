@@ -41,7 +41,16 @@ JOINT_DEFINITIONS_JA: dict[str, tuple[int, int, int]] = {
 
 
 def _angle_at(p_a: dict, p_b: dict, p_c: dict) -> Optional[float]:
-    """Return the angle at p_b between vectors p_b->p_a and p_b->p_c (degrees)."""
+    """Return the angle at p_b between vectors p_b->p_a and p_b->p_c (degrees).
+
+    必ず MediaPipe の *world* ランドマーク（腰中点を原点とするメートル単位の実3D
+    座標）を渡すこと。3点で決まる角度は座標系の回転・平行移動に対して不変なので、
+    world 座標から計算した角度はカメラをどこに置いても同じ値になる。
+
+    画像座標(pose_landmarks)を渡してはいけない: x は画像幅・y は画像高さで別々に
+    正規化されているためアスペクト比の分だけ歪み、z はさらに別スケールなので、
+    3つを混ぜた内積はカメラと動画サイズに依存した無意味な角度になる。
+    """
     vx1, vy1, vz1 = p_a["x"] - p_b["x"], p_a["y"] - p_b["y"], p_a["z"] - p_b["z"]
     vx2, vy2, vz2 = p_c["x"] - p_b["x"], p_c["y"] - p_b["y"], p_c["z"] - p_b["z"]
     dot = vx1 * vx2 + vy1 * vy2 + vz1 * vz2
@@ -51,6 +60,19 @@ def _angle_at(p_a: dict, p_b: dict, p_c: dict) -> Optional[float]:
         return None
     cos_a = max(-1.0, min(1.0, dot / (mag1 * mag2)))
     return math.degrees(math.acos(cos_a))
+
+
+def _parse_landmarks(lm_json: Optional[str]) -> Optional[list]:
+    """保存済み JSON を 33点のランドマーク列に戻す。壊れていれば None。"""
+    if not lm_json:
+        return None
+    try:
+        landmarks = json.loads(lm_json)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(landmarks, list) or len(landmarks) < 33:
+        return None
+    return landmarks
 
 
 def _stats(values: list[float]) -> dict:
@@ -134,17 +156,23 @@ def _aggregate_curve(
 
 
 def analyze_sessions(
-    session_frames: Iterable[tuple[int, int, str]],
+    session_frames: Iterable[tuple[int, int, str, str]],
     new_session_ids: Optional[Iterable[int]] = None,
     existing_session_ids: Optional[Iterable[int]] = None,
     monitored_joints: Optional[Iterable[str]] = None,
 ) -> dict:
     """
-    Given an iterable of (session_id, frame_number, pose_landmarks_json),
+    Given an iterable of
+    (session_id, frame_number, pose_landmarks_json, pose_world_landmarks_json),
     compute joint-angle stats, time series per session, and mean landmark
     positions. If new/existing session IDs are supplied, also compute one
     averaged curve per group (normalized to relative time 0..1) for each
     joint, which lets the UI overlay "new vs existing" comparison curves.
+
+    2つの座標系を使い分ける:
+      - 角度は world 座標から。カメラアングルに依存しない絶対角度になる。
+      - landmark_mean は画像座標から。骨格の描画用で、UI が 0〜1 を画面サイズに
+        掛けて使う（world はメートル単位で原点が腰なので描画には使えない）。
     """
     new_set = set(new_session_ids or [])
     existing_set = set(existing_session_ids or [])
@@ -173,14 +201,9 @@ def analyze_sessions(
     total_frames = 0
     frames_per_session: dict[int, int] = {}
 
-    for session_id, frame_number, lm_json in session_frames:
-        if not lm_json:
-            continue
-        try:
-            landmarks = json.loads(lm_json)
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(landmarks, list) or len(landmarks) < 33:
+    for session_id, frame_number, lm_json, world_json in session_frames:
+        world = _parse_landmarks(world_json)
+        if world is None:  # 角度は world からしか出さない
             continue
 
         seen_sessions.add(session_id)
@@ -189,7 +212,7 @@ def analyze_sessions(
 
         for joint_name, (ai, bi, ci) in active_joint_defs.items():
             try:
-                angle = _angle_at(landmarks[ai], landmarks[bi], landmarks[ci])
+                angle = _angle_at(world[ai], world[bi], world[ci])
             except (KeyError, IndexError, TypeError):
                 angle = None
             if angle is None:
@@ -198,9 +221,14 @@ def analyze_sessions(
             sess_series = joint_series[joint_name].setdefault(session_id, [])
             sess_series.append({"frame": frame_number, "angle": round(angle, 2)})
 
+        # 描画用の平均骨格は画像座標から積む（world は原点が腰・単位がメートルなので
+        # そのまま画面に描けない）。
+        image_lm = _parse_landmarks(lm_json)
+        if image_lm is None:
+            continue
         for i in LANDMARK_LABELS_JA:
             try:
-                pt = landmarks[i]
+                pt = image_lm[i]
                 landmark_sums[i]["x"] += pt["x"]
                 landmark_sums[i]["y"] += pt["y"]
                 landmark_sums[i]["z"] += pt["z"]

@@ -200,6 +200,9 @@ export default function SelectScreen() {
         }
         renderItem={({ item }) => {
           const isSel = selected.has(item.id);
+          // 旧形式（画像座標のみ）は絶対角度が出せず分析・学習に使えない。
+          // 動画を選び直して再アップロードするまで選択させない。
+          const isLegacy = item.pose_space !== 'world';
           const frames =
             item.end_frame != null && item.start_frame != null
               ? item.end_frame - item.start_frame + 1
@@ -212,8 +215,10 @@ export default function SelectScreen() {
                 sharedStyles.card,
                 isSel && { borderColor: colors.accent, borderWidth: 2 },
                 item.used && !isSel && { opacity: 0.65 },
+                isLegacy && { opacity: 0.45 },
               ]}
               onPress={() => toggle(item.id)}
+              disabled={isLegacy}
             >
               <View style={[sharedStyles.row, { justifyContent: 'space-between' }]}>
                 <View style={{ flex: 1 }}>
@@ -226,19 +231,27 @@ export default function SelectScreen() {
                   <Text style={styles.itemMeta}>
                     {frames} f / {dur} s @ {item.fps?.toFixed?.(1) ?? '—'} fps
                   </Text>
+                  {isLegacy && (
+                    <Text style={styles.legacyNote}>
+                      旧形式（画像座標のみ）。動画を選び直して再アップロードしてください。
+                    </Text>
+                  )}
                 </View>
                 <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                  {isLegacy && <Text style={styles.legacyBadge}>要再取込</Text>}
                   {item.used && (
                     <Text style={styles.usedBadge}>使用済</Text>
                   )}
-                  <View
-                    style={[
-                      styles.checkbox,
-                      isSel && { backgroundColor: colors.accent, borderColor: colors.accent },
-                    ]}
-                  >
-                    {isSel && <Text style={{ color: '#fff', fontWeight: 'bold' }}>✓</Text>}
-                  </View>
+                  {!isLegacy && (
+                    <View
+                      style={[
+                        styles.checkbox,
+                        isSel && { backgroundColor: colors.accent, borderColor: colors.accent },
+                      ]}
+                    >
+                      {isSel && <Text style={{ color: '#fff', fontWeight: 'bold' }}>✓</Text>}
+                    </View>
+                  )}
                 </View>
               </View>
             </Pressable>
@@ -303,6 +316,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.used,
     borderRadius: 4,
+  },
+  legacyBadge: {
+    color: colors.danger,
+    fontSize: 11,
+    fontWeight: 'bold',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    borderRadius: 4,
+  },
+  legacyNote: {
+    color: colors.danger,
+    fontSize: 11,
+    marginTop: 4,
   },
   checkbox: {
     width: 26,

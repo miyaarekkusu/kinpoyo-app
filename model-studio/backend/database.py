@@ -71,17 +71,31 @@ def init_schema():
     IF COL_LENGTH('RecordingSession', 'true_reps') IS NULL
     ALTER TABLE RecordingSession ADD true_reps INT NULL;
 
+    -- どの座標系で姿勢を保存したか。'image' = 画像座標のみ（world 導入前の旧データ。
+    -- 絶対角度が計算できないので分析・学習には使えない）。'world' = メートル単位の
+    -- 3D world 座標も保存済み。旧データは動画を削除済みで再計算できないため、
+    -- 撮り直し（再アップロード）が必要。その判別にこの列を使う。
+    IF COL_LENGTH('RecordingSession', 'pose_space') IS NULL
+    ALTER TABLE RecordingSession ADD pose_space NVARCHAR(10) NOT NULL
+        CONSTRAINT DF_RecordingSession_pose_space DEFAULT 'image';
+
     IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='FrameSample' AND xtype='U')
     CREATE TABLE FrameSample (
-        id              INT IDENTITY(1,1) PRIMARY KEY,
-        session_id      INT           NOT NULL,
-        frame_number    INT           NOT NULL,
-        image           VARBINARY(MAX) NULL,
-        pose_landmarks  NVARCHAR(MAX) NULL,
-        created_at      DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME(),
+        id                     INT IDENTITY(1,1) PRIMARY KEY,
+        session_id             INT           NOT NULL,
+        frame_number           INT           NOT NULL,
+        image                  VARBINARY(MAX) NULL,
+        pose_landmarks         NVARCHAR(MAX) NULL,
+        pose_world_landmarks   NVARCHAR(MAX) NULL,
+        created_at             DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME(),
         CONSTRAINT FK_FrameSample_Session FOREIGN KEY (session_id)
             REFERENCES RecordingSession(id) ON DELETE CASCADE
     );
+
+    -- 画像座標(pose_landmarks)は骨格の描画に、world 座標はカメラアングル非依存な
+    -- 絶対角度の計算に使う。両方保存する。
+    IF COL_LENGTH('FrameSample', 'pose_world_landmarks') IS NULL
+    ALTER TABLE FrameSample ADD pose_world_landmarks NVARCHAR(MAX) NULL;
 
     IF NOT EXISTS (
         SELECT 1 FROM sys.indexes

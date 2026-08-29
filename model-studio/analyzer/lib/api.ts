@@ -11,6 +11,9 @@ export type SessionRow = {
   start_frame: number | null;
   end_frame: number | null;
   true_reps: number | null;
+  // 'image' = 旧形式（画像座標のみ）。カメラアングル非依存の絶対角度が出せないため
+  // 分析・学習に使えない。同じ動画を選び直して再アップロードすると 'world' になる。
+  pose_space: 'image' | 'world';
   used: boolean;
 };
 

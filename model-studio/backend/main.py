@@ -6,6 +6,7 @@ from pathlib import Path
 
 import cv2
 import mediapipe as mp
+import numpy as np
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +34,33 @@ app.add_middleware(
 mp_pose = mp.solutions.pose
 
 
+def _landmark_dicts(landmark_list) -> list[dict] | None:
+    """MediaPipe のランドマークリストを保存用の dict 列にする。"""
+    if not landmark_list:
+        return None
+    return [
+        {"x": lm.x, "y": lm.y, "z": lm.z, "visibility": lm.visibility}
+        for lm in landmark_list.landmark
+    ]
+
+
+def _pose_pair(result) -> tuple[list[dict] | None, list[dict] | None]:
+    """1フレームの姿勢推定結果から (画像座標, world座標) を取り出す。
+
+    pose_landmarks は画像内の正規化座標(0〜1)で、骨格の描画に使う。x は画像幅、
+    y は画像高さで別々に正規化されているためアスペクト比の歪みを持ち、z は別スケール
+    なので、この3つを混ぜて角度を計算すると値がカメラ・動画サイズに依存してしまう。
+
+    pose_world_landmarks は腰の中点を原点とするメートル単位の実3D座標。3点で決まる
+    関節角度は座標系の回転・平行移動で不変なので、こちらから計算した角度はカメラを
+    どこに置いても同じ値になる。角度はすべて world 座標から計算する。
+    """
+    return (
+        _landmark_dicts(result.pose_landmarks),
+        _landmark_dicts(result.pose_world_landmarks),
+    )
+
+
 @app.on_event("startup")
 def on_startup():
     try:
@@ -45,6 +73,117 @@ def on_startup():
 @app.get("/")
 def root():
     return {"message": "kinpoyo backend is running"}
+
+
+# --- Backfill: recover world landmarks for pre-'world' sessions -------------
+#
+# world 座標に移行する前のセッションは pose_world_landmarks を持たない。動画は処理後に
+# 削除しているので動画からは復元できないが、IMAGE_SAMPLE_INTERVAL=1 のおかげで全フレームの
+# JPEG が FrameSample.image に残っている。そこに MediaPipe をもう一度かければ world 座標を
+# 復元できる（＝学習データを撮り直さずに済む）。
+
+
+@app.post("/sessions/{session_id}/backfill-world")
+def backfill_world_session(session_id: int):
+    """1セッション分の world 座標を、保存済みフレーム画像から復元する。
+
+    元の処理と同じく static_image_mode=False でフレーム順に流す（前後フレームの追跡が
+    効くので、1枚ずつ静止画として解くより元の推定に近くなる）。画像が無い、または姿勢が
+    取れないフレームは飛ばす。1フレームも復元できなければ 'image' のまま残す。
+
+    あえて同期処理にしている: App Service は Always On が無いとレスポンス後にコンテナを
+    止めることがあり、BackgroundTasks は完走しない。1セッションずつ呼べばリクエスト中は
+    コンテナが生きているし、失敗もそのままレスポンスに出る。呼び出し側でループすること。
+    冪等: 既に 'world' のセッションは何もせず skipped を返す。
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT pose_space FROM RecordingSession
+            WHERE id = ? AND deleted = 0
+            """,
+            (session_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        if str(row[0]) == "world":
+            return {"session_id": session_id, "skipped": True, "recovered": 0}
+
+        cursor.execute(
+            """
+            SELECT frame_number, image FROM FrameSample
+            WHERE session_id = ? AND image IS NOT NULL
+            ORDER BY frame_number
+            """,
+            (session_id,),
+        )
+        rows = cursor.fetchall()
+        if not rows:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "フレーム画像が残っていないため world 座標を復元できません。"
+                    "動画を選び直して再アップロードしてください。"
+                ),
+            )
+
+        recovered = 0
+        with mp_pose.Pose(static_image_mode=False, model_complexity=1) as pose:
+            for frame_number, image_bytes in rows:
+                buf = np.frombuffer(bytes(image_bytes), dtype=np.uint8)
+                frame_bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+                if frame_bgr is None:
+                    continue
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                result = pose.process(frame_rgb)
+                _, world_landmarks = _pose_pair(result)
+                if world_landmarks is None:
+                    continue
+                cursor.execute(
+                    """
+                    UPDATE FrameSample SET pose_world_landmarks = ?
+                    WHERE session_id = ? AND frame_number = ?
+                    """,
+                    (json.dumps(world_landmarks), session_id, int(frame_number)),
+                )
+                recovered += 1
+
+        if recovered > 0:
+            cursor.execute(
+                "UPDATE RecordingSession SET pose_space = 'world' WHERE id = ?",
+                (session_id,),
+            )
+        conn.commit()
+
+    return {
+        "session_id": session_id,
+        "skipped": False,
+        "recovered": recovered,
+        "frames": len(rows),
+    }
+
+
+@app.get("/sessions/backfill-world/status")
+def backfill_world_status():
+    """world 座標の復元が済んだ件数と、まだ残っている件数（と対象ID）。"""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, pose_space FROM RecordingSession
+            WHERE deleted = 0 AND processing_status = 'done'
+            ORDER BY id
+            """
+        )
+        rows = cursor.fetchall()
+    pending = [int(r[0]) for r in rows if str(r[1]) != "world"]
+    return {
+        "world": len(rows) - len(pending),
+        "pending": len(pending),
+        "pending_session_ids": pending,
+    }
 
 
 # --- Single-shot upload + range save (async job) ---
@@ -148,18 +287,7 @@ def _process_session_job(
 
                     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                     result = pose.process(frame_rgb)
-                    if result.pose_landmarks:
-                        landmarks = [
-                            {
-                                "x": lm.x,
-                                "y": lm.y,
-                                "z": lm.z,
-                                "visibility": lm.visibility,
-                            }
-                            for lm in result.pose_landmarks.landmark
-                        ]
-                    else:
-                        landmarks = None
+                    landmarks, world_landmarks = _pose_pair(result)
 
                     image_bytes = None
                     relative_index = frame_no - start_frame
@@ -171,14 +299,18 @@ def _process_session_job(
                     cursor.execute(
                         """
                         INSERT INTO FrameSample
-                            (session_id, frame_number, image, pose_landmarks)
-                        VALUES (?, ?, ?, ?)
+                            (session_id, frame_number, image, pose_landmarks,
+                             pose_world_landmarks)
+                        VALUES (?, ?, ?, ?, ?)
                         """,
                         (
                             session_id,
                             frame_no,
                             image_bytes,
                             json.dumps(landmarks) if landmarks is not None else None,
+                            json.dumps(world_landmarks)
+                            if world_landmarks is not None
+                            else None,
                         ),
                     )
                     processed += 1
@@ -263,9 +395,10 @@ async def create_session(
             """
             INSERT INTO RecordingSession
                 (exercise_name, fps, total_frames, start_frame, end_frame,
-                 processing_status, processed_frames, total_frames_expected)
+                 processing_status, processed_frames, total_frames_expected,
+                 pose_space)
             OUTPUT INSERTED.id
-            VALUES (?, ?, ?, ?, ?, 'processing', 0, ?)
+            VALUES (?, ?, ?, ?, ?, 'processing', 0, ?, 'world')
             """,
             (
                 exercise_name,
@@ -494,7 +627,7 @@ def list_sessions(
 
     sql = f"""
         SELECT s.id, s.exercise_name, s.recorded_at, s.fps, s.total_frames,
-               s.start_frame, s.end_frame, s.true_reps,
+               s.start_frame, s.end_frame, s.true_reps, s.pose_space,
                CASE WHEN EXISTS (
                    SELECT 1 FROM AnalysisInputSession ais WHERE ais.session_id = s.id
                ) THEN 1 ELSE 0 END AS used
@@ -517,7 +650,9 @@ def list_sessions(
                 "start_frame": r[5],
                 "end_frame": r[6],
                 "true_reps": int(r[7]) if r[7] is not None else None,
-                "used": bool(r[8]),
+                # 'image' = 旧形式（画像座標のみ）。絶対角度が出せないので再アップロードが要る。
+                "pose_space": r[8],
+                "used": bool(r[9]),
             }
             for r in rows
         ]
@@ -921,15 +1056,21 @@ def _collect_session_ids_for_tag(cursor, tag_id: int) -> set[int]:
 
 
 def _fetch_frames(cursor, session_ids: list[int]):
+    """分析用にフレームを流す。(session_id, frame_number, 画像座標, world座標)。
+
+    world 座標を持たないフレームは飛ばす。角度は world からしか計算しないため、
+    world が無い旧セッション（pose_space='image'）はここで空になり、呼び出し側が
+    「再アップロードが必要」と伝える。
+    """
     if not session_ids:
         return
     placeholders = ",".join(["?"] * len(session_ids))
     cursor.execute(
         f"""
-        SELECT session_id, frame_number, pose_landmarks
+        SELECT session_id, frame_number, pose_landmarks, pose_world_landmarks
         FROM FrameSample
         WHERE session_id IN ({placeholders})
-          AND pose_landmarks IS NOT NULL
+          AND pose_world_landmarks IS NOT NULL
         ORDER BY session_id, frame_number
         """,
         tuple(session_ids),
@@ -938,7 +1079,37 @@ def _fetch_frames(cursor, session_ids: list[int]):
         row = cursor.fetchone()
         if row is None:
             break
-        yield int(row[0]), int(row[1]), row[2]
+        yield int(row[0]), int(row[1]), row[2], row[3]
+
+
+def _legacy_session_ids(cursor, session_ids: list[int]) -> list[int]:
+    """world 座標を持たない（＝撮り直しが必要な）セッションIDを返す。"""
+    if not session_ids:
+        return []
+    placeholders = ",".join(["?"] * len(session_ids))
+    cursor.execute(
+        f"""
+        SELECT id FROM RecordingSession
+        WHERE id IN ({placeholders}) AND pose_space <> 'world'
+        ORDER BY id
+        """,
+        tuple(session_ids),
+    )
+    return [int(r[0]) for r in cursor.fetchall()]
+
+
+def _reject_legacy_sessions(cursor, session_ids: list[int]) -> None:
+    legacy = _legacy_session_ids(cursor, session_ids)
+    if legacy:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"セッション {legacy} は旧形式（画像座標のみ）で保存されており、"
+                "カメラアングル非依存の絶対角度を計算できません。動画は保存後に"
+                "削除されるため再計算もできないので、同じ動画を選び直して"
+                "アップロードし直してください。"
+            ),
+        )
 
 
 @app.post("/analyses/preview")
@@ -966,6 +1137,8 @@ def analyze_preview(body: AnalyzeRequest):
                 "new_session_ids": [],
                 "existing_session_ids": [],
             }
+
+        _reject_legacy_sessions(cursor, combined)
 
         new_ids = set(body.session_ids) - existing
         result = analyze_sessions(
@@ -1127,6 +1300,7 @@ def build_model(tag_id: int):
             )
 
         session_ids = [sid for sid, _ in labeled]
+        _reject_legacy_sessions(cursor, session_ids)
         analysis = analyze_sessions(
             _fetch_frames(cursor, session_ids),
             monitored_joints=monitored or None,
@@ -1271,9 +1445,11 @@ async def count_with_model(
     Stateless: the video is processed in-memory (MediaPipe), the model's main
     joint angle series is built, and the state machine counts. Nothing is saved."""
     from rep_model import (
+        POSE_SPACE,
         count_with_template,
         joint_series_from_frames,
         model_from_dict,
+        model_pose_space,
     )
     from pose_analysis import JOINT_DEFINITIONS_JA
 
@@ -1285,8 +1461,21 @@ async def count_with_model(
         row = cursor.fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="model not found")
+    config = json.loads(row[0])
+    # 旧モデルは画像座標基準の絶対角度で受理ゲートを学習している。world 座標で角度を
+    # 出す今のカウンタに掛けると、ゲートが噛み合わず黙って誤カウントする。弾く。
+    if model_pose_space(config) != POSE_SPACE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "このモデルは旧形式（画像座標基準の角度）で学習されています。"
+                "角度の基準がカメラアングル非依存の world 座標に変わったため、"
+                "そのままでは正しく数えられません。学習データを再アップロードして"
+                "モデルを再学習してください。"
+            ),
+        )
     cfg, candidates, main_joint, template, shape_threshold, cycle_stats = (
-        model_from_dict(json.loads(row[0]))
+        model_from_dict(config)
     )
     model_name = str(row[1])
 
@@ -1316,6 +1505,7 @@ async def count_with_model(
         end_frame = int(round(end_time_sec * fps))
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
+        # 角度計算に使うのは world 座標。カメラアングルに依存しない絶対角度になる。
         collected: list[tuple[int, list]] = []
         with mp_pose.Pose(static_image_mode=False, model_complexity=1) as pose:
             frame_no = start_frame
@@ -1325,12 +1515,9 @@ async def count_with_model(
                     break
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 result = pose.process(frame_rgb)
-                if result.pose_landmarks:
-                    landmarks = [
-                        {"x": lm.x, "y": lm.y, "z": lm.z, "visibility": lm.visibility}
-                        for lm in result.pose_landmarks.landmark
-                    ]
-                    collected.append((frame_no, landmarks))
+                _, world_landmarks = _pose_pair(result)
+                if world_landmarks is not None:
+                    collected.append((frame_no, world_landmarks))
                 frame_no += 1
         cap.release()
     finally:
@@ -1376,4 +1563,7 @@ async def count_with_model(
         "cycles": res.get("cycles", []),
         "template": template,
         "shape_threshold": shape_threshold,
+        # 統計ゲートの許容範囲。cycles[] の bottomDeg/topDeg と突き合わせると
+        # 「範囲外」で棄却されたサイクルがどの条件をどれだけ外したか分かる。
+        "cycle_stats": cycle_stats,
     }
