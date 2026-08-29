@@ -40,6 +40,7 @@ class UserProfileOut(BaseModel):
     body_fat_pct: Optional[float] = None
     muscle_mass_kg: Optional[float] = None
     experience_level_id: int
+    training_goal: Optional[str] = None
 
 
 class UserProfileUpdate(BaseModel):
@@ -53,6 +54,11 @@ class UserProfileUpdate(BaseModel):
     body_fat_pct: Optional[float] = None
     muscle_mass_kg: Optional[float] = None
     experience_level_id: Optional[int] = None
+    training_goal: Optional[str] = None
+
+
+class AvatarUploadOut(BaseModel):
+    avatar_url: str
 
 
 class UserSearchResult(BaseModel):
@@ -61,3 +67,20 @@ class UserSearchResult(BaseModel):
     display_name: Optional[str] = None
     avatar_url: Optional[str] = None
     is_following: bool
+
+
+class PublicProfileOut(BaseModel):
+    """2026-08-30追加：他ユーザーのプロフィール表示画面用。自分専用の
+    UserProfileOut（身体情報・目標体重等プライベートな項目を含む）とは別に、
+    公開してよい範囲だけに絞って新設した。"""
+    id: int
+    username: str
+    display_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    bio: Optional[str] = None
+    is_following: bool
+    followers_count: int
+    following_count: int
+    total_workouts: int
+    total_duration_sec: int
+    weekly_streak: int

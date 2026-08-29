@@ -40,11 +40,6 @@ import {
   fetchWorkoutsForDates,
   toIsoDate,
 } from '@/services/workout';
-import {
-  applyWorkoutTemplate,
-  fetchWorkoutTemplates,
-  type WorkoutTemplateListItem,
-} from '@/services/workout-templates';
 import { formatDecimal } from '@/utils/format';
 
 const H_PAD = Layout.screenPaddingH;
@@ -154,22 +149,6 @@ export default function HomeScreen() {
     loadMyProgram();
   }, [loadMyProgram]);
 
-  // ── My筋トレ（保存済みテンプレート）から登録 ──────
-  const [templates, setTemplates] = useState<WorkoutTemplateListItem[]>([]);
-  const [applyingTemplateId, setApplyingTemplateId] = useState<number | null>(null);
-  const [templateError, setTemplateError] = useState<string | null>(null);
-
-  const loadTemplates = useCallback(async () => {
-    try {
-      const list = await fetchWorkoutTemplates(token);
-      setTemplates(list);
-    } catch {
-      setTemplates([]);
-    }
-  }, [token]);
-
-  useFocusEffect(useCallback(() => { loadTemplates(); }, [loadTemplates]));
-
   const hasWorkoutForCell = (cell: Cell): boolean => {
     if (!cell.current) return false;
     const iso = toIsoDate(new Date(year, month, cell.date));
@@ -207,6 +186,11 @@ export default function HomeScreen() {
   const selDate = new Date(selectedDateStr);
   const selLabel = `${selDate.getMonth() + 1}月${selDate.getDate()}日（${WEEKDAYS[selDate.getDay()]}）`;
   const selDateIso = toIsoDate(selDate);
+  // 今日より前の日付は「これから行う予定」として意味を持たないため、新規登録も
+  // 既存メニューの編集もできないようにする（ユーザー要望：「今日より前の日の
+  // 筋トレ予定が編集できるのと、前の日の予定を組めるのおかしいから」）。
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const isPastSelected = selDate.getTime() < todayStart.getTime();
 
   const selDaySessions = useMemo(
     () => (monthWorkouts[selDateIso] ?? []).filter(s => s.status_code !== 'cancelled'),
@@ -257,7 +241,7 @@ export default function HomeScreen() {
   }, [myProgram, selDaySessions.length]);
 
   const handleRegisterSuggestion = async () => {
-    if (!myProgram || suggestedExercises.length === 0) return;
+    if (!myProgram || suggestedExercises.length === 0 || isPastSelected) return;
     setSuggestionError(null);
     setIsRegisteringSuggestion(true);
     try {
@@ -278,7 +262,7 @@ export default function HomeScreen() {
   };
 
   const handleEditRegisteredMenu = () => {
-    if (selDaySessions.length === 0) return;
+    if (selDaySessions.length === 0 || isPastSelected) return;
     router.push({
       pathname: '/(screens)/program/program_choice',
       params: {
@@ -290,23 +274,11 @@ export default function HomeScreen() {
   };
 
   const handleGoToRegister = () => {
+    if (isPastSelected) return;
     router.push({
       pathname: '/workout-register',
       params: { year: String(year), month: String(month), date: String(selDate.getDate()) },
     });
-  };
-
-  const handleApplyTemplate = async (t: WorkoutTemplateListItem) => {
-    setTemplateError(null);
-    setApplyingTemplateId(t.id);
-    try {
-      await applyWorkoutTemplate(token, t.id, selDateIso);
-      await loadMonthWorkouts();
-    } catch (e) {
-      setTemplateError(e instanceof ApiError ? e.detail : '予期しないエラーが発生しました');
-    } finally {
-      setApplyingTemplateId(null);
-    }
   };
 
   return (
@@ -409,11 +381,13 @@ export default function HomeScreen() {
 
         {/* ── 選択日のトレーニングメニュー ─────── */}
         {selDayWorkouts.length > 0 ? (
-          /* 登録済み：実データを本日のトレーニングメニューカードで表示（タップで編集画面へ） */
+          /* 登録済み：実データを本日のトレーニングメニューカードで表示
+             （タップで編集画面へ。ただし過去日は編集不可＝タップしても何もしない） */
           <TouchableOpacity
             style={styles.programCard}
             onPress={handleEditRegisteredMenu}
-            activeOpacity={0.8}>
+            disabled={isPastSelected}
+            activeOpacity={isPastSelected ? 1 : 0.8}>
             <Text style={styles.programCardTitle}>{selLabel}のトレーニングメニュー</Text>
             {selDayWorkouts.map(w => (
               <View key={w.id} style={styles.exerciseRow}>
@@ -427,48 +401,23 @@ export default function HomeScreen() {
             ))}
           </TouchableOpacity>
         ) : (
-          /* 未登録：タップで筋トレメニュー登録画面へ */
-          <TouchableOpacity style={styles.emptyCard} onPress={handleGoToRegister} activeOpacity={0.8}>
+          /* 未登録：タップで筋トレメニュー登録画面へ（過去日はタップ不可） */
+          <TouchableOpacity
+            style={styles.emptyCard}
+            onPress={handleGoToRegister}
+            disabled={isPastSelected}
+            activeOpacity={isPastSelected ? 1 : 0.8}>
             <Text style={styles.selDateLabel}>{selLabel}</Text>
             <Text style={styles.emptyIcon}>🏋️</Text>
-            <Text style={styles.emptyTitle}>トレーニングなし</Text>
-            <Text style={styles.emptySubtitle}>タップして筋トレメニューを登録しましょう</Text>
+            <Text style={styles.emptyTitle}>{isPastSelected ? '過去の日付です' : 'トレーニングなし'}</Text>
+            <Text style={styles.emptySubtitle}>
+              {isPastSelected ? '過去の日付には新しく登録できません' : 'タップして筋トレメニューを登録しましょう'}
+            </Text>
           </TouchableOpacity>
         )}
 
-        {/* ── My筋トレから登録（未登録日＋テンプレートがある時のみ） ─── */}
-        {selDayWorkouts.length === 0 && templates.length > 0 && (
-          <View style={styles.programCard}>
-            <Text style={styles.programCardTitle}>My筋トレから登録</Text>
-            {templateError && (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{templateError}</Text>
-              </View>
-            )}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.templateChipsRow}>
-              {templates.map(t => (
-                <TouchableOpacity
-                  key={t.id}
-                  style={styles.templateChip}
-                  activeOpacity={0.75}
-                  disabled={applyingTemplateId != null}
-                  onPress={() => handleApplyTemplate(t)}>
-                  {applyingTemplateId === t.id ? (
-                    <ActivityIndicator color={Colors.primaryDark} size="small" />
-                  ) : (
-                    <>
-                      <Text style={styles.templateChipName} numberOfLines={1}>{t.name}</Text>
-                      <Text style={styles.templateChipMeta}>{t.exercise_count}種目</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* ── プログラムの筋トレメニュー登録（未登録日＋参加中プログラムがある時のみ） ─── */}
-        {selDayWorkouts.length === 0 && myProgram && (
+        {/* ── プログラムの筋トレメニュー登録（未登録日＋参加中プログラムがある時のみ。過去日は非表示） ─── */}
+        {selDayWorkouts.length === 0 && !isPastSelected && myProgram && (
           <View style={styles.programCard}>
             <Text style={styles.programCardTitle}>プログラムの筋トレメニュー登録</Text>
 
@@ -914,18 +863,4 @@ const styles = StyleSheet.create({
   suggestionBtnText: { color: Colors.textOnPrimary, fontSize: FontSize.base, fontWeight: FontWeight.bold },
 
   // ── My筋トレテンプレート チップ
-  templateChipsRow: { gap: Space[2], paddingTop: Space[1] },
-  templateChip: {
-    minWidth: 96,
-    paddingHorizontal: Space[3],
-    paddingVertical: Space[2],
-    borderRadius: Radius.md,
-    borderWidth: 1.5,
-    borderColor: Colors.primaryBorder,
-    backgroundColor: Colors.primarySubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  templateChipName: { fontSize: FontSize.sm, fontWeight: FontWeight.bold, color: Colors.primaryDark },
-  templateChipMeta: { fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 2 },
 });

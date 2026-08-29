@@ -58,6 +58,12 @@ const MAPPING = {
   'envelope': 'email',
   'checkmark': 'check',
   'rectangle.portrait.and.arrow.right': 'logout',
+  // My筋トレ連携（登録画面からのテンプレート読み込み）用
+  'square.and.arrow.down': 'file-download',
+  // プロフィール画像変更用
+  'camera.fill': 'photo-camera',
+  // コミュニティー：友達を探す（フォロー）用
+  'person.badge.plus': 'person-add',
 } as const;
 
 /**

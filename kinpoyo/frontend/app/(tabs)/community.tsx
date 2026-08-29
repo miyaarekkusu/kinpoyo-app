@@ -17,10 +17,10 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import QRCode from 'react-native-qrcode-svg';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { NotificationsModal } from '@/components/notifications-modal';
 import { AppHeader, PageTitleBar } from '@/components/ui/app-header';
+import { Avatar } from '@/components/ui/avatar';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
   Colors, FontSize, FontWeight, Layout, Radius, Shadow, Space,
@@ -32,11 +32,13 @@ import {
   CommentOut,
   PostAuthor,
   PostOut,
-  PostTypeKey,
+  PostWorkoutSummary,
+  PostableSessionOut,
   addComment,
   createPost,
   deletePost,
   fetchComments,
+  fetchPostableSessions,
   fetchPosts,
   likePost,
   unlikePost,
@@ -45,20 +47,14 @@ import {
 } from '@/services/community';
 import {
   UserSearchResult,
+  fetchMyProfile,
   followUser,
   searchUsers,
   unfollowUser,
 } from '@/services/user';
 
-// ─── Types ────────────────────────────────────────────────────
-
-type TabKey = 'follow' | 'feed' | 'qa';
-
 // ─── ユーティリティ ───────────────────────────────────────────
 
-function initialOf(author: PostAuthor): string {
-  return (author.display_name || author.username).charAt(0).toUpperCase();
-}
 function nameOf(author: PostAuthor): string {
   return author.display_name || author.username;
 }
@@ -68,6 +64,12 @@ function isLocalUri(uri: string): boolean {
 }
 function displayImageUri(uri: string): string {
   return isLocalUri(uri) ? uri : toAbsoluteMediaUrl(uri);
+}
+// 2026-08-30追加：投稿に紐づくトレーニング記録のscheduled_date（YYYY-MM-DD）を
+// 「8月30日の筋トレ」の形式に整形する。
+function formatWorkoutDateJa(isoDate: string): string {
+  const d = new Date(`${isoDate}T00:00:00`);
+  return `${d.getMonth() + 1}月${d.getDate()}日の筋トレ`;
 }
 function timeAgoJa(iso: string): string {
   const diffSec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -89,13 +91,11 @@ export default function CommunityScreen() {
   const router = useRouter();
   const { token } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<TabKey>('follow');
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPost, setSelectedPost] = useState<PostOut | null>(null);
   const [showFollowModal, setShowFollowModal] = useState(false);
   const [followSearch, setFollowSearch] = useState('');
-  const [showQrModal, setShowQrModal] = useState(false);
   const [showNotifModal, setShowNotifModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingPost, setEditingPost] = useState<PostOut | null>(null);
@@ -103,8 +103,10 @@ export default function CommunityScreen() {
   const [deletingPost, setDeletingPost] = useState<PostOut | null>(null);
 
   const [me, setMe] = useState<UserOut | null>(null);
-  const [feedPosts, setFeedPosts] = useState<PostOut[]>([]);
-  const [qaPosts, setQaPosts] = useState<PostOut[]>([]);
+  // 2026-08-30追加：ヘッダー右上・自分のIDカードにアバター画像を表示するため、
+  // UserOutには無いavatar_url/display_nameをプロフィールから別途取得する。
+  const [myAvatarUrl, setMyAvatarUrl] = useState<string | null>(null);
+  const [myDisplayName, setMyDisplayName] = useState<string | null>(null);
   const [followingPosts, setFollowingPosts] = useState<PostOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -114,15 +116,14 @@ export default function CommunityScreen() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [meOut, feed, qa, following] = await Promise.all([
+      const [meOut, myProfile, following] = await Promise.all([
         fetchMe(token),
-        fetchPosts(token, 'feed', 'all'),
-        fetchPosts(token, 'qa', 'all'),
-        fetchPosts(token, 'feed', 'following'),
+        fetchMyProfile(token),
+        fetchPosts(token, 'following'),
       ]);
       setMe(meOut);
-      setFeedPosts(feed);
-      setQaPosts(qa);
+      setMyAvatarUrl(myProfile.avatar_url);
+      setMyDisplayName(myProfile.display_name);
       setFollowingPosts(following);
     } catch (e) {
       setLoadError(e instanceof ApiError ? e.detail : '読み込みに失敗しました');
@@ -133,19 +134,11 @@ export default function CommunityScreen() {
 
   useFocusEffect(useCallback(() => { loadAll(); }, [loadAll]));
 
-  const myInitial = me ? me.username.charAt(0).toUpperCase() : 'K';
+  const myLabel = myDisplayName || me?.username || 'K';
 
-  const tabs: { key: TabKey; label: string }[] = [
-    { key: 'follow', label: 'フォロー中' },
-    { key: 'feed',   label: 'フィード' },
-    { key: 'qa',     label: 'Q&A' },
-  ];
-
-  // 投稿の更新を、表示中の全リスト＋詳細画面に反映する
+  // 投稿の更新を、表示中のリスト＋詳細画面に反映する
   const applyPostUpdate = (updated: PostOut) => {
     const patch = (list: PostOut[]) => list.map(p => (p.id === updated.id ? updated : p));
-    setFeedPosts(patch);
-    setQaPosts(patch);
     setFollowingPosts(patch);
     setSelectedPost(prev => (prev && prev.id === updated.id ? updated : prev));
   };
@@ -153,8 +146,6 @@ export default function CommunityScreen() {
   const bumpCommentCount = (postId: number) => {
     const patch = (list: PostOut[]) =>
       list.map(p => (p.id === postId ? { ...p, comments_count: p.comments_count + 1 } : p));
-    setFeedPosts(patch);
-    setQaPosts(patch);
     setFollowingPosts(patch);
     setSelectedPost(prev => (prev && prev.id === postId ? { ...prev, comments_count: prev.comments_count + 1 } : prev));
   };
@@ -177,22 +168,18 @@ export default function CommunityScreen() {
     return images.map(uri => (isLocalUri(uri) ? uploaded[j++] : uri));
   };
 
-  const handleCreatePost = async (type: PostTypeKey, title: string, body: string, images: string[]) => {
+  // 2026-08-30再設計：投稿は必ず「今日の完了済みトレーニング記録」1件に紐づく。
+  const handleCreatePost = async (sessionId: number, body: string, images: string[]) => {
     const imageUrls = await resolveImageUrls(images);
-    const created = await createPost(token, { post_type: type, title: title || null, body, image_urls: imageUrls });
-    if (type === 'feed') {
-      setFeedPosts(prev => [created, ...prev]);
-    } else {
-      setQaPosts(prev => [created, ...prev]);
-    }
-    setActiveTab(type);
+    const created = await createPost(token, { workout_session_id: sessionId, body, image_urls: imageUrls });
+    setFollowingPosts(prev => [created, ...prev]);
     setShowCreateModal(false);
   };
 
-  const handleUpdatePost = async (_type: PostTypeKey, title: string, body: string, images: string[]) => {
+  const handleUpdatePost = async (body: string, images: string[]) => {
     if (!editingPost) return;
     const imageUrls = await resolveImageUrls(images);
-    const updated = await updatePost(token, editingPost.id, { title: title || null, body, image_urls: imageUrls });
+    const updated = await updatePost(token, editingPost.id, { body, image_urls: imageUrls });
     applyPostUpdate(updated);
     setEditingPost(null);
   };
@@ -200,10 +187,7 @@ export default function CommunityScreen() {
   const handleDeletePost = async (post: PostOut) => {
     try {
       await deletePost(token, post.id);
-      const remove = (list: PostOut[]) => list.filter(p => p.id !== post.id);
-      setFeedPosts(remove);
-      setQaPosts(remove);
-      setFollowingPosts(remove);
+      setFollowingPosts(prev => prev.filter(p => p.id !== post.id));
       setSelectedPost(null);
     } catch (e) {
       Alert.alert('エラー', e instanceof ApiError ? e.detail : '削除に失敗しました');
@@ -237,8 +221,7 @@ export default function CommunityScreen() {
     );
   };
 
-  const filteredFeedData = filterByQuery(feedPosts);
-  const filteredQaData = filterByQuery(qaPosts);
+  const filteredPosts = filterByQuery(followingPosts);
   const searchEmptyMessage = normalizedQuery ? '一致する投稿が見つかりませんでした' : undefined;
 
   // ── ユーザー検索・フォロー ──────────────────────
@@ -275,7 +258,7 @@ export default function CommunityScreen() {
       setFollowResults(prev =>
         prev.map(u => (u.id === user.id ? { ...u, is_following: !u.is_following } : u))
       );
-      const posts = await fetchPosts(token, 'feed', 'following');
+      const posts = await fetchPosts(token, 'following');
       setFollowingPosts(posts);
     } catch (e) {
       Alert.alert('エラー', e instanceof ApiError ? e.detail : '処理に失敗しました');
@@ -290,6 +273,9 @@ export default function CommunityScreen() {
         title="コミュニティー"
         right={
           <View style={s.headerRight}>
+            <TouchableOpacity style={s.headerBtn} onPress={() => setShowFollowModal(true)} hitSlop={8}>
+              <IconSymbol name="person.badge.plus" size={22} color={Colors.textPrimary} />
+            </TouchableOpacity>
             <TouchableOpacity style={s.headerBtn} onPress={toggleSearch} hitSlop={8}>
               <IconSymbol
                 name={searchVisible ? 'xmark' : 'magnifyingglass'}
@@ -298,9 +284,7 @@ export default function CommunityScreen() {
               />
             </TouchableOpacity>
             <TouchableOpacity onPress={() => router.push('/profile')}>
-              <View style={s.avatar}>
-                <Text style={s.avatarText}>{myInitial}</Text>
-              </View>
+              <Avatar uri={myAvatarUrl} label={myLabel} size={32} />
             </TouchableOpacity>
           </View>
         }
@@ -327,22 +311,7 @@ export default function CommunityScreen() {
         </View>
       )}
 
-      {/* Tab Bar */}
-      <View style={s.tabBar}>
-        {tabs.map(tab => (
-          <TouchableOpacity
-            key={tab.key}
-            style={[s.tabPill, activeTab === tab.key && s.tabPillActive]}
-            onPress={() => setActiveTab(tab.key)}
-          >
-            <Text style={[s.tabLabel, activeTab === tab.key && s.tabLabelActive]}>
-              {tab.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Tab Content */}
+      {/* Content */}
       <View style={{ flex: 1 }}>
         {loading && (
           <View style={s.centerBox}>
@@ -360,44 +329,19 @@ export default function CommunityScreen() {
           </View>
         )}
         {!loading && !loadError && (
-          <>
-            {activeTab === 'follow' && (
-              followingPosts.length === 0 ? (
-                <FollowTab onSearchPress={() => setShowFollowModal(true)} />
-              ) : (
-                <FeedTab
-                  data={followingPosts}
-                  meId={me?.id ?? null}
-                  onPostPress={setSelectedPost}
-                  onEdit={openEditModal}
-                  onDelete={setDeletingPost}
-                  onToggleLike={handleToggleLike}
-                />
-              )
-            )}
-            {activeTab === 'feed' && (
-              <FeedTab
-                data={filteredFeedData}
-                emptyMessage={searchEmptyMessage}
-                meId={me?.id ?? null}
-                onPostPress={setSelectedPost}
-                onEdit={openEditModal}
-                onDelete={setDeletingPost}
-                onToggleLike={handleToggleLike}
-              />
-            )}
-            {activeTab === 'qa' && (
-              <FeedTab
-                data={filteredQaData}
-                emptyMessage={searchEmptyMessage}
-                meId={me?.id ?? null}
-                onPostPress={setSelectedPost}
-                onEdit={openEditModal}
-                onDelete={setDeletingPost}
-                onToggleLike={handleToggleLike}
-              />
-            )}
-          </>
+          followingPosts.length === 0 ? (
+            <FollowTab onSearchPress={() => setShowFollowModal(true)} />
+          ) : (
+            <FeedTab
+              data={filteredPosts}
+              emptyMessage={searchEmptyMessage}
+              meId={me?.id ?? null}
+              onPostPress={setSelectedPost}
+              onEdit={openEditModal}
+              onDelete={setDeletingPost}
+              onToggleLike={handleToggleLike}
+            />
+          )
         )}
       </View>
 
@@ -415,101 +359,79 @@ export default function CommunityScreen() {
         visible={showFollowModal}
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={() => {
-          setShowFollowModal(false);
-          setShowQrModal(false);
-        }}
-        onDismiss={() => {
-          setShowFollowModal(false);
-          setShowQrModal(false);
-        }}
+        onRequestClose={() => setShowFollowModal(false)}
+        onDismiss={() => setShowFollowModal(false)}
       >
         <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
           <View style={s.modalHeader}>
-            <TouchableOpacity
-              onPress={() => {
-                if (showQrModal) {
-                  setShowQrModal(false);
-                } else {
-                  setShowFollowModal(false);
-                }
-              }}
-              style={s.iconBtn}>
+            <TouchableOpacity onPress={() => setShowFollowModal(false)} style={s.iconBtn}>
               <MaterialIcons name="chevron-left" size={28} color={Colors.textPrimary} />
             </TouchableOpacity>
-            <Text style={s.modalTitle}>{showQrModal ? 'マイQRコード' : 'ユーザー検索'}</Text>
+            <Text style={s.modalTitle}>ユーザー検索</Text>
             <View style={s.iconBtn} />
           </View>
 
-          {showQrModal ? (
-            <View style={s.qrContainer}>
-              <View style={s.qrCodeBox}>
-                <QRCode value={me?.username ?? 'kinpoyo'} size={220} />
-              </View>
-              <Text style={s.qrIdText}>ID: {me?.username ?? '-'}</Text>
+          <ScrollView contentContainerStyle={s.modalBody}>
+            {/* Search Input */}
+            <View style={s.searchBox}>
+              <TextInput
+                value={followSearch}
+                onChangeText={setFollowSearch}
+                placeholder="ユーザーネームで友達を検索してフォローしましょう"
+                placeholderTextColor={Colors.textHint}
+                style={s.searchInput}
+              />
             </View>
-          ) : (
-            <ScrollView contentContainerStyle={s.modalBody}>
-              {/* Search Input */}
-              <View style={s.searchBox}>
-                <TextInput
-                  value={followSearch}
-                  onChangeText={setFollowSearch}
-                  placeholder="IDで友達を検索してフォローしましょう"
-                  placeholderTextColor={Colors.textHint}
-                  style={s.searchInput}
-                />
-              </View>
 
-              {followSearch.trim() ? (
-                followSearchLoading ? (
-                  <View style={s.searchResultLoading}>
-                    <ActivityIndicator color={Colors.primaryDark} />
-                  </View>
-                ) : followResults.length === 0 ? (
-                  <View style={s.searchResultLoading}>
-                    <Text style={s.emptyText}>ユーザーが見つかりませんでした</Text>
-                  </View>
-                ) : (
-                  followResults.map(u => (
-                    <View key={u.id} style={s.followResultRow}>
-                      <View style={s.avatar}>
-                        <Text style={s.avatarText}>
-                          {(u.display_name || u.username).charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
+            {followSearch.trim() ? (
+              followSearchLoading ? (
+                <View style={s.searchResultLoading}>
+                  <ActivityIndicator color={Colors.primaryDark} />
+                </View>
+              ) : followResults.length === 0 ? (
+                <View style={s.searchResultLoading}>
+                  <Text style={s.emptyText}>ユーザーが見つかりませんでした</Text>
+                </View>
+              ) : (
+                followResults.map(u => (
+                  <View key={u.id} style={s.followResultRow}>
+                    <TouchableOpacity
+                      style={s.followResultTap}
+                      activeOpacity={0.75}
+                      onPress={() => {
+                        setShowFollowModal(false);
+                        router.push({ pathname: '/(screens)/user-profile', params: { userId: String(u.id) } });
+                      }}
+                    >
+                      <Avatar uri={u.avatar_url} label={u.display_name || u.username} size={32} />
                       <View style={s.followResultInfo}>
                         <Text style={s.followResultName}>{u.display_name || u.username}</Text>
                         <Text style={s.followResultUsername}>@{u.username}</Text>
                       </View>
-                      <TouchableOpacity
-                        style={[s.followToggleBtn, u.is_following && s.followToggleBtnActive]}
-                        onPress={() => handleToggleFollow(u)}
-                      >
-                        <Text style={[s.followToggleBtnText, u.is_following && s.followToggleBtnTextActive]}>
-                          {u.is_following ? 'フォロー中' : 'フォロー'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))
-                )
-              ) : (
-                /* My ID Card */
-                <View style={s.userIdCard}>
-                  <View style={[s.avatar, { backgroundColor: Colors.error }]}>
-                    <Text style={s.avatarText}>{myInitial}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[s.followToggleBtn, u.is_following && s.followToggleBtnActive]}
+                      onPress={() => handleToggleFollow(u)}
+                    >
+                      <Text style={[s.followToggleBtnText, u.is_following && s.followToggleBtnTextActive]}>
+                        {u.is_following ? 'フォロー中' : 'フォロー'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
-                  <Text style={s.userIdText}>ID: {me?.username ?? '-'}</Text>
-                  <TouchableOpacity style={s.shareBtn} onPress={() => setShowQrModal(true)}>
-                    <MaterialIcons name="qr-code-2" size={20} color={Colors.textSecondary} />
-                  </TouchableOpacity>
-                  <TouchableOpacity style={s.shareBtn}>
-                    <MaterialIcons name="share" size={20} color={Colors.textSecondary} />
-                  </TouchableOpacity>
+                ))
+              )
+            ) : (
+              /* My ID Card：QRコード・共有ボタンは使われていなかったため撤去し、
+                 実際の名前（display_name）も表示するようにした（2026-08-30）。 */
+              <View style={s.userIdCard}>
+                <Avatar uri={myAvatarUrl} label={myLabel} size={40} />
+                <View style={s.userIdInfo}>
+                  <Text style={s.userIdName}>{myLabel}</Text>
+                  <Text style={s.userIdText}>ユーザーネーム: {me?.username ?? '-'}</Text>
                 </View>
-              )}
-            </ScrollView>
-          )}
+              </View>
+            )}
+          </ScrollView>
         </SafeAreaView>
       </Modal>
 
@@ -539,11 +461,13 @@ export default function CommunityScreen() {
         <PostCreateScreen
           key={postModalKey}
           initialPost={editingPost}
+          token={token}
           onClose={() => {
             setShowCreateModal(false);
             setEditingPost(null);
           }}
-          onSubmit={editingPost ? handleUpdatePost : handleCreatePost}
+          onCreate={handleCreatePost}
+          onUpdate={handleUpdatePost}
         />
       </Modal>
 
@@ -605,6 +529,12 @@ function FeedTab({
   onDelete: (post: PostOut) => void;
   onToggleLike: (post: PostOut) => void;
 }) {
+  const router = useRouter();
+  const goToAuthorProfile = (authorId: number) => {
+    if (authorId === meId) return;
+    router.push({ pathname: '/(screens)/user-profile', params: { userId: String(authorId) } });
+  };
+
   if (data.length === 0 && emptyMessage) {
     return (
       <View style={s.searchEmptyState}>
@@ -620,19 +550,23 @@ function FeedTab({
         const isOwn = item.author.id === meId;
         return (
           <View key={item.id} style={s.postCard}>
-            {/* ユーザー行＋タイトル・本文: タップで詳細へ */}
+            {/* ユーザー行: タップで投稿者のプロフィールへ */}
+            <TouchableOpacity
+              style={s.postUserRow}
+              onPress={() => goToAuthorProfile(item.author.id)}
+              activeOpacity={0.75}
+            >
+              <Avatar uri={item.author.avatar_url} label={nameOf(item.author)} size={28} style={s.smallAvatar} />
+              <Text style={s.postUser}>{nameOf(item.author)}</Text>
+              <Text style={s.postTime}> · {timeAgoJa(item.created_at)}</Text>
+            </TouchableOpacity>
+
+            {/* トレーニング記録サマリー・本文: タップで詳細へ */}
             <TouchableOpacity onPress={() => onPostPress(item)} activeOpacity={0.85}>
-              <View style={s.postUserRow}>
-                <View style={s.smallAvatar}>
-                  <Text style={s.smallAvatarText}>{initialOf(item.author)}</Text>
-                </View>
-                <Text style={s.postUser}>{nameOf(item.author)}</Text>
-                <Text style={s.postTime}> · {timeAgoJa(item.created_at)}</Text>
-              </View>
-              {!!item.title && (
-                <Text style={s.postTitle} numberOfLines={2}>{item.title}</Text>
+              <WorkoutSummaryCard summary={item.workout_summary} />
+              {!!item.body && (
+                <Text style={s.postBody} numberOfLines={3}>{item.body}</Text>
               )}
-              <Text style={s.postBody} numberOfLines={3}>{item.body}</Text>
             </TouchableOpacity>
 
             {/* 画像: 独立した横スクロール */}
@@ -691,6 +625,30 @@ function FeedTab({
   );
 }
 
+// ─── トレーニング記録サマリーカード ────────────────────────────
+// 2026-08-30追加：投稿本体は自由テキストではなく、この日に実施したトレーニング
+// 記録から決定的に組み立てる（判定・集計はバックエンド側、ここは表示のみ）。
+
+function WorkoutSummaryCard({ summary }: { summary: PostWorkoutSummary | null }) {
+  if (!summary) return null;
+  return (
+    <View style={s.workoutSummaryCard}>
+      <View style={s.workoutSummaryHeader}>
+        <MaterialIcons name="fitness-center" size={16} color={Colors.primaryDark} />
+        <Text style={s.workoutSummaryDate}>
+          {summary.scheduled_date ? formatWorkoutDateJa(summary.scheduled_date) : '筋トレ記録'}
+        </Text>
+      </View>
+      {summary.exercises.map((ex, i) => (
+        <Text key={i} style={s.workoutSummaryExercise}>
+          ・{ex.exercise_name} {ex.sets_count}セット
+          {ex.max_weight_kg != null ? `・最大${ex.max_weight_kg}kg` : ''}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
 // ─── 投稿詳細画面 ──────────────────────────────────────────────
 
 function PostDetailScreen({
@@ -721,6 +679,7 @@ function PostDetailScreen({
   const [mainImageIndex, setMainImageIndex] = useState(0);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isOwnPost = post.author.id === meId;
+  const router = useRouter();
 
   useEffect(() => {
     let cancelled = false;
@@ -814,22 +773,24 @@ function PostDetailScreen({
             </View>
           )}
 
-          {/* Q&A: タイトル先頭表示 */}
-          {post.post_type !== 'feed' && !!post.title && (
-            <Text style={s.detailTitle}>{post.title}</Text>
-          )}
-
-          {/* 投稿者行 */}
-          <View style={[s.postUserRow, { marginTop: Space[2] }]}>
-            <View style={s.smallAvatar}>
-              <Text style={s.smallAvatarText}>{initialOf(post.author)}</Text>
-            </View>
+          {/* 投稿者行: タップで投稿者のプロフィールへ */}
+          <TouchableOpacity
+            style={[s.postUserRow, { marginTop: Space[2] }]}
+            activeOpacity={0.75}
+            onPress={() => {
+              if (post.author.id === meId) return;
+              onClose();
+              router.push({ pathname: '/(screens)/user-profile', params: { userId: String(post.author.id) } });
+            }}
+          >
+            <Avatar uri={post.author.avatar_url} label={nameOf(post.author)} size={28} style={s.smallAvatar} />
             <Text style={s.postUser}>{nameOf(post.author)}</Text>
             {isEdited && <Text style={s.editedTag}> · 編集済み</Text>}
-          </View>
+          </TouchableOpacity>
 
-          {/* 本文 */}
-          <Text style={s.detailBodyText}>{post.body}</Text>
+          {/* トレーニング記録サマリー・本文 */}
+          <WorkoutSummaryCard summary={post.workout_summary} />
+          {!!post.body && <Text style={s.detailBodyText}>{post.body}</Text>}
 
           {/* いいね・ブックマーク */}
           <View style={s.detailActions}>
@@ -874,9 +835,7 @@ function PostDetailScreen({
               const isAuthorReply = c.author.id === post.author.id;
               return (
                 <View key={c.id} style={[s.commentItem, isAuthorReply && s.commentAuthorBg]}>
-                  <View style={s.smallAvatar}>
-                    <Text style={s.smallAvatarText}>{initialOf(c.author)}</Text>
-                  </View>
+                  <Avatar uri={c.author.avatar_url} label={nameOf(c.author)} size={28} style={s.smallAvatar} />
                   <View style={{ flex: 1 }}>
                     <Text style={s.commentUser}>
                       {nameOf(c.author)}
@@ -954,23 +913,49 @@ function DeleteConfirmDialog({
 
 // ─── 投稿作成画面 ────────────────────────────────────────────
 
+// 2026-08-30再設計：自由なタイプ選択・タイトル・本文入力を廃止し、「今日の
+// 完了済みトレーニング記録」から1件選んで投稿する形に変更した（AGENTS.md
+// 『コミュニティー再設計』参照）。編集時（isEditing）はどの記録に紐づくかは
+// 変更不可のため、記録選択UI自体を出さずコメント・画像のみ編集させる。
 function PostCreateScreen({
   initialPost,
+  token,
   onClose,
-  onSubmit,
+  onCreate,
+  onUpdate,
 }: {
   initialPost?: PostOut | null;
+  token: string | null;
   onClose: () => void;
-  onSubmit: (type: PostTypeKey, title: string, body: string, images: string[]) => Promise<void>;
+  onCreate: (sessionId: number, body: string, images: string[]) => Promise<void>;
+  onUpdate: (body: string, images: string[]) => Promise<void>;
 }) {
   const isEditing = !!initialPost;
-  const [type, setType] = useState<PostTypeKey>(initialPost?.post_type === 'qa' ? 'qa' : 'feed');
-  const [title, setTitle] = useState(initialPost?.title ?? '');
   const [body, setBody] = useState(initialPost?.body ?? '');
   const [images, setImages] = useState<string[]>(initialPost?.image_urls ?? []);
   const [submitting, setSubmitting] = useState(false);
 
-  const canSubmit = title.trim().length > 0 && body.trim().length > 0 && !submitting;
+  const [sessions, setSessions] = useState<PostableSessionOut[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(!isEditing);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (isEditing) return;
+    let cancelled = false;
+    setSessionsLoading(true);
+    fetchPostableSessions(token)
+      .then(list => {
+        if (cancelled) return;
+        setSessions(list);
+        setSelectedSessionId(prev => prev ?? list[0]?.id ?? null);
+      })
+      .catch(e => { if (!cancelled) setSessionsError(e instanceof ApiError ? e.detail : '読み込みに失敗しました'); })
+      .finally(() => { if (!cancelled) setSessionsLoading(false); });
+    return () => { cancelled = true; };
+  }, [isEditing, token]);
+
+  const canSubmit = !submitting && (isEditing || selectedSessionId != null);
 
   const addImage = async () => {
     if (images.length >= 5) return;
@@ -997,7 +982,11 @@ function PostCreateScreen({
     if (!canSubmit) return;
     setSubmitting(true);
     try {
-      await onSubmit(type, title.trim(), body.trim(), images);
+      if (isEditing) {
+        await onUpdate(body.trim(), images);
+      } else if (selectedSessionId != null) {
+        await onCreate(selectedSessionId, body.trim(), images);
+      }
     } catch (e) {
       Alert.alert('エラー', e instanceof ApiError ? e.detail : '投稿に失敗しました');
     } finally {
@@ -1011,7 +1000,7 @@ function PostCreateScreen({
         <TouchableOpacity onPress={onClose} style={s.iconBtn}>
           <MaterialIcons name="close" size={24} color={Colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={s.modalTitle}>{isEditing ? '投稿を編集' : '投稿を作成'}</Text>
+        <Text style={s.modalTitle}>{isEditing ? '投稿を編集' : '今日の記録を投稿'}</Text>
         <TouchableOpacity onPress={handleSubmit} disabled={!canSubmit} style={[s.iconBtn, s.postSubmitBtn]}>
           {submitting ? (
             <ActivityIndicator color={Colors.primary} size="small" />
@@ -1033,38 +1022,56 @@ function PostCreateScreen({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* 投稿先タイプ（編集時は変更不可のため非表示） */}
-          {!isEditing && (
-            <View style={s.createTypeRow}>
-              <TouchableOpacity
-                style={[s.tabPill, type === 'feed' && s.tabPillActive]}
-                onPress={() => setType('feed')}
-              >
-                <Text style={[s.tabLabel, type === 'feed' && s.tabLabelActive]}>フィード</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.tabPill, type === 'qa' && s.tabPillActive]}
-                onPress={() => setType('qa')}
-              >
-                <Text style={[s.tabLabel, type === 'qa' && s.tabLabelActive]}>Q&A</Text>
-              </TouchableOpacity>
+          {/* トレーニング記録の選択（新規投稿時のみ。編集時は紐づく記録が固定のため
+              サマリーだけ表示する） */}
+          {isEditing ? (
+            <WorkoutSummaryCard summary={initialPost?.workout_summary ?? null} />
+          ) : sessionsLoading ? (
+            <View style={s.createSessionLoading}>
+              <ActivityIndicator color={Colors.primaryDark} />
+            </View>
+          ) : sessionsError ? (
+            <Text style={s.createSessionEmptyText}>{sessionsError}</Text>
+          ) : sessions.length === 0 ? (
+            <Text style={s.createSessionEmptyText}>
+              今日完了したトレーニング記録がありません。筋トレを完了すると、ここから投稿できます。
+            </Text>
+          ) : (
+            <View style={s.createSessionList}>
+              <Text style={s.createSectionLabel}>投稿する記録を選ぶ</Text>
+              {sessions.map(session => {
+                const selected = session.id === selectedSessionId;
+                return (
+                  <TouchableOpacity
+                    key={session.id}
+                    style={[s.createSessionItem, selected && s.createSessionItemSelected]}
+                    activeOpacity={0.75}
+                    onPress={() => setSelectedSessionId(session.id)}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.createSessionItemTitle, selected && s.createSessionItemTitleSelected]}>
+                        {session.scheduled_date ? formatWorkoutDateJa(session.scheduled_date) : 'トレーニング記録'}
+                      </Text>
+                      <Text style={s.createSessionItemExercises}>
+                        {session.exercises.map(ex => `${ex.exercise_name} ${ex.sets_count}セット`).join('・')}
+                      </Text>
+                    </View>
+                    <MaterialIcons
+                      name={selected ? 'radio-button-checked' : 'radio-button-unchecked'}
+                      size={22}
+                      color={selected ? Colors.primaryDark : Colors.textHint}
+                    />
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           )}
 
-          {/* タイトル */}
-          <TextInput
-            value={title}
-            onChangeText={setTitle}
-            placeholder={type === 'qa' ? '質問のタイトルを入力' : 'タイトルを入力'}
-            placeholderTextColor={Colors.textHint}
-            style={s.createTitleInput}
-          />
-
-          {/* 本文: 残りスペースを埋める */}
+          {/* 一言コメント（任意） */}
           <TextInput
             value={body}
             onChangeText={setBody}
-            placeholder={type === 'qa' ? '質問内容を入力' : '内容を入力'}
+            placeholder="一言コメント（任意）"
             placeholderTextColor={Colors.textHint}
             style={s.createBodyInput}
             multiline
@@ -1108,16 +1115,6 @@ const s = StyleSheet.create({
   // ── Header ────────────────────────────────────────────────
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: Space[2] },
   headerBtn: { padding: Space[1] },
-  avatar: {
-    width: 32, height: 32, borderRadius: Radius.full,
-    backgroundColor: Colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  avatarText: {
-    color: Colors.textOnPrimary,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.bold,
-  },
 
   // ── ローディング／エラー ───────────────────────────────────
   centerBox: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Space[3], paddingHorizontal: Space[8] },
@@ -1169,32 +1166,6 @@ const s = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // ── Tab Bar ───────────────────────────────────────────────
-  tabBar: {
-    flexDirection: 'row',
-    gap: Space[2],
-    paddingHorizontal: Layout.screenPaddingH,
-    marginBottom: Space[3],
-  },
-  tabPill: {
-    paddingHorizontal: Space[3],
-    paddingVertical: Space[2],
-    borderRadius: Radius.full,
-    backgroundColor: Colors.bgCard,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  tabPillActive: {
-    backgroundColor: Colors.textPrimary,
-    borderColor: Colors.textPrimary,
-  },
-  tabLabel: {
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.medium,
-    color: Colors.textSecondary,
-  },
-  tabLabelActive: { color: Colors.textOnPrimary },
-
   // ── フォロー中: Empty State ────────────────────────────────
   emptyState: {
     flex: 1,
@@ -1235,11 +1206,6 @@ const s = StyleSheet.create({
     backgroundColor: Colors.primaryLight,
     alignItems: 'center', justifyContent: 'center',
     marginRight: Space[2],
-  },
-  smallAvatarText: {
-    fontSize: FontSize.xs,
-    fontWeight: FontWeight.bold,
-    color: Colors.textPrimary,
   },
   postUser: {
     fontSize: FontSize.sm,
@@ -1334,17 +1300,46 @@ const s = StyleSheet.create({
     padding: Layout.screenPaddingH,
     gap: Space[3],
   },
-  createTypeRow: { flexDirection: 'row', gap: Space[2] },
-  createTitleInput: {
+  // 2026-08-30追加：投稿する記録を選ぶリスト（自由入力のタイプ選択・タイトルは廃止）。
+  createSessionLoading: { paddingVertical: Space[6], alignItems: 'center' },
+  createSessionEmptyText: {
+    fontSize: FontSize.sm,
+    color: Colors.textHint,
+    textAlign: 'center',
+    paddingVertical: Space[6],
+    lineHeight: 20,
+  },
+  createSessionList: { gap: Space[2] },
+  createSessionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space[3],
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.border,
     backgroundColor: Colors.bgCard,
-    paddingHorizontal: Space[3],
-    height: Layout.inputHeight,
-    fontSize: FontSize.base,
-    color: Colors.textPrimary,
+    padding: Space[3],
   },
+  createSessionItemSelected: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primarySubtle,
+  },
+  createSessionItemTitle: { fontSize: FontSize.base, fontWeight: FontWeight.semibold, color: Colors.textPrimary },
+  createSessionItemTitleSelected: { color: Colors.primaryDark },
+  createSessionItemExercises: { fontSize: FontSize.xs, color: Colors.textHint, marginTop: 2 },
+  // 2026-08-30追加：投稿カード・詳細画面に表示するトレーニング記録サマリー。
+  workoutSummaryCard: {
+    backgroundColor: Colors.primarySubtle,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.primaryBorder,
+    padding: Space[3],
+    marginBottom: Space[2],
+    gap: 2,
+  },
+  workoutSummaryHeader: { flexDirection: 'row', alignItems: 'center', gap: Space[1], marginBottom: 2 },
+  workoutSummaryDate: { fontSize: FontSize.sm, fontWeight: FontWeight.bold, color: Colors.primaryDark },
+  workoutSummaryExercise: { fontSize: FontSize.sm, color: Colors.textSecondary },
   createBodyInput: {
     flex: 1,
     minHeight: 100,
@@ -1410,6 +1405,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.divider,
   },
+  followResultTap: { flexDirection: 'row', alignItems: 'center', gap: Space[3], flex: 1 },
   followResultInfo: { flex: 1 },
   followResultName: { fontSize: FontSize.base, fontWeight: FontWeight.semibold, color: Colors.textPrimary },
   followResultUsername: { fontSize: FontSize.xs, color: Colors.textHint, marginTop: 1 },
@@ -1435,36 +1431,15 @@ const s = StyleSheet.create({
     borderColor: Colors.border,
     ...Shadow.sm,
   },
+  userIdInfo: { flex: 1, gap: 2 },
+  userIdName: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+  },
   userIdText: {
-    flex: 1,
-    fontSize: FontSize.base,
-    fontWeight: FontWeight.medium,
-    color: Colors.textPrimary,
-  },
-  shareBtn: {
-    width: 36, height: 36,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.bgScreen,
-    alignItems: 'center', justifyContent: 'center',
-  },
-
-  // ── マイQRコード（ユーザー検索 Modal内） ───────────────────
-  qrContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Space[4],
-    paddingHorizontal: Space[5],
-  },
-  qrCodeBox: {
-    backgroundColor: '#FFFFFF',
-    padding: Space[4],
-    borderRadius: Radius.md,
-  },
-  qrIdText: {
-    fontSize: FontSize.base,
-    fontWeight: FontWeight.medium,
-    color: Colors.textPrimary,
+    fontSize: FontSize.sm,
+    color: Colors.textHint,
   },
 
   // ── 投稿詳細 Modal ─────────────────────────────────────────

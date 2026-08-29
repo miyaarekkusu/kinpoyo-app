@@ -13,9 +13,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 
 import { NotificationsModal } from '@/components/notifications-modal';
 import { AppHeader, PageTitleBar } from '@/components/ui/app-header';
+import { Avatar } from '@/components/ui/avatar';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
   Colors,
@@ -26,12 +28,21 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { GENDER_OPTIONS, TRAINING_GOAL_OPTIONS } from '@/constants/profile-options';
 import { useAuth } from '@/hooks/use-auth';
 import { ApiError } from '@/services/api';
 import { fetchMe, type UserOut } from '@/services/auth';
 import { AchievementsOut, Big3Out, fetchAchievements, fetchBig3, registerExerciseMax } from '@/services/records';
+import { fetchMyWeightGoal, type WeightGoalOut } from '@/services/body';
 import { fetchMyPrograms, leaveProgram, type UserProgramOut } from '@/services/program';
-import { fetchMyProfile, type UserProfileOut } from '@/services/user';
+import {
+  fetchFollowers,
+  fetchFollowing,
+  fetchMyProfile,
+  updateMyProfile,
+  uploadAvatarImage,
+  type UserProfileOut,
+} from '@/services/user';
 import {
   deleteWorkoutTemplate,
   fetchWorkoutTemplates,
@@ -56,22 +67,29 @@ export default function ProfileScreen() {
 
   const [user, setUser] = useState<UserOut | null>(null);
   const [profile, setProfile] = useState<UserProfileOut | null>(null);
+  const [weightGoal, setWeightGoal] = useState<WeightGoalOut | null>(null);
   const [achievements, setAchievements] = useState<AchievementsOut | null>(null);
   const [myProgram, setMyProgram] = useState<UserProgramOut | null>(null);
   const [big3, setBig3] = useState<Big3Out | null>(null);
   const [templates, setTemplates] = useState<WorkoutTemplateListItem[]>([]);
+  // 2026-08-30追加（フォロー機能拡充）：件数のみの取得APIが無いため一覧を取得して
+  // 件数を数える（community.tsxの検索結果等と同じくページングは未対応の想定規模）。
+  const [followersCount, setFollowersCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [leavingProgram, setLeavingProgram] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
 
   const loadAll = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     setLoadError(null);
     try {
-      const [me, prof, ach, programs, b3, tmpls] = await Promise.all([
+      const [me, prof, wGoal, ach, programs, b3, tmpls] = await Promise.all([
         fetchMe(token),
         fetchMyProfile(token),
+        fetchMyWeightGoal(token),
         fetchAchievements(token),
         fetchMyPrograms(token),
         fetchBig3(token),
@@ -79,16 +97,81 @@ export default function ProfileScreen() {
       ]);
       setUser(me);
       setProfile(prof);
+      setWeightGoal(wGoal);
       setAchievements(ach);
       setMyProgram(programs.find(p => p.status_code === 'active') ?? null);
       setBig3(b3);
       setTemplates(tmpls);
+
+      const [followers, following] = await Promise.all([
+        fetchFollowers(token, me.id),
+        fetchFollowing(token, me.id),
+      ]);
+      setFollowersCount(followers.length);
+      setFollowingCount(following.length);
     } catch (e) {
       setLoadError(e instanceof ApiError ? e.detail : '読み込みに失敗しました');
     } finally {
       setLoading(false);
     }
   }, [token]);
+
+  // 2026-08-30追加：プロフィール画像の変更（アップロードと同時にavatar_urlが
+  // 確定するため、成功したらprofileのavatar_urlだけ差し替えれば良い）。
+  const handlePickAvatar = async () => {
+    if (avatarUploading) return;
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('権限が必要です', '画像を選択するには写真へのアクセスを許可してください');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (result.canceled) return;
+    setAvatarUploading(true);
+    try {
+      const avatarUrl = await uploadAvatarImage(token, result.assets[0].uri);
+      setProfile(prev => (prev ? { ...prev, avatar_url: avatarUrl } : prev));
+    } catch (e) {
+      Alert.alert('エラー', e instanceof ApiError ? e.detail : '画像のアップロードに失敗しました');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  // プロフィール画像の削除（ユーザー要望：「プロフィール画像って消せるですか？あって
+  // ほしいです」）。avatar_urlが無い状態にはアップロード導線しか無いので、その場合は
+  // 選択肢を出さずそのまま画像選択へ進む。
+  const handleRemoveAvatar = async () => {
+    setAvatarUploading(true);
+    try {
+      await updateMyProfile(token, { avatar_url: null });
+      setProfile(prev => (prev ? { ...prev, avatar_url: null } : prev));
+    } catch (e) {
+      Alert.alert('エラー', e instanceof ApiError ? e.detail : '削除に失敗しました');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const handleAvatarPress = () => {
+    if (!profile?.avatar_url) {
+      Alert.alert('プロフィール画像', undefined, [
+        { text: 'キャンセル', style: 'cancel' },
+        { text: '写真を追加', onPress: handlePickAvatar },
+      ]);
+      return;
+    }
+    Alert.alert('プロフィール画像', undefined, [
+      { text: 'キャンセル', style: 'cancel' },
+      { text: '写真を変更', onPress: handlePickAvatar },
+      { text: '写真を削除', style: 'destructive', onPress: handleRemoveAvatar },
+    ]);
+  };
 
   useFocusEffect(useCallback(() => { loadAll(); }, [loadAll]));
 
@@ -183,7 +266,6 @@ export default function ProfileScreen() {
   };
 
   const displayName = profile?.display_name || user?.username || 'ゲスト';
-  const avatarInitial = displayName.charAt(0).toUpperCase();
 
   const STATS = achievements
     ? [
@@ -199,6 +281,25 @@ export default function ProfileScreen() {
     { emoji: '⚖️', label: '体重', unit: 'kg', value: fmtBodyValue(profile?.weight_kg ?? null) },
     { emoji: '💪', label: '筋肉量', unit: 'kg', value: fmtBodyValue(profile?.muscle_mass_kg ?? null) },
     { emoji: '📊', label: '体脂肪率', unit: '%', value: fmtBodyValue(profile?.body_fat_pct ?? null) },
+  ];
+
+  // 2026-08-30追加：オンボーディング等で入力済みだが編集画面にしか表示されて
+  // いなかった項目を、プロフィール画面本体にも表示するようにした。
+  const INFO_ITEMS = [
+    { label: '性別', value: GENDER_OPTIONS.find(g => g.id === profile?.gender_id)?.label ?? '未設定' },
+    { label: '身長', value: profile?.height_cm != null ? `${fmtBodyValue(profile.height_cm)} cm` : '未設定' },
+    {
+      label: '生まれた年',
+      value: profile?.birth_date ? `${new Date(profile.birth_date).getFullYear()}年` : '未設定',
+    },
+    {
+      label: '筋トレ目標',
+      value: TRAINING_GOAL_OPTIONS.find(t => t.key === profile?.training_goal)?.label ?? '未設定',
+    },
+    {
+      label: '目標体重',
+      value: weightGoal?.target_value != null ? `${fmtBodyValue(weightGoal.target_value)} kg` : '未設定',
+    },
   ];
 
   return (
@@ -226,16 +327,61 @@ export default function ProfileScreen() {
           style={styles.userCard}
           activeOpacity={0.8}
           onPress={() => router.push('/(screens)/profile-edit')}>
-          <View style={styles.avatarWrapper}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{avatarInitial}</Text>
+          <TouchableOpacity
+            style={styles.avatarWrapper}
+            activeOpacity={0.75}
+            disabled={avatarUploading}
+            onPress={handleAvatarPress}>
+            <Avatar uri={profile?.avatar_url} label={displayName} size={64} fontSize={FontSize.xl} />
+            <View style={styles.avatarEditBadge}>
+              {avatarUploading ? (
+                <ActivityIndicator color={Colors.textOnPrimary} size="small" />
+              ) : (
+                <IconSymbol name="camera.fill" size={12} color={Colors.textOnPrimary} />
+              )}
             </View>
-            <View style={styles.avatarOnline} />
-          </View>
+          </TouchableOpacity>
           <View style={styles.userInfo}>
             <Text style={styles.userName}>{loading && !user ? '読み込み中...' : displayName}</Text>
+            {!!user && <Text style={styles.userUsername}>@{user.username}</Text>}
           </View>
           <IconSymbol name="chevron.right" size={18} color={Colors.textHint} />
+        </TouchableOpacity>
+
+        {/* ── フォロー数（2026-08-30追加） ───────── */}
+        {user && (
+          <View style={styles.followCountsRow}>
+            <TouchableOpacity
+              style={styles.followCountItem}
+              onPress={() => router.push({ pathname: '/(screens)/follow-list', params: { userId: String(user.id), mode: 'followers' } })}>
+              <Text style={styles.followCountValue}>{followersCount}</Text>
+              <Text style={styles.followCountLabel}>フォロワー</Text>
+            </TouchableOpacity>
+            <View style={styles.followCountDivider} />
+            <TouchableOpacity
+              style={styles.followCountItem}
+              onPress={() => router.push({ pathname: '/(screens)/follow-list', params: { userId: String(user.id), mode: 'following' } })}>
+              <Text style={styles.followCountValue}>{followingCount}</Text>
+              <Text style={styles.followCountLabel}>フォロー中</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ── 基本情報（2026-08-30追加：編集画面にしか出ていなかった項目を表示） ── */}
+        <TouchableOpacity
+          style={styles.infoSection}
+          activeOpacity={0.8}
+          onPress={() => router.push('/(screens)/profile-edit')}>
+          <View style={styles.bodySectionHeader}>
+            <Text style={styles.sectionTitle2}>基本情報</Text>
+            <IconSymbol name="chevron.right" size={18} color={Colors.textHint} />
+          </View>
+          {INFO_ITEMS.map((item, i) => (
+            <View key={item.label} style={[styles.infoRow, i === INFO_ITEMS.length - 1 && styles.infoRowLast]}>
+              <Text style={styles.infoRowLabel}>{item.label}</Text>
+              <Text style={styles.infoRowValue}>{item.value}</Text>
+            </View>
+          ))}
         </TouchableOpacity>
 
         {/* ── Body Data ────────────────────────── */}
@@ -497,27 +643,16 @@ const styles = StyleSheet.create({
   avatarWrapper: {
     position: 'relative',
   },
-  avatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+  avatarEditBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: Colors.primaryDark,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.bold,
-    color: Colors.textOnPrimary,
-  },
-  avatarOnline: {
-    position: 'absolute',
-    bottom: 2,
-    right: 2,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: Colors.primary,
     borderWidth: 2,
     borderColor: Colors.primarySubtle,
   },
@@ -530,6 +665,22 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.bold,
     color: Colors.textPrimary,
   },
+  userUsername: {
+    fontSize: FontSize.sm,
+    color: Colors.textHint,
+  },
+  // ── フォロー数（2026-08-30追加）
+  followCountsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Space[6],
+    marginBottom: Space[5],
+  },
+  followCountItem: { alignItems: 'center' },
+  followCountValue: { fontSize: FontSize.lg, fontWeight: FontWeight.bold, color: Colors.textPrimary },
+  followCountLabel: { fontSize: FontSize.xs, color: Colors.textHint, marginTop: 2 },
+  followCountDivider: { width: 1, height: 24, backgroundColor: Colors.divider },
   // ── Section titles
   sectionTitle: {
     fontSize: FontSize.base,
@@ -641,6 +792,26 @@ const styles = StyleSheet.create({
     color: Colors.textHint,
     marginBottom: Space[5],
   },
+
+  // ── 基本情報（2026-08-30追加）
+  infoSection: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.lg,
+    padding: Space[4],
+    marginBottom: Space[5],
+    ...Shadow.sm,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Space[2] + 2,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
+  },
+  infoRowLast: { borderBottomWidth: 0, paddingBottom: 0 },
+  infoRowLabel: { fontSize: FontSize.sm, color: Colors.textSecondary },
+  infoRowValue: { fontSize: FontSize.sm, fontWeight: FontWeight.semibold, color: Colors.textPrimary },
 
   // ── Body Data
   bodySection: {

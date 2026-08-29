@@ -13,8 +13,9 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { OnboardingGender, useOnboarding } from '@/hooks/use-onboarding';
 
-type Gender = 'male' | 'female' | 'other';
+type Gender = OnboardingGender;
 
 const OPTIONS: { key: Gender; label: string }[] = [
   { key: 'male', label: '男性' },
@@ -22,6 +23,7 @@ const OPTIONS: { key: Gender; label: string }[] = [
 ];
 
 export default function GenderScreen() {
+  const { setGender: setOnboardingGender } = useOnboarding();
   const [gender, setGender] = useState<Gender | null>(null);
 
   return (
@@ -67,7 +69,11 @@ export default function GenderScreen() {
             style={[styles.primaryBtn, !gender && styles.primaryBtnDisabled]}
             activeOpacity={0.85}
             disabled={!gender}
-            onPress={() => router.push('/height')}>
+            onPress={() => {
+              if (!gender) return;
+              setOnboardingGender(gender);
+              router.push('/height');
+            }}>
             <Text style={styles.primaryBtnText}>次へ</Text>
           </TouchableOpacity>
         </View>

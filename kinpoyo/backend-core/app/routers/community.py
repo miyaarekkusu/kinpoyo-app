@@ -10,10 +10,10 @@ from app.schemas.community import (
     CommentCreate,
     CommentOut,
     FeedScope,
+    PostableSessionOut,
     PostCreate,
     PostImageUploadOut,
     PostOut,
-    PostTypeKey,
     PostUpdate,
 )
 
@@ -27,13 +27,35 @@ def _get_post_or_404(db: Session, post_id: int) -> Post:
     return post
 
 
+@router.get("/postable-sessions", response_model=list[PostableSessionOut])
+def list_postable_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    sessions = community_crud.list_postable_sessions(db, current_user.id)
+    return [community_crud.postable_session_to_out(s) for s in sessions]
+
+
 @router.post("", response_model=PostOut, status_code=status.HTTP_201_CREATED)
 def create_post(
     data: PostCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    post = community_crud.create_post(db, current_user.id, data)
+    # 2026-08-30再設計：投稿は「今日実施した自分の完了済みトレーニング記録」に
+    # 限定する（AGENTS.md『コミュニティー再設計』参照）。
+    try:
+        post = community_crud.create_post(db, current_user.id, data)
+    except community_crud.WorkoutSessionNotFoundError:
+        raise HTTPException(status_code=404, detail="トレーニング記録が見つかりません")
+    except community_crud.WorkoutSessionNotOwnedError:
+        raise HTTPException(status_code=403, detail="自分のトレーニング記録のみ投稿できます")
+    except community_crud.WorkoutSessionNotCompletedError:
+        raise HTTPException(status_code=400, detail="完了したトレーニング記録のみ投稿できます")
+    except community_crud.WorkoutSessionNotTodayError:
+        raise HTTPException(status_code=400, detail="今日実施したトレーニング記録のみ投稿できます")
+    except community_crud.AlreadyPostedError:
+        raise HTTPException(status_code=400, detail="このトレーニング記録は既に投稿済みです")
     return community_crud.post_to_out(post, current_user.id)
 
 
@@ -47,12 +69,11 @@ def upload_post_images(
 
 @router.get("", response_model=list[PostOut])
 def list_posts(
-    type: PostTypeKey = "feed",
     scope: FeedScope = "all",
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    posts = community_crud.list_posts(db, type, scope, current_user.id)
+    posts = community_crud.list_posts(db, scope, current_user.id)
     return [community_crud.post_to_out(p, current_user.id) for p in posts]
 
 
