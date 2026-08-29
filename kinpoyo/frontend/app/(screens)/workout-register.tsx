@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   ScrollView,
   StyleSheet,
@@ -26,6 +27,13 @@ import { useAuth } from '@/hooks/use-auth';
 import { ApiError } from '@/services/api';
 import { ExerciseOut, Movement, fetchExercises } from '@/services/exercises';
 import { createWorkout, toIsoDate } from '@/services/workout';
+import {
+  createWorkoutTemplate,
+  fetchWorkoutTemplate,
+  fetchWorkoutTemplates,
+  type WorkoutTemplateListItem,
+  type WorkoutTemplateSetOut,
+} from '@/services/workout-templates';
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'] as const;
 
@@ -43,6 +51,47 @@ type SetItem = { key: string; type: 'set'; weight: string; reps: string };
 type RestItem = { key: string; type: 'rest'; minutes: string; seconds: string };
 type ExerciseItem = SetItem | RestItem;
 type SessionExerciseInput = { key: string; exercise: ExerciseOut; items: ExerciseItem[] };
+
+// items（セット・休憩が好きな順で並ぶ）を、セットごとに直後の休憩時間を持たせた
+// sets配列へ変換する。当日の登録保存・My筋トレとしての保存の両方で使う共通処理。
+function itemsToSets(items: ExerciseItem[]): { weight_kg?: number; reps?: number; rest_after_sec?: number }[] {
+  const sets: { weight_kg?: number; reps?: number; rest_after_sec?: number }[] = [];
+  for (const item of items) {
+    if (item.type === 'set') {
+      const set: { weight_kg?: number; reps?: number; rest_after_sec?: number } = {};
+      if (item.weight.trim() !== '') set.weight_kg = Number(item.weight);
+      if (item.reps.trim() !== '') set.reps = Number(item.reps);
+      sets.push(set);
+    } else if ((item.minutes.trim() !== '' || item.seconds.trim() !== '') && sets.length > 0) {
+      const mins = item.minutes.trim() !== '' ? Number(item.minutes) : 0;
+      const secs = item.seconds.trim() !== '' ? Number(item.seconds) : 0;
+      sets[sets.length - 1].rest_after_sec = mins * 60 + secs;
+    }
+  }
+  return sets;
+}
+
+// My筋トレテンプレートのsets（weight_kg/reps/rest_after_sec）を、逆にitems配列へ
+// 復元する（workout-template-edit.tsxの編集モード読み込みと同じ変換）。
+function setsToItems(sets: WorkoutTemplateSetOut[], nextKey: () => string): ExerciseItem[] {
+  return sets.flatMap((s): ExerciseItem[] => {
+    const setItem: ExerciseItem = {
+      key: nextKey(),
+      type: 'set',
+      weight: s.weight_kg != null ? String(s.weight_kg) : '',
+      reps: s.reps != null ? String(s.reps) : '',
+    };
+    if (s.rest_after_sec != null) {
+      const mins = Math.floor(s.rest_after_sec / 60);
+      const secs = s.rest_after_sec % 60;
+      return [
+        setItem,
+        { key: nextKey(), type: 'rest', minutes: mins > 0 ? String(mins) : '', seconds: secs > 0 ? String(secs) : '' },
+      ];
+    }
+    return [setItem];
+  });
+}
 
 function resolveTargetDate(params: { year?: string; month?: string; date?: string }): Date {
   const { year, month, date } = params;
@@ -204,6 +253,109 @@ export default function WorkoutRegisterScreen() {
     );
   };
 
+  // ── My筋トレ連携 ──────────────────────────────
+  // 2026-08-28追加：登録画面から組んだメニューをそのままMy筋トレとして保存する、
+  // 逆にMy筋トレの内容をこの画面に読み込んで種目・セットを一括で流し込む、の両方
+  // （ユーザー要望：「メニュー登録画面からmy筋トレとして保存できるようにする、
+  // my筋トレから参照できるようにしたい」）。
+  const [templates, setTemplates] = useState<WorkoutTemplateListItem[]>([]);
+
+  useEffect(() => {
+    fetchWorkoutTemplates(token)
+      .then(setTemplates)
+      .catch(() => setTemplates([]));
+  }, [token]);
+
+  const [templatePickerVisible, setTemplatePickerVisible] = useState(false);
+  const [loadingTemplate, setLoadingTemplate] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  // 「My筋トレとして保存」ボタンは、My筋トレから読み込んだ時だけ表示する
+  // （ユーザー要望）。ゼロから組んだメニューでは表示しない。
+  const [loadedFromTemplate, setLoadedFromTemplate] = useState(false);
+
+  const applyTemplate = async (t: WorkoutTemplateListItem) => {
+    setLoadingTemplate(true);
+    setTemplateError(null);
+    try {
+      const detail = await fetchWorkoutTemplate(token, t.id);
+      setSessionExercises(
+        detail.exercises.map(te => {
+          const exercise = exercises.find(e => e.id === te.exercise_id);
+          return {
+            key: nextKey(),
+            exercise: exercise ?? ({
+              id: te.exercise_id,
+              name: te.exercise_name,
+              movement: 'push',
+              muscle: '',
+              muscle_color: null,
+            } as ExerciseOut),
+            items: setsToItems(te.sets, nextKey),
+          };
+        })
+      );
+      setLoadedFromTemplate(true);
+      setTemplatePickerVisible(false);
+    } catch (e) {
+      setTemplateError(e instanceof ApiError ? e.detail : 'テンプレートの取得に失敗しました');
+    } finally {
+      setLoadingTemplate(false);
+    }
+  };
+
+  const handlePickTemplate = (t: WorkoutTemplateListItem) => {
+    if (sessionExercises.length > 0) {
+      Alert.alert(
+        '現在の内容を置き換えますか？',
+        `「${t.name}」を読み込むと、現在編集中の内容は上書きされます。`,
+        [
+          { text: 'キャンセル', style: 'cancel' },
+          { text: '読み込む', style: 'destructive', onPress: () => applyTemplate(t) },
+        ]
+      );
+    } else {
+      applyTemplate(t);
+    }
+  };
+
+  const [saveTemplateModalVisible, setSaveTemplateModalVisible] = useState(false);
+  const [templateNameInput, setTemplateNameInput] = useState('');
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [saveTemplateError, setSaveTemplateError] = useState<string | null>(null);
+
+  const handleOpenSaveTemplate = () => {
+    if (sessionExercises.length === 0) return;
+    setTemplateNameInput('');
+    setSaveTemplateError(null);
+    setSaveTemplateModalVisible(true);
+  };
+
+  const handleConfirmSaveTemplate = async () => {
+    if (templateNameInput.trim() === '') {
+      setSaveTemplateError('テンプレート名を入力してください');
+      return;
+    }
+    setSavingTemplate(true);
+    setSaveTemplateError(null);
+    try {
+      await createWorkoutTemplate(token, {
+        name: templateNameInput.trim(),
+        exercises: sessionExercises.map((se, idx) => ({
+          exercise_id: se.exercise.id,
+          order_index: idx,
+          sets: itemsToSets(se.items),
+        })),
+      });
+      const list = await fetchWorkoutTemplates(token);
+      setTemplates(list);
+      setSaveTemplateModalVisible(false);
+    } catch (e) {
+      setSaveTemplateError(e instanceof ApiError ? e.detail : '保存に失敗しました');
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
   // ── 保存 ──────────────────────────────────────
   const [isSubmitting, setIsSubmitting] = useState(false);
   // 保存失敗時のエラー（サーバー通信の結果なので、その場では消えず次の保存
@@ -244,21 +396,7 @@ export default function WorkoutRegisterScreen() {
       await createWorkout(token, {
         scheduled_date: toIsoDate(targetDate),
         exercises: sessionExercises.map(se => {
-          // items（セット・休憩が好きな順で並ぶ）を、セットごとに直後の休憩時間を
-          // 持たせたsets配列へ変換する（AGENTS.md『新しいセットごとのフロー』参照）。
-          const sets: { weight_kg?: number; reps?: number; rest_after_sec?: number }[] = [];
-          for (const item of se.items) {
-            if (item.type === 'set') {
-              const set: { weight_kg?: number; reps?: number; rest_after_sec?: number } = {};
-              if (item.weight.trim() !== '') set.weight_kg = Number(item.weight);
-              if (item.reps.trim() !== '') set.reps = Number(item.reps);
-              sets.push(set);
-            } else if ((item.minutes.trim() !== '' || item.seconds.trim() !== '') && sets.length > 0) {
-              const mins = item.minutes.trim() !== '' ? Number(item.minutes) : 0;
-              const secs = item.seconds.trim() !== '' ? Number(item.seconds) : 0;
-              sets[sets.length - 1].rest_after_sec = mins * 60 + secs;
-            }
-          }
+          const sets = itemsToSets(se.items);
           return {
             exercise_id: se.exercise.id,
             // target_sets = 登録したセット数（「何セットやる予定か」）。AI回数カウント
@@ -297,6 +435,17 @@ export default function WorkoutRegisterScreen() {
             <Text style={styles.dateCardText}>{dateLabel}</Text>
           </View>
         </View>
+
+        {/* ── My筋トレから読み込む ─────────────── */}
+        {templates.length > 0 && (
+          <TouchableOpacity
+            style={styles.loadTemplateBtn}
+            onPress={() => setTemplatePickerVisible(true)}
+            activeOpacity={0.75}>
+            <IconSymbol name="square.and.arrow.down" size={16} color={Colors.primaryDark} />
+            <Text style={styles.loadTemplateBtnText}>My筋トレから読み込む</Text>
+          </TouchableOpacity>
+        )}
 
         {/* ── 種目一覧 ───────────────────────── */}
         {sessionExercises.length === 0 ? (
@@ -456,7 +605,94 @@ export default function WorkoutRegisterScreen() {
             <Text style={styles.saveBtnText}>筋トレメニューを保存する</Text>
           )}
         </TouchableOpacity>
+        {loadedFromTemplate && (
+          <TouchableOpacity
+            style={[styles.saveTemplateBtn, sessionExercises.length === 0 && styles.saveTemplateBtnDisabled]}
+            activeOpacity={0.85}
+            disabled={sessionExercises.length === 0}
+            onPress={handleOpenSaveTemplate}>
+            <Text style={styles.saveTemplateBtnText}>My筋トレとして保存</Text>
+          </TouchableOpacity>
+        )}
       </View>
+
+      {/* ── My筋トレ読み込みモーダル ─────────────── */}
+      <Modal
+        visible={templatePickerVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setTemplatePickerVisible(false)}
+        onDismiss={() => setTemplatePickerVisible(false)}>
+        <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>My筋トレから読み込む</Text>
+            <TouchableOpacity onPress={() => setTemplatePickerVisible(false)} hitSlop={8}>
+              <IconSymbol name="xmark" size={22} color={Colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
+          {templateError && (
+            <View style={[styles.errorBox, { margin: Layout.screenPaddingH }]}>
+              <Text style={styles.errorText}>{templateError}</Text>
+            </View>
+          )}
+          {loadingTemplate ? (
+            <View style={styles.centerBox}>
+              <ActivityIndicator color={Colors.primaryDark} size="large" />
+            </View>
+          ) : (
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.exerciseListContent}>
+              {templates.map(t => (
+                <TouchableOpacity
+                  key={t.id}
+                  style={styles.templateListItem}
+                  onPress={() => handlePickTemplate(t)}
+                  activeOpacity={0.7}>
+                  <Text style={styles.templateListItemName}>{t.name}</Text>
+                  <Text style={styles.templateListItemMeta}>{t.exercise_count}種目</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+        </SafeAreaView>
+      </Modal>
+
+      {/* ── My筋トレとして保存モーダル ───────────── */}
+      <Modal
+        visible={saveTemplateModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSaveTemplateModalVisible(false)}>
+        <View style={styles.dialogOverlay}>
+          <View style={styles.dialogBox}>
+            <Text style={styles.dialogTitle}>My筋トレとして保存</Text>
+            <TextInput
+              style={styles.dialogInput}
+              value={templateNameInput}
+              onChangeText={setTemplateNameInput}
+              placeholder="例: 定番プッシュデイ"
+              placeholderTextColor={Colors.textHint}
+            />
+            {saveTemplateError && <Text style={styles.errorText}>{saveTemplateError}</Text>}
+            <View style={styles.dialogActions}>
+              <TouchableOpacity
+                style={styles.dialogCancelBtn}
+                onPress={() => setSaveTemplateModalVisible(false)}>
+                <Text style={styles.dialogCancelBtnText}>キャンセル</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.dialogConfirmBtn}
+                disabled={savingTemplate}
+                onPress={handleConfirmSaveTemplate}>
+                {savingTemplate ? (
+                  <ActivityIndicator color={Colors.textOnPrimary} />
+                ) : (
+                  <Text style={styles.dialogConfirmBtnText}>保存する</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── 種目選択モーダル ───────────────────── */}
       <Modal
@@ -610,6 +846,19 @@ const styles = StyleSheet.create({
   },
   dateCardLeft: { flexDirection: 'row', alignItems: 'center', gap: Space[2] },
   dateCardText: { fontSize: FontSize.base, fontWeight: FontWeight.semibold, color: Colors.textPrimary },
+  loadTemplateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Space[2],
+    paddingVertical: Space[3],
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.primaryBorder,
+    backgroundColor: Colors.primarySubtle,
+    marginBottom: Space[4],
+  },
+  loadTemplateBtnText: { fontSize: FontSize.sm, fontWeight: FontWeight.semibold, color: Colors.primaryDark },
   emptyCard: {
     backgroundColor: Colors.bgCard,
     borderRadius: Radius.lg,
@@ -771,6 +1020,87 @@ const styles = StyleSheet.create({
     ...Shadow.sm,
   },
   saveBtnText: { color: Colors.textOnPrimary, fontSize: FontSize.base, fontWeight: FontWeight.bold },
+  saveTemplateBtn: {
+    height: Layout.buttonHeightMd,
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    borderColor: Colors.primaryDark,
+    backgroundColor: Colors.bgCard,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveTemplateBtnDisabled: { opacity: 0.4 },
+  saveTemplateBtnText: { color: Colors.primaryDark, fontSize: FontSize.base, fontWeight: FontWeight.bold },
+
+  // ── My筋トレ読み込みリスト・保存ダイアログ ─────
+  templateListItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Space[3],
+    paddingHorizontal: Space[3],
+    borderRadius: Radius.md,
+    marginBottom: Space[1],
+    backgroundColor: Colors.bgCard,
+    ...Shadow.sm,
+  },
+  templateListItemName: { fontSize: FontSize.base, fontWeight: FontWeight.semibold, color: Colors.textPrimary },
+  templateListItemMeta: { fontSize: FontSize.xs, color: Colors.textHint },
+  dialogOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.bgOverlay,
+    paddingHorizontal: Space[5],
+  },
+  dialogBox: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.xl,
+    width: '100%',
+    padding: Space[5],
+    gap: Space[3],
+  },
+  dialogTitle: {
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+  },
+  dialogInput: {
+    height: 44,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.bgScreen,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Space[3],
+    fontSize: FontSize.base,
+    color: Colors.textPrimary,
+  },
+  dialogActions: { flexDirection: 'row', gap: Space[3] },
+  dialogCancelBtn: {
+    flex: 1,
+    paddingVertical: Space[3],
+    borderRadius: Radius.md,
+    backgroundColor: Colors.bgScreen,
+    alignItems: 'center',
+  },
+  dialogCancelBtnText: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textPrimary,
+  },
+  dialogConfirmBtn: {
+    flex: 1,
+    paddingVertical: Space[3],
+    borderRadius: Radius.md,
+    backgroundColor: Colors.primaryDark,
+    alignItems: 'center',
+  },
+  dialogConfirmBtnText: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textOnPrimary,
+  },
 
   // ── モーダル ───────────────────────────
   modalHeader: {

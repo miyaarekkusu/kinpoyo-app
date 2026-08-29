@@ -23,6 +23,7 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { useOnboarding } from '@/hooks/use-onboarding';
 
 type Unit = 'kg' | 'lbs';
 
@@ -61,6 +62,7 @@ function goalMessage(goal: number, current: number) {
 }
 
 export default function WeightGoalScreen() {
+  const { setWeightGoalKg } = useOnboarding();
   const { currentWeight, unit: paramUnit } = useLocalSearchParams<{
     currentWeight: string;
     unit: string;
@@ -171,7 +173,10 @@ export default function WeightGoalScreen() {
           <TouchableOpacity
             style={styles.primaryBtn}
             activeOpacity={0.85}
-            onPress={() => router.push('/year')}>
+            onPress={() => {
+              setWeightGoalKg(goal);
+              router.push('/year');
+            }}>
             <Text style={styles.primaryBtnText}>次へ</Text>
           </TouchableOpacity>
         </View>

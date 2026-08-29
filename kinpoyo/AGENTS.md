@@ -217,6 +217,214 @@
       UIが違うこと自体がユーザーにとって使いづらさの原因になっている。登録画面のUIに
       一本化し、新規登録・既存編集の両方を同じ画面・同じ挙動で扱えるようにする
 
+### ~~カレンダー・筋トレ予定登録~~（`frontend/app/(tabs)/index.tsx`、2026-08-28対応済み）
+
+- [x] 今日より前の日付の筋トレ予定を編集できてしまう・過去日に新規で予定を組めてしまう
+      → `todayStart`（今日0時）と`selDate`を比較する`isPastSelected`を導入し、
+      `handleEditRegisteredMenu`/`handleGoToRegister`/`handleApplyTemplate`/
+      `handleRegisterSuggestion`の4つのハンドラすべてに早期returnガードを追加。
+      JSX側も過去日選択時は「トレーニングメニュー」カード・「トレーニングなし」
+      カードを`disabled`にし（タップしても何も起きない）、「My筋トレから登録」・
+      「プログラムの筋トレメニュー登録」セクション自体を非表示にした
+- `tsc --noEmit`通過済み
+
+### ~~メニュー登録画面 ⇔ My筋トレの連携~~（`frontend/app/(screens)/workout-register.tsx`、
+2026-08-28対応済み）
+
+- [x] メニュー登録画面から組んだメニューを「My筋トレとして保存」できるボタンを追加
+      → 保存パネルに「My筋トレとして保存」ボタン（`saveTemplateBtn`）を追加し、
+      名前入力ダイアログ経由で`createWorkoutTemplate`を呼ぶ。items→sets変換は
+      `handleSave`と共通化した`itemsToSets()`を再利用
+- [x] 逆にMy筋トレ（既存テンプレート）を参照して種目・セットを流し込めるように
+      → 日付カードの下に「My筋トレから読み込む」ボタンを追加。テンプレート一覧
+      モーダルから選択すると`fetchWorkoutTemplate`で詳細を取得し、`setsToItems()`
+      （`itemsToSets`の逆変換）で`sessionExercises`に変換して流し込む。既に種目が
+      入力済みの状態で選ぶと、上書き確認の`Alert`を挟む（誤操作防止）
+- 新規SF Symbol `square.and.arrow.down`を`icon-symbol.tsx`のMAPPINGに追加
+  （`file-download`、iOS版は`expo-symbols`が直接名前を解決するため追加不要）
+- `tsc --noEmit`通過済み
+- **追記（2026-08-30）**：登録画面にテンプレート読み込み導線ができたため、
+  ホーム画面（`(tabs)/index.tsx`）にあった重複導線「My筋トレから登録」
+  （空き日カードの下に出るテンプレートチップ一覧）を削除（ユーザー指摘：
+  「もう筋トレ登録に入れたから」）。`templates`/`applyingTemplateId`/
+  `templateError`state・`loadTemplates`・`handleApplyTemplate`・
+  `applyWorkoutTemplate`/`fetchWorkoutTemplates`のimport・`templateChip`系
+  スタイルを全て削除。カレンダーの空き日から直接テンプレートを適用する導線は
+  これで無くなり、「登録画面を開いてから読み込む」の1本に統一された
+
+### 筋トレ終了時の体重入力（2026-08-30実装 → 同日ユーザー指示によりコード削除。
+再実装する場合は下記の設計をそのまま使ってよい）
+
+一度`frontend/app/(screens)/workout-finish.tsx`として実装し、`tsc --noEmit`通過・
+動作確認まで完了していたが、ユーザーから「一旦消してほしい」との指示を受けて
+コードを削除した（理由は明言されていないが、他メンバーが`(tabs)/workout.tsx`・
+`services/user.ts`まわりを並行編集していたため、コンフリクト回避や設計の再検討が
+目的と推測される。他メンバーの変更を取り込んでから改めて判断する意向）。
+**削除済みなので、`workout-finish.tsx`は現存しない。`(tabs)/workout.tsx`の
+`handleEnd`はレポート生成後`workout-report-result`に直接遷移する元の状態に戻した。**
+
+再実装する場合の設計（ユーザーと相談して決定済みの方針）：
+
+- `(tabs)/workout.tsx`の`handleEnd`で`generateWorkoutReport`成功後の遷移先を
+  `workout-report-result` → `workout-finish`に変更（`reportJson`パラメータは
+  そのまま引き継ぐ）
+- `workout-finish.tsx`を新設。`fetchMyProfile`で現在の体重をプリフィルし、
+  「記録して次へ」で`updateMyProfile({weight_kg})`を呼んでから
+  `workout-report-result`へ`router.replace`（戻るボタンでこの画面に
+  戻らないように）、「スキップ」で保存せず同じ遷移
+- データは新規テーブルを作らず、既存の`user_profiles.weight_kg`（単一の現在値
+  カラム）をそのまま上書き。**将来「体重推移グラフ」を作る場合は日別ログ
+  テーブルへの移行を検討すること**（`updated_at`は他のプロフィール項目の
+  更新でも更新されるため、「今日already入力済みか」の判定には使えない点に注意）
+- 入力は毎回表示する方式（スキップ可）。「今日既に入力済みなら聞かない」は
+  上記の理由で信頼できる判定手段が無いため見送った
+- 検討したが不採用だった他の選択肢：日別体重ログテーブルの新設、既存レポート
+  画面への埋め込み、毎回必須入力（スキップ不可）
+
+### ユーザー情報変更画面に初期登録データが反映されていないバグ
+（`frontend/app/(screens)/profile-edit.tsx`）
+
+- [ ] オンボーディングで最初に登録した項目（性別・生まれ年・筋トレ目標・目標体重など、
+      `(onboarding)/gender.tsx`・`year.tsx`・`train-goal.tsx`・`weight-goal.tsx`で
+      収集）が、ユーザー情報変更画面に**表示も編集もできない**。調査済み：
+      **バックエンド側は`UserProfileUpdate`型に`gender_id`・`birth_date`・
+      `height_cm`・`experience_level_id`まで既に用意されており(`services/community.ts`・
+      `PUT /users/me/profile`)、フロントの`profile-edit.tsx`が`display_name`・
+      `weight_kg`・`muscle_mass_kg`・`body_fat_pct`の入力欄しか持っていないのが原因**。
+      不足している項目の入力欄を追加すればよい（新規API不要）
+
+### ~~コミュニティー機能の再設計~~（2026-08-30対応済み）
+
+**投稿の限定（実装済み）**：投稿を自由なQ&A/フィードから**その日の完了済み
+トレーニング記録**に限定した。ユーザーへの確認により「今日の記録のみ投稿可能」
+「Q&Aはデータごと削除」を採用：
+
+- マイグレーション`c2f7a19d5e34`：`posts`のQ&Aレコード・`post_types`の
+  `code='qa'`行を削除（`post_likes`/`post_comments`はON DELETE CASCADEで連鎖削除）
+- `schemas/community.py`：`PostCreate`から`post_type`/`title`を廃止し
+  `workout_session_id: int`を必須化。`PostOut`に`workout_summary`
+  （`PostWorkoutSummary`/`PostWorkoutExercise`、種目名・セット数・総レップ数・
+  最大重量をWorkoutSessionから決定的に組み立てる。AIには生成させない）を追加
+- `crud/community.py`の`create_post`：紐づけるセッションが
+  ①存在する②本人のもの③完了済み④**今日**のもの⑤未投稿（1記録1投稿まで）
+  を検証し、外れれば専用の例外→`routers/community.py`で400/403/404に変換
+- 新規`GET /posts/postable-sessions`：投稿作成画面で選ばせる「今日の完了済み・
+  未投稿のトレーニング記録」一覧を返す
+- `frontend/services/community.ts`：型・関数を再設計（`PostTypeKey`廃止）。
+  `PostCreateScreen`（`community.tsx`）を自由入力フォームから「今日の記録を
+  1件選ぶリスト＋任意の一言コメント＋画像」に作り替え、`FeedTab`・
+  `PostDetailScreen`に`WorkoutSummaryCard`（トレーニング内容表示）を追加
+
+**フォロー機能拡充（実装済み）**：
+
+- `schemas/user.py`に`PublicProfileOut`新設（実績・フォロー状態・
+  フォロワー数/フォロー中数を含む、自分専用`UserProfileOut`とは別枠）
+- `crud/user.py`：`get_public_profile`・`list_followers`・`list_following`を
+  追加（`_users_to_search_results`ヘルパーで`search_users`と共通化）。
+  `get_achievements`（`crud/record.py`）が元々`user_id`引数を取る設計だった
+  ため、他ユーザーの実績もそのまま流用できた
+- `routers/users.py`：`GET /users/{id}`・`GET /users/{id}/followers`・
+  `GET /users/{id}/following`を追加。**`/search`より後ろに定義**（FastAPIは
+  ルート登録順に一致を試みるため、先に書くと`/users/search`が`{user_id}`に
+  飲まれて422になる。認証無しでの200/401疎通確認で意図通りの優先順位を確認済み）
+- 新規画面`frontend/app/(screens)/user-profile.tsx`（他ユーザーの公開
+  プロフィール。編集・My筋トレCRUD・BIG3手入力・プログラム離脱等、自分専用の
+  操作は含まないMVPスコープ）・`frontend/app/(screens)/follow-list.tsx`
+  （フォロワー/フォロー中一覧、`mode`パラメータで共用）
+- `(tabs)/profile.tsx`（自分のプロフィール）にもフォロワー数/フォロー中数を
+  追加し、`follow-list.tsx`への導線をつけた
+- `community.tsx`のユーザー検索結果・投稿者行から`user-profile.tsx`へ遷移
+  できるようにした（自分自身の場合は遷移しない）
+
+**タブ統合（2026-08-30追加対応）**：当初案どおり`follow`・`feed`の2タブを
+1タブに統合。ただし`follow`（scope=following）に単純統合すると自分は自分を
+フォローしていないため**自分の投稿が一覧から消える**問題があったため、
+`crud/community.py`の`list_posts`でscope="following"の際に
+`Post.user_id.in_(followee_ids)`に加えて`Post.user_id == current_user_id`を
+`or_`で結合し、自分の投稿を常に含めるようにした（スキーマ変更なし）。
+`community.tsx`側は`activeTab`/`TabKey`/タブバーUI/`feedPosts`状態を全廃し、
+`followingPosts`（＝フォロー中＋自分の投稿）のみを表示する単一ビューに変更。
+検索フィルタも旧`feed`タブ限定だったのをこの単一ビュー全体に適用するよう統一。
+scope="all"のバックエンドAPI自体は残置（他画面から使う可能性があり、削除は
+過剰なため）が、現状フロントからは呼んでいない。
+
+`tsc --noEmit`・Python構文チェック・FastAPIアプリのimport確認・実際に
+サーバーを再起動してのルーティング優先順位確認まで完了。
+
+### ~~プロフィール画面の表示強化・アバター画像~~（2026-08-30対応済み）
+
+**プロフィール画面にユーザー情報を表示（実装済み）**：性別・身長・生まれた年・
+筋トレ目標・目標体重が`profile-edit.tsx`（編集画面）でしか見えず、プロフィール
+画面本体には出ていなかった。`(tabs)/profile.tsx`に「基本情報」セクションを
+新設し、上記5項目を読み取り専用で表示（タップで`profile-edit.tsx`へ）。
+選択肢マスタ（性別・筋トレ目標）は`profile-edit.tsx`にしか無かったものを
+`frontend/constants/profile-options.ts`に切り出して共通化。目標体重表示のため
+`fetchMyWeightGoal`も`profile.tsx`のロード対象に追加。
+
+**プロフィール画像のアップロード（実装済み）**：`avatar_url`はDB
+（`UserProfile.avatar_url`）・`UserProfileUpdate`・各種Out系スキーマには
+2026-08-30のフォロー機能拡充時点で既に存在していたが、**設定する手段（画像
+アップロードUI）が無かった**。
+
+- `app/core/uploads.py`：投稿画像保存処理を`_save_image(file, dest_dir)`に
+  共通化し、`save_avatar_image`を追加（保存先`uploads/avatars/`）
+- 新規`POST /users/me/avatar`（`routers/users.py`、`/me/profile`と同じ
+  グループなので`/search`・`{user_id}`より前に定義済みでルート順の問題なし）：
+  画像を保存すると同時に`profile.avatar_url`を更新するところまで1エンドポイントで
+  完結させた（投稿画像は「アップロード→別途PostCreateで確定」の2段階だが、
+  アバターは1枚だけなので分ける意味が無いため）
+- `frontend/services/user.ts`に`uploadAvatarImage`追加（`uploadPostImages`と
+  同じ「apiFetchはmultipart非対応なので直接fetchする」パターン）
+- `(tabs)/profile.tsx`：ユーザーカードのアバターをタップすると
+  `expo-image-picker`（正方形クロップ）→アップロード→`profile.avatar_url`を
+  差し替え
+
+**コミュニティー側の表示対応（実装済み）**：`avatar_url`自体はAPIレスポンスに
+既に含まれていたが、フロント側がどこも表示せず常に頭文字の丸アイコンだった。
+
+- 新規共通コンポーネント`frontend/components/ui/avatar.tsx`：`avatar_url`が
+  あれば画像、無ければ頭文字アイコンにフォールバックする`<Avatar>`を作り、
+  `profile.tsx`・`user-profile.tsx`・`follow-list.tsx`・`community.tsx`
+  （ヘッダー自分のアバター・フォロー検索結果・自分のIDカード・投稿カード・
+  投稿詳細・コメント）の全アバター表示箇所を置き換えた
+- `community.tsx`は`fetchMe`（`UserOut`）しか自分の情報を持っておらず
+  `avatar_url`が無かったため、`fetchMyProfile`も`loadAll`に追加
+
+**友達追加の導線が消える不具合（2026-08-30修正）**：ユーザー報告「友達追加を
+するところがない（最初しかない）」。原因：友達検索モーダル（`showFollowModal`）
+を開く唯一の入り口が`FollowTab`の「友達を探す」ボタンで、`FollowTab`自体は
+`followingPosts.length === 0`の時（＝フォロー中の投稿も自分の投稿も無い最初の
+状態）にしか表示されない。何か投稿した瞬間に導線が完全に消えていた。ヘッダー
+右上（検索アイコンの隣）に常設の「友達を探す」ボタン（`person.badge.plus`
+アイコン）を追加し、`showFollowModal`をいつでも開けるようにした
+（`FollowTab`側の導線はオンボーディング用にそのまま残置）。
+
+**ユーザー検索モーダルの手直し（2026-08-30）**：ユーザー要望「QRコードと
+隣のshareアイコンいらない。実際の名前を出るようにする」。
+
+- 検索していない時に出る「マイIDカード」から、機能していたのはQRコード表示
+  のみ（隣のshareアイコンはonPress未実装で何も起きなかった）。QRコード画面
+  一式（`showQrModal`state・`react-native-qrcode-svg`の`<QRCode>`・モーダル
+  ヘッダーの見出し/戻る先の分岐・関連スタイル）とshareアイコンを丸ごと削除
+- マイIDカードは`ID: username`だけだったのを、`display_name`（実際の名前）を
+  太字で上段に、`ID: username`を下段に小さく表示するよう変更（検索結果の
+  行と同じ「名前＋@ID」の見せ方に統一）
+- 検索結果一覧（`display_name || username`＋`@username`）はもともと実名を
+  表示していたため変更なし
+
+**「ID」表記の見直し（2026-08-30）**：ユーザーから「下のIDって何？」と質問
+があり、`username`（サインアップ時のニックネームがそのまま入る一意な識別子）
+のことだと説明したところ、「IDよりusernameにしてほしい」→さらに「ユーザー
+ネームにして」と、表記を英語"ID"ではなく日本語「ユーザーネーム」にする指示。
+`community.tsx`の検索プレースホルダーとマイIDカードの文言を「ユーザーネーム」
+に統一。
+
+**プロフィール画面で表示名とユーザーネームを両方表示（2026-08-30）**：
+`user-profile.tsx`（他ユーザー）・`follow-list.tsx`は元々「表示名＋@username」
+の両方を表示していたが、`(tabs)/profile.tsx`（自分のプロフィール）のユーザー
+カードは表示名のみでusernameがどこにも出ていなかった。表示名の下に
+`@{user.username}`を追加し、他画面と表示内容を揃えた。
+
 ---
 
 ## プロジェクト概要
@@ -1475,6 +1683,9 @@ cd backend-core && venv\Scripts\activate && uvicorn main:app --reload  # API起�
 | GET      | `/users/search?q=`   | ユーザー検索                     |      |
 | POST     | `/users/{id}/follow` | フォロー                         |      |
 | DELETE   | `/users/{id}/follow` | フォロー解除                     |      |
+| GET      | `/users/{id}`         | 他ユーザーの公開プロフィール取得（実績・フォロー状態・フォロワー数等） | 2026-08-30追加。`/search`より後ろに定義（ルーティング順序の都合） |
+| GET      | `/users/{id}/followers` | フォロワー一覧                 | 2026-08-30追加 |
+| GET      | `/users/{id}/following` | フォロー中一覧                 | 2026-08-30追加 |
 
 ### 種目マスター
 

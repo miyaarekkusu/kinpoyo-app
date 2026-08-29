@@ -13,6 +13,7 @@ import Animated, {
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/hooks/use-auth';
+import { useOnboarding } from '@/hooks/use-onboarding';
 import { Colors, Radius } from '@/constants/theme';
 
 const AUTO_NAVIGATE_DELAY = 1600;
@@ -20,6 +21,7 @@ const AUTO_NAVIGATE_DELAY = 1600;
 export default function SuccessScreen() {
   const { from } = useLocalSearchParams<{ from: string }>();
   const { completeOnboarding } = useAuth();
+  const { submit: submitOnboarding } = useOnboarding();
 
   const scale = useSharedValue(0);
   const opacity = useSharedValue(0);
@@ -33,15 +35,21 @@ export default function SuccessScreen() {
     );
     checkOpacity.value = withDelay(220, withTiming(1, { duration: 200 }));
 
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       if (from === 'onboarding') {
+        try {
+          await submitOnboarding();
+        } catch {
+          // 保存に失敗しても登録内容が消えるだけでアプリには入れるようにする。
+          // 値はプロフィール編集画面から入れ直せる。
+        }
         completeOnboarding();
       } else {
         router.replace('/login');
       }
     }, AUTO_NAVIGATE_DELAY);
     return () => clearTimeout(timer);
-  }, [checkOpacity, completeOnboarding, from, opacity, scale]);
+  }, [checkOpacity, completeOnboarding, from, opacity, scale, submitOnboarding]);
 
   const circleStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,

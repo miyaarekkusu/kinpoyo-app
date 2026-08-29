@@ -21,6 +21,7 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { useOnboarding } from '@/hooks/use-onboarding';
 
 const MIN_YEAR = 1950;
 const MAX_YEAR = 2015;
@@ -33,6 +34,7 @@ const SIDE_PADDING = (VIEWPORT_HEIGHT - ITEM_HEIGHT) / 2;
 const YEARS = Array.from({ length: MAX_YEAR - MIN_YEAR + 1 }, (_, i) => MIN_YEAR + i);
 
 export default function YearScreen() {
+  const { setBirthYear } = useOnboarding();
   const [year, setYear] = useState(DEFAULT_YEAR);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -79,7 +81,10 @@ export default function YearScreen() {
           <TouchableOpacity
             style={styles.primaryBtn}
             activeOpacity={0.85}
-            onPress={() => router.push('/train-goal')}>
+            onPress={() => {
+              setBirthYear(year);
+              router.push('/train-goal');
+            }}>
             <Text style={styles.primaryBtnText}>次へ</Text>
           </TouchableOpacity>
         </View>

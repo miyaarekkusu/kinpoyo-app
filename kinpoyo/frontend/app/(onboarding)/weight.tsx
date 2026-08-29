@@ -23,6 +23,7 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { useOnboarding } from '@/hooks/use-onboarding';
 
 type Unit = 'kg' | 'lbs';
 
@@ -45,6 +46,7 @@ function bmiComment(bmi: number): string {
 }
 
 export default function WeightScreen() {
+  const { heightCm, setWeightKg } = useOnboarding();
   const [unit, setUnit] = useState<Unit>('kg');
   const [weight, setWeight] = useState(DEFAULT_KG);
   const scrollRef = useRef<ScrollView>(null);
@@ -66,11 +68,12 @@ export default function WeightScreen() {
     setWeight(value);
   }, []);
 
-  // height は前画面のモック値(176cm)で仮計算 — UI確認用のプレースホルダー
+  // 前画面（height.tsx）で登録した実際の身長を使う。何らかの理由で無ければ
+  // 176cmをフォールバックにする（このBMI表示だけのための仮値）。
   const bmi = useMemo(() => {
-    const heightM = 1.76;
+    const heightM = (heightCm ?? 176) / 100;
     return Math.round((weight / (heightM * heightM)) * 10) / 10;
-  }, [weight]);
+  }, [weight, heightCm]);
 
   return (
     <>
@@ -147,12 +150,13 @@ export default function WeightScreen() {
           <TouchableOpacity
             style={styles.primaryBtn}
             activeOpacity={0.85}
-            onPress={() =>
+            onPress={() => {
+              setWeightKg(weight);
               router.push({
                 pathname: '/weight-goal',
                 params: { currentWeight: String(weight), unit },
-              })
-            }>
+              });
+            }}>
             <Text style={styles.primaryBtnText}>次へ</Text>
           </TouchableOpacity>
         </View>

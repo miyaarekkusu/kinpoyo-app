@@ -1,26 +1,61 @@
+from datetime import date, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.community import Follow, Post, PostComment, PostLike
-from app.models.master import PostType
 from app.models.user import User
+from app.models.workout import SessionExercise, WorkoutSession
 from app.schemas.community import (
     CommentCreate,
     CommentOut,
     FeedScope,
     PostAuthor,
+    PostableSessionExercise,
+    PostableSessionOut,
     PostCreate,
     PostOut,
-    PostTypeKey,
     PostUpdate,
+    PostWorkoutExercise,
+    PostWorkoutSummary,
 )
+
+# workout.py・record.py・program.pyと同じローカル定数（DBの
+# workout_session_statusesマスタと対応。共通の定数モジュールが無いため踏襲）。
+STATUS_COMPLETED = 3
 
 _POST_LOAD_OPTIONS = (
     selectinload(Post.user).selectinload(User.profile),
-    selectinload(Post.post_type),
+    selectinload(Post.workout_session)
+    .selectinload(WorkoutSession.session_exercises)
+    .selectinload(SessionExercise.exercise),
+    selectinload(Post.workout_session)
+    .selectinload(WorkoutSession.session_exercises)
+    .selectinload(SessionExercise.sets),
 )
+
+
+class WorkoutSessionNotFoundError(Exception):
+    pass
+
+
+class WorkoutSessionNotOwnedError(Exception):
+    pass
+
+
+class WorkoutSessionNotCompletedError(Exception):
+    pass
+
+
+class WorkoutSessionNotTodayError(Exception):
+    pass
+
+
+class AlreadyPostedError(Exception):
+    """2026-08-30追加：1トレーニング記録につき投稿は1件まで（同じ記録を
+    何度も投稿できてしまうと「その日の記録」という前提が崩れるため）。"""
+    pass
 
 
 def _author_out(user: User) -> PostAuthor:
@@ -33,11 +68,31 @@ def _author_out(user: User) -> PostAuthor:
     )
 
 
-def _post_type_id(db: Session, code: PostTypeKey) -> int:
-    post_type = db.scalars(select(PostType).where(PostType.code == code)).first()
-    if post_type is None:
-        raise ValueError(f"unknown post type code: {code}")
-    return post_type.id
+def _workout_summary_out(session: Optional[WorkoutSession]) -> Optional[PostWorkoutSummary]:
+    """2026-08-30追加：投稿に紐づくWorkoutSessionから、投稿カード表示用の
+    サマリーを決定的に組み立てる（AIには生成させない。判定と文章生成の分離は
+    AIレビュー機能と同じ方針）。"""
+    if session is None:
+        return None
+    exercises: list[PostWorkoutExercise] = []
+    for se in sorted(session.session_exercises, key=lambda e: e.order_index):
+        sets = se.sets
+        total_reps = sum((s.reps or 0) for s in sets)
+        weights = [float(s.weight_kg) for s in sets if s.weight_kg is not None]
+        exercises.append(
+            PostWorkoutExercise(
+                exercise_name=se.exercise.name,
+                sets_count=len(sets),
+                total_reps=total_reps,
+                max_weight_kg=max(weights) if weights else None,
+            )
+        )
+    return PostWorkoutSummary(
+        scheduled_date=session.scheduled_date,
+        duration_sec=session.duration_sec,
+        total_volume=float(session.total_volume) if session.total_volume is not None else None,
+        exercises=exercises,
+    )
 
 
 def post_to_out(post: Post, current_user_id: int) -> PostOut:
@@ -45,11 +100,11 @@ def post_to_out(post: Post, current_user_id: int) -> PostOut:
     return PostOut(
         id=post.id,
         author=_author_out(post.user),
-        post_type=post.post_type.code,
         title=post.title,
         body=post.body,
         image_urls=post.image_urls or [],
         workout_session_id=post.workout_session_id,
+        workout_summary=_workout_summary_out(post.workout_session),
         is_pinned=post.is_pinned,
         likes_count=post.likes_count,
         comments_count=post.comments_count,
@@ -71,6 +126,50 @@ def comment_to_out(comment: PostComment) -> CommentOut:
     )
 
 
+def list_postable_sessions(db: Session, user_id: int) -> list[WorkoutSession]:
+    """2026-08-30追加：投稿作成画面用。今日の自分の完了済みトレーニング記録の
+    うち、まだ投稿していないものだけを返す（1記録1投稿までのため、既に
+    投稿済みの記録は選択肢から除外する）。"""
+    posted_session_ids = select(Post.workout_session_id).where(
+        Post.workout_session_id.is_not(None)
+    )
+    stmt = (
+        select(WorkoutSession)
+        .where(
+            WorkoutSession.user_id == user_id,
+            WorkoutSession.status_id == STATUS_COMPLETED,
+            WorkoutSession.scheduled_date == date.today(),
+            WorkoutSession.id.not_in(posted_session_ids),
+        )
+        .options(
+            selectinload(WorkoutSession.session_exercises).selectinload(
+                SessionExercise.exercise
+            ),
+            selectinload(WorkoutSession.session_exercises).selectinload(
+                SessionExercise.sets
+            ),
+        )
+        .order_by(WorkoutSession.ended_at.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def postable_session_to_out(session: WorkoutSession) -> PostableSessionOut:
+    return PostableSessionOut(
+        id=session.id,
+        scheduled_date=session.scheduled_date,
+        duration_sec=session.duration_sec,
+        total_volume=float(session.total_volume) if session.total_volume is not None else None,
+        exercises=[
+            PostableSessionExercise(
+                exercise_name=se.exercise.name,
+                sets_count=len(se.sets),
+            )
+            for se in sorted(session.session_exercises, key=lambda e: e.order_index)
+        ],
+    )
+
+
 def get_post(db: Session, post_id: int) -> Optional[Post]:
     stmt = (
         select(Post)
@@ -80,30 +179,46 @@ def get_post(db: Session, post_id: int) -> Optional[Post]:
     return db.scalars(stmt).first()
 
 
-def list_posts(
-    db: Session,
-    post_type: PostTypeKey,
-    scope: FeedScope,
-    current_user_id: int,
-) -> list[Post]:
+def list_posts(db: Session, scope: FeedScope, current_user_id: int) -> list[Post]:
     stmt = (
         select(Post)
-        .join(Post.post_type)
-        .where(PostType.code == post_type)
         .options(*_POST_LOAD_OPTIONS, selectinload(Post.likes))
         .order_by(Post.is_pinned.desc(), Post.created_at.desc())
     )
     if scope == "following":
+        # 2026-08-30：フォロー中タブに統合するにあたり、自分自身は自分を
+        # フォローしていないため自分の投稿が一覧から消えてしまう問題を回避
+        # するため、自分の投稿は常に含める（AGENTS.md参照）。
         followee_ids = select(Follow.followee_id).where(Follow.follower_id == current_user_id)
-        stmt = stmt.where(Post.user_id.in_(followee_ids))
+        stmt = stmt.where(or_(Post.user_id.in_(followee_ids), Post.user_id == current_user_id))
     return list(db.scalars(stmt).all())
 
 
 def create_post(db: Session, user_id: int, data: PostCreate) -> Post:
+    """2026-08-30再設計：投稿は必ず「今日実施した、自分の完了済みトレーニング
+    記録」に紐づける。過去の記録・他人の記録・未完了の記録からは投稿できない
+    （AGENTS.md『コミュニティー再設計』参照）。"""
+    session = db.get(WorkoutSession, data.workout_session_id)
+    if session is None:
+        raise WorkoutSessionNotFoundError()
+    if session.user_id != user_id:
+        raise WorkoutSessionNotOwnedError()
+    if session.status_id != STATUS_COMPLETED:
+        raise WorkoutSessionNotCompletedError()
+    session_date = session.scheduled_date or (
+        session.ended_at.astimezone(timezone.utc).date() if session.ended_at else None
+    )
+    if session_date != date.today():
+        raise WorkoutSessionNotTodayError()
+
+    existing = db.scalars(
+        select(Post).where(Post.workout_session_id == data.workout_session_id)
+    ).first()
+    if existing is not None:
+        raise AlreadyPostedError()
+
     post = Post(
         user_id=user_id,
-        post_type_id=_post_type_id(db, data.post_type),
-        title=data.title,
         body=data.body,
         image_urls=data.image_urls or None,
         workout_session_id=data.workout_session_id,
