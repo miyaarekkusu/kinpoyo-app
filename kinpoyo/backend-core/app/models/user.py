@@ -57,6 +57,10 @@ class UserProfile(Base, TimestampMixin):
     experience_level_id: Mapped[int] = mapped_column(
         SmallInteger, ForeignKey("difficulty_levels.id"), default=1
     )
+    # オンボーディングの「あなたの主な目標は何ですか？」で選ぶ値。'lose'|'gain'|'maintain'。
+    # 3値の固定選択肢で他テーブルとの結合も無いため、Gender等と違いマスターテーブル化せず
+    # 単純な文字列カラムにしている。
+    training_goal: Mapped[Optional[str]] = mapped_column(String(20))
 
     user: Mapped["User"] = relationship(back_populates="profile")
     gender: Mapped[Optional["Gender"]] = relationship()

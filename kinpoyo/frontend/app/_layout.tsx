@@ -5,6 +5,7 @@ import 'react-native-reanimated';
 
 import { AuthProvider, useAuth } from '@/hooks/use-auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { OnboardingProvider } from '@/hooks/use-onboarding';
 
 export const unstable_settings = {
   anchor: '(auth)',
@@ -15,10 +16,12 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <RootNavigator />
-        <StatusBar style="auto" />
-      </ThemeProvider>
+      <OnboardingProvider>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <RootNavigator />
+          <StatusBar style="auto" />
+        </ThemeProvider>
+      </OnboardingProvider>
     </AuthProvider>
   );
 }

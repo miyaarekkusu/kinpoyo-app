@@ -21,6 +21,7 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { useOnboarding } from '@/hooks/use-onboarding';
 
 const MIN_CM = 140;
 const MAX_CM = 220;
@@ -36,6 +37,7 @@ const SIDE_PADDING = VIEWPORT_HEIGHT / 2 - ITEM_HEIGHT / 2;
 const VALUES = Array.from({ length: MAX_CM - MIN_CM + 1 }, (_, i) => MIN_CM + i);
 
 export default function HeightScreen() {
+  const { setHeightCm } = useOnboarding();
   const [height, setHeight] = useState(DEFAULT_CM);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -99,7 +101,10 @@ export default function HeightScreen() {
           <TouchableOpacity
             style={styles.primaryBtn}
             activeOpacity={0.85}
-            onPress={() => router.push('/weight')}>
+            onPress={() => {
+              setHeightCm(height);
+              router.push('/weight');
+            }}>
             <Text style={styles.primaryBtnText}>次へ</Text>
           </TouchableOpacity>
         </View>

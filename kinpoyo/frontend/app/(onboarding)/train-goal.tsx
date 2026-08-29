@@ -13,8 +13,9 @@ import {
   Shadow,
   Space,
 } from '@/constants/theme';
+import { OnboardingTrainingGoal, useOnboarding } from '@/hooks/use-onboarding';
 
-type Goal = 'lose' | 'gain' | 'maintain';
+type Goal = OnboardingTrainingGoal;
 
 const OPTIONS: { key: Goal; label: string }[] = [
   { key: 'lose', label: '痩せたい' },
@@ -23,6 +24,7 @@ const OPTIONS: { key: Goal; label: string }[] = [
 ];
 
 export default function TrainGoalScreen() {
+  const { setTrainingGoal } = useOnboarding();
   const [goal, setGoal] = useState<Goal | null>(null);
 
   return (
@@ -59,7 +61,11 @@ export default function TrainGoalScreen() {
             style={[styles.primaryBtn, !goal && styles.primaryBtnDisabled]}
             activeOpacity={0.85}
             disabled={!goal}
-            onPress={() => router.push({ pathname: '/success', params: { from: 'onboarding' } })}>
+            onPress={() => {
+              if (!goal) return;
+              setTrainingGoal(goal);
+              router.push({ pathname: '/success', params: { from: 'onboarding' } });
+            }}>
             <Text style={styles.primaryBtnText}>はじめる</Text>
           </TouchableOpacity>
         </View>
