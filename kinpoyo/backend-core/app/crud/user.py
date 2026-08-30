@@ -56,12 +56,19 @@ def get_profile(db: Session, user_id: int) -> Optional[UserProfile]:
 
 def update_profile(db: Session, user_id: int, data: UserProfileUpdate) -> UserProfile:
     profile = get_profile(db, user_id)
+    
+    # プロフィールがまだ存在しない場合は「新規作成」として準備する
+    if profile is None:
+        profile = UserProfile(user_id=user_id)
+        db.add(profile)
+        
+    # 既存、または新規作成したプロフィールに対してデータを上書きする
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(profile, field, value)
+        
     db.commit()
     db.refresh(profile)
     return profile
-
 
 def search_users(db: Session, query: str, current_user_id: int, limit: int = 20) -> list[UserSearchResult]:
     like_pattern = f"%{query}%"

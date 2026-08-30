@@ -23,24 +23,70 @@ import {
 
 const OVERVIEW = [
   { emoji: '📅', value: '8週間', label: '期間' },
-  { emoji: '🔄', value: '週3回', label: '頻度' },
+  { emoji: '🔄', value: '週4回', label: '頻度' },
   { emoji: '⚡', value: '中〜上級', label: 'レベル' },
   { emoji: '🏋️', value: 'BIG3', label: '種目タイプ' },
 ] as const;
 
 const SCHEDULE = [
-  { day: '月',       work: 'スクワット + ベンチプレス', rest: false },
-  { day: '火',       work: '休養・ストレッチ',          rest: true  },
-  { day: '水',       work: 'デッドリフト + 補助種目',  rest: false },
-  { day: '木',       work: '休養・ストレッチ',          rest: true  },
-  { day: '金',       work: '全種目複合 + 仕上げ',       rest: false },
-  { day: '土/日',    work: '休養',                      rest: true  },
+  { day: 'Day 1', work: 'スクワット + テンポベンチプレス + 補助種目', rest: false },
+  { day: 'Day 2', work: 'デッドリフト + 補助種目', rest: false },
+  { day: 'Day 3', work: 'ベンチプレス + テンポスクワット + 補助種目', rest: false },
+  { day: 'Day 4', work: '止めありベンチプレス + 肩・腕補助種目', rest: false },
 ] as const;
 
-const EXERCISES = [
-  { name: 'スクワット',    muscle: '脚・臀部',    vol: '4セット × 8回',  color: '#22C55E' },
-  { name: 'ベンチプレス',  muscle: '胸・肩・腕',  vol: '4セット × 8回',  color: '#EF4444' },
-  { name: 'デッドリフト',  muscle: '背中・全身',  vol: '3セット × 5回',  color: '#3B82F6' },
+// ─── Day 1 ~ Day 4 詳細プログラム構成 ────────────────────────
+const PROGRAM_DAYS = [
+  {
+    day: 'Day 1',
+    theme: 'スクワット & テンポベンチ',
+    color: '#22C55E',
+    exercises: [
+      { name: 'スクワット', detail: '1セット × 3回', rpe: 'RPE 8' },
+      { name: 'スクワット', detail: '4セット × 3回', rpe: 'RPE 6.5~7' },
+      { name: 'テンポベンチプレス (下ろし4秒)', detail: '1セット × 5回', rpe: 'RPE 6' },
+      { name: 'テンポベンチプレス (下ろし4秒)', detail: '1セット × 5回', rpe: 'RPE 6.5' },
+      { name: 'テンポベンチプレス (下ろし4秒)', detail: '1セット × 5回', rpe: 'RPE 7' },
+      { name: 'チンニング', detail: '2セット', rpe: '' },
+      { name: 'マシンローイング', detail: '2セット', rpe: '' },
+    ],
+  },
+  {
+    day: 'Day 2',
+    theme: 'デッドリフト & 背中・ポステリアチェーン',
+    color: '#3B82F6',
+    exercises: [
+      { name: 'デッドリフト', detail: '1セット × 5回', rpe: 'RPE 6' },
+      { name: 'デッドリフト', detail: '4セット × 3回', rpe: 'RPE 8' },
+      { name: 'ルーマニアンデッドリフト', detail: '2セット', rpe: '' },
+      { name: 'ダンベルプルオーバー', detail: '2セット', rpe: '' },
+    ],
+  },
+  {
+    day: 'Day 3',
+    theme: 'ベンチプレス & テンポスクワット',
+    color: '#EF4444',
+    exercises: [
+      { name: 'ベンチプレス', detail: '2セット × 5回', rpe: 'RPE 6.5~7' },
+      { name: 'ベンチプレス (Top Single)', detail: '1セット × 1回', rpe: 'RPE 9' },
+      { name: 'ベンチプレス', detail: '2セット × 5回', rpe: 'RPE 7' },
+      { name: 'テンポスクワット (下ろし4秒)', detail: '3セット × 5回', rpe: 'RPE 6~6.5' },
+      { name: 'スミスインクライン / ハイインクライン', detail: '2セット', rpe: '' },
+      { name: 'ワンハンドロウ / マシンローイング', detail: '2セット', rpe: '' },
+    ],
+  },
+  {
+    day: 'Day 4',
+    theme: '止めありベンチ & 肩・腕アクセサリー',
+    color: '#F59E0B',
+    exercises: [
+      { name: '止めありベンチプレス', detail: '3セット × 4回', rpe: 'RPE 6' },
+      { name: '止めありベンチプレス', detail: '2セット × 4回', rpe: 'RPE 6.5' },
+      { name: 'ミリタリープレス', detail: '3セット', rpe: '' },
+      { name: 'フレンチプレス', detail: '2セット', rpe: '' },
+      { name: 'サイドレイズ', detail: '2セット', rpe: '' },
+    ],
+  },
 ] as const;
 
 export default function ProgramShousa1Screen() {
@@ -70,11 +116,11 @@ export default function ProgramShousa1Screen() {
               </View>
               <View style={styles.heroInfo}>
                 <Text style={styles.heroTitle}>BIG3強化プログラム</Text>
-                <Text style={styles.heroSub}>8週間 · 週3回 · 中〜上級</Text>
+                <Text style={styles.heroSub}>8週間 · 週4回 · 中〜上級</Text>
               </View>
             </View>
             <Text style={styles.heroDesc}>
-              スクワット・ベンチプレス・デッドリフトのBIG3種目を軸に、筋力とパワーを最大化する本格的な8週間プログラム。
+              スクワット・ベンチプレス・デッドリフトのBIG3種目を軸に、RPEに基づいた適切な強度設定で筋力とパワーを最大化する本格的な8週間プログラム。
             </Text>
           </View>
 
@@ -105,25 +151,45 @@ export default function ProgramShousa1Screen() {
             ))}
           </View>
 
-          {/* ── 種目リスト ───────────────────── */}
-          <View style={styles.card}>
-            <View style={styles.sectionTitleRow}>
-              <Text style={styles.sectionTitle}>メイン種目</Text>
-              <Text style={styles.countBadge}>{EXERCISES.length}種目</Text>
-            </View>
-            {EXERCISES.map((ex, i) => (
-              <View key={i} style={[styles.exRow, i < EXERCISES.length - 1 && styles.exRowBorder]}>
-                <View style={[styles.exBar, { backgroundColor: ex.color }]} />
-                <View style={styles.exInfo}>
-                  <Text style={styles.exName}>{ex.name}</Text>
-                  <Text style={styles.exMuscle}>{ex.muscle}</Text>
-                </View>
-                <View style={[styles.exVol, { backgroundColor: ex.color + '18' }]}>
-                  <Text style={[styles.exVolText, { color: ex.color }]}>{ex.vol}</Text>
-                </View>
-              </View>
-            ))}
+          {/* ── メインプログラム構成（Day 1 〜 Day 4） ──────── */}
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.mainSectionTitle}>メインプログラム詳細</Text>
+            <Text style={styles.countBadge}>4 Days</Text>
           </View>
+
+          {PROGRAM_DAYS.map((dayGroup, dIdx) => (
+            <View key={dIdx} style={styles.dayCard}>
+              {/* Day ヘッダー */}
+              <View style={styles.dayHeader}>
+                <View style={[styles.dayBadge, { backgroundColor: dayGroup.color }]}>
+                  <Text style={styles.dayBadgeText}>{dayGroup.day}</Text>
+                </View>
+                <Text style={styles.dayThemeText} numberOfLines={1}>{dayGroup.theme}</Text>
+              </View>
+
+              {/* 種目リスト */}
+              {dayGroup.exercises.map((ex, exIdx) => (
+                <View
+                  key={exIdx}
+                  style={[
+                    styles.exRow,
+                    exIdx < dayGroup.exercises.length - 1 && styles.exRowBorder,
+                  ]}
+                >
+                  <View style={[styles.exBar, { backgroundColor: dayGroup.color }]} />
+                  <View style={styles.exInfo}>
+                    <Text style={styles.exName}>{ex.name}</Text>
+                    <Text style={styles.exDetail}>{ex.detail}</Text>
+                  </View>
+                  {ex.rpe !== '' && (
+                    <View style={[styles.rpeBadge, { backgroundColor: dayGroup.color + '15' }]}>
+                      <Text style={[styles.rpeText, { color: dayGroup.color }]}>{ex.rpe}</Text>
+                    </View>
+                  )}
+                </View>
+              ))}
+            </View>
+          ))}
 
           <View style={{ height: 100 }} />
         </ScrollView>
@@ -218,19 +284,25 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     marginBottom: Space[3],
   },
-  sectionTitleRow: {
+  sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginTop: Space[2],
     marginBottom: Space[3],
+  },
+  mainSectionTitle: {
+    fontSize: FontSize.base,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
   },
   countBadge: {
     fontSize: FontSize.xs,
     fontWeight: FontWeight.bold,
     color: Colors.primaryDark,
     backgroundColor: Colors.primarySubtle,
-    paddingHorizontal: Space[2],
-    paddingVertical: 2,
+    paddingHorizontal: Space[3],
+    paddingVertical: 3,
     borderRadius: Radius.full,
     overflow: 'hidden',
   },
@@ -269,7 +341,7 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.divider,
   },
   dayPill: {
-    width: 48,
+    width: 54,
     paddingVertical: 4,
     borderRadius: Radius.sm,
     backgroundColor: '#FEF3C7',
@@ -290,11 +362,45 @@ const styles = StyleSheet.create({
   },
   scheduleWorkRest: { color: Colors.textHint, fontWeight: FontWeight.regular },
 
-  // ── Exercise row
+  // ── Day Group Card
+  dayCard: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: Radius.lg,
+    padding: Space[4],
+    marginBottom: Space[3],
+    ...Shadow.sm,
+  },
+  dayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space[2],
+    paddingBottom: Space[3],
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
+    marginBottom: Space[1],
+  },
+  dayBadge: {
+    paddingHorizontal: Space[2],
+    paddingVertical: 3,
+    borderRadius: Radius.sm,
+  },
+  dayBadgeText: {
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.bold,
+    color: '#FFFFFF',
+  },
+  dayThemeText: {
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.bold,
+    color: Colors.textPrimary,
+    flex: 1,
+  },
+
+  // ── Exercise Row
   exRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: Space[3],
+    paddingVertical: Space[2],
     gap: Space[3],
   },
   exRowBorder: {
@@ -302,29 +408,29 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.divider,
   },
   exBar: {
-    width: 4,
-    height: 40,
+    width: 3.5,
+    height: 36,
     borderRadius: 2,
   },
   exInfo: { flex: 1 },
   exName: {
-    fontSize: FontSize.base,
+    fontSize: FontSize.sm,
     fontWeight: FontWeight.semibold,
     color: Colors.textPrimary,
     marginBottom: 2,
   },
-  exMuscle: {
-    fontSize: FontSize.sm,
+  exDetail: {
+    fontSize: FontSize.xs,
     color: Colors.textSecondary,
+    fontWeight: FontWeight.medium,
   },
-  exVol: {
-    paddingHorizontal: Space[3],
-    paddingVertical: Space[1],
+  rpeBadge: {
+    paddingHorizontal: Space[2],
+    paddingVertical: 4,
     borderRadius: Radius.sm,
   },
-  exVolText: {
+  rpeText: {
     fontSize: FontSize.xs,
     fontWeight: FontWeight.bold,
   },
-
 });

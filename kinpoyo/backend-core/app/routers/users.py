@@ -14,7 +14,13 @@ def read_my_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return user_crud.get_profile(db, current_user.id)
+    profile = user_crud.get_profile(db, current_user.id)
+    if profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="プロフィールが見つかりません"
+        )
+    return profile
 
 
 @router.put("/me/profile", response_model=UserProfileOut)
